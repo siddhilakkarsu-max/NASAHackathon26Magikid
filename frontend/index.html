@@ -9,6 +9,7 @@
 <script src="/weather_display.js"></script>
 <script src="/weather_timeline.js"></script>
 <script src="/wind_motion.js"></script>
+<script src="/temperature_view.js"></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
 <style>
   /* Designers: restyle freely. Everything visual lives in this file. */
@@ -33,12 +34,13 @@
   .legend-note, #legendText a { display: block; margin: 3px 0; }
   #legendText a { color: #b9daf0; }
   #layerStatus { color: #ffcaac; margin: 4px 0; }
-  #layerStatus:empty { display: none; }
-  #timeline, #stormEvidence { margin-top: 12px; }
+  #layerStatus:empty, #mapDetail:empty { display: none; }
+  #mapDetail { margin: 4px 0; }
+  #mapOpacity:disabled { opacity: 0.45; }
+  #timeline { margin-top: 12px; }
   #timeline input[type=number] { box-sizing: border-box; width: 100%; }
   #timelineReadout { display: block; margin-top: 8px; color: var(--fg); }
   #timelineMessage { margin: 4px 0; }
-  #stormEvidence img { display: block; width: 100%; height: auto; margin-top: 8px; }
   #panel a { color: #b9daf0; }
   #weatherHover { position: absolute; z-index: 5; pointer-events: none; max-width: 210px;
                   padding: 7px 9px; background: #131520ed; color: #fff; font-size: 12px;
@@ -82,17 +84,20 @@
     <option value="temperature">Regional simulated surface temperature</option>
     <optgroup label="Global weather">
       <option value="global_temperature" selected>Global simulated surface temperature</option>
+      <option value="openmars_surface_temperature">OpenMARS ground temperature reference</option>
       <option value="air_temperature">Near-surface air temperature</option>
       <option value="surface_pressure">Surface pressure</option>
       <option value="wind_speed">Near-surface wind speed</option>
       <option value="wind_direction">Near-surface wind arrows</option>
       <option value="dust_opacity">Atmospheric dust optical depth</option>
-      <option value="storm_dust">2018 dust storm replay</option>
     </optgroup>
     <option value="shelter">Minutes to shelter</option>
     <option value="elevation">Elevation</option>
   </select>
   <div id="legend" hidden></div><div class="small" id="legendText"></div>
+  <div id="mapDetail" class="small" role="status"></div>
+  <label for="mapOpacity">Overlay opacity <output id="opacityValue" for="mapOpacity">100%</output></label>
+  <input id="mapOpacity" type="range" min="0" max="100" value="100" step="5" disabled>
   <div class="small" id="layerStatus" role="status"></div>
   <button id="retryLayer" class="secondary" type="button" hidden>Retry layer</button>
   <button id="pauseWind" class="secondary" type="button" hidden>Pause wind motion</button>
@@ -108,12 +113,6 @@
     <input id="timelinePosition" type="range" step="1">
     <div class="small" id="timelineMessage" role="status"></div>
   </section>
-  <details id="stormEvidence" class="small" hidden>
-    <summary>NASA satellite image of the storm</summary>
-    <img src="/marci-2018-storm.jpg" loading="lazy" width="900" height="450"
-         alt="Global Mars Color Imager view of the growing dust storm on June 6, 2018, with Opportunity marked.">
-    <a href="https://science.nasa.gov/photojournal/dust-storm-covers-opportunity/" target="_blank" rel="noopener">June 6, 2018 · NASA/JPL-Caltech/MSSS</a>
-  </details>
   <p class="small"><a href="/api/weather/sources" target="_blank" rel="noopener">Weather data and source inventory</a></p>
 
   <h2>Plan a walk</h2>
@@ -185,9 +184,41 @@ let tileset = null;
 let regions = [], current = null, overlay = [], mode = null;
 let base = null, target = null, layerRequest = 0;
 let layerLoad = null, displayedLayer = "";
-let timeline = null, shownConditions = null, hoverPoint = null, hoverTimer, hoverLoad, hoverVersion = 0;
+let timeline = null, shownConditions = null, shownResponse = null;
+let hoverPoint = null, hoverTimer, hoverLoad, hoverVersion = 0;
 let windPaused = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let pointRequest = 0;
 const marks = viewer.entities;
+const imageLayers = () => tileset ? tileset.imageryLayers : viewer.imageryLayers;
+const mapOpacity = () => +$("mapOpacity").value / 100;
+const temperatureView = createTemperatureView({
+  viewer, ellipsoid: MARS, api, opacity: mapOpacity,
+  current: () => displayedLayer === "global_temperature" && overlay.length
+    ? { overview: overlay[0], conditions: shownConditions, collection: imageLayers() } : null,
+  onChange: (state, step, range) => {
+    if (displayedLayer !== "global_temperature") return;
+    $("mapDetail").textContent = {
+      overview: "0.5° overview · Zoom in for finer TES inputs",
+      loading: "Loading finer TES inputs for this view…",
+      detail: `${step}° TES detail · This view only`,
+      unavailable: "Finer view unavailable · Showing the 0.5° overview",
+    }[state];
+    if (state !== "loading") {
+      const response = state === "detail" ? { ...shownResponse, temperature_range: range, viewport: true } : shownResponse;
+      weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText"), name: displayedLayer, response });
+      refreshHover();
+    }
+  },
+});
+
+$("mapOpacity").oninput = () => {
+  const opacity = mapOpacity();
+  $("opacityValue").textContent = $("mapOpacity").value + "%";
+  for (const layer of overlay) layer.alpha = opacity;
+  temperatureView.setOpacity(opacity);
+  const wind = $("map").querySelector(".wind-motion");
+  if (wind) wind.style.opacity = opacity;
+};
 
 function conditions() {
   return { region: $("region").value || "jezero", vehicle: $("vehicle").value || "astronaut", local_hour: +$("hour").value,
@@ -219,15 +250,21 @@ async function showImage(dataUrl, rect, request = layerRequest) {
   if (request !== layerRequest) return false;
   clearOverlay();
   const layer = new Cesium.ImageryLayer(provider);
-  (tileset ? tileset.imageryLayers : viewer.imageryLayers).add(layer);
+  layer.alpha = mapOpacity();
+  imageLayers().add(layer);
   overlay.push(layer);
+  $("mapOpacity").disabled = false;
   return true;
 }
 function clearOverlay() {
-  for (const l of overlay) (tileset ? tileset.imageryLayers : viewer.imageryLayers).remove(l, true);
+  temperatureView.clear();
+  for (const l of overlay) imageLayers().remove(l, true);
   overlay = [];
   displayedLayer = "";
   shownConditions = null;
+  shownResponse = null;
+  $("mapOpacity").disabled = true;
+  $("mapDetail").textContent = "";
 }
 
 async function refreshLayer() {
@@ -255,7 +292,10 @@ async function refreshLayer() {
     let animated = false;
     if (response.wind_field) {
       animated = windMotion.start({ viewer, container: $("map"), vectors: response.wind_field });
-      if (animated) windMotion.setPaused(windPaused);
+      if (animated) {
+        windMotion.setPaused(windPaused);
+        $("map").querySelector(".wind-motion").style.opacity = mapOpacity();
+      }
     }
     if (!animated && response.wind_vectors) {
       const fallback = await weatherDisplay.renderWind(response);
@@ -263,8 +303,16 @@ async function refreshLayer() {
     }
     displayedLayer = name;
     shownConditions = snapshot;
+    shownResponse = response;
     updateWindControl(animated);
     weatherDisplay.renderLegend({ ...guide, response });
+    if (name === "global_temperature") {
+      $("mapDetail").textContent = "0.5° overview · Zoom in for finer TES inputs";
+      temperatureView.refresh();
+    } else if (response.grid_step_deg) {
+      $("mapDetail").textContent = `${response.grid_step_deg}° data grid` +
+        (response.weather ? " · Zoom magnifies this grid" : "");
+    }
     $("layerStatus").textContent = "";
     refreshHover();
     return true;
@@ -303,8 +351,8 @@ function pickLatLon(pos) {
 function pointLabel({lat, lon}) {
   return `${Math.abs(lat).toFixed(2)}° ${lat < 0 ? "S" : "N"}, ${Math.abs(lon).toFixed(2)}° ${lon < 0 ? "W" : "E"}`;
 }
-const hoverLayers = new Set(["temperature", "global_temperature", "air_temperature", "surface_pressure",
-                              "wind_speed", "wind_direction", "dust_opacity", "storm_dust"]);
+const hoverLayers = new Set(["temperature", "global_temperature", "openmars_surface_temperature", "air_temperature", "surface_pressure",
+                              "wind_speed", "wind_direction", "dust_opacity"]);
 function paintHover(point, detail = "") {
   const tip = $("weatherHover");
   tip.replaceChildren(document.createTextNode(pointLabel(point)));
@@ -331,8 +379,19 @@ function refreshHover() {
   }
 }
 function hoverCell(point, layer) {
-  const step = layer === "storm_dust" ? 3 : layer.endsWith("temperature") && layer !== "air_temperature" ? 0.5 : 5;
-  return `${Math.floor((90 - point.lat) / step)}:${Math.floor(((point.lon + 180) % 360) / step)}`;
+  const step = layer === "global_temperature" ? temperatureView.stepAt(point) ?? 0.5
+    : layer === "temperature" ? 0.5 : 5;
+  return `${step}:${Math.floor((90 - point.lat) / step)}:${Math.floor(((point.lon + 180) % 360) / step)}`;
+}
+function samplePoint(layer, snapshot, point, signal) {
+  return api(`/api/layer/${layer}/sample`, {
+    ...snapshot, lat: point.lat, lon: point.lon, detail: layer === "global_temperature" && !!temperatureView.stepAt(point),
+  }, signal);
+}
+function sampleLabel(sample) {
+  const value = sample.value === null ? "unavailable" : `${sample.value} ${sample.unit}`;
+  const direction = sample.toward_deg === undefined ? "" : ` · toward ${sample.toward_deg}°`;
+  return `${sample.label} ${value}${direction}`;
 }
 function queueHover() {
   if (hoverTimer || hoverLoad || !hoverPoint || !shownConditions || !hoverLayers.has(displayedLayer)) return;
@@ -343,16 +402,14 @@ function queueHover() {
     const pending = new AbortController();
     hoverLoad = pending;
     try {
-      const sample = await api(`/api/layer/${layer}/sample`, { ...snapshot, lat: point.lat, lon: point.lon }, pending.signal);
+      const sample = await samplePoint(layer, snapshot, point, pending.signal);
       if (!hoverPoint || version !== hoverVersion || layer !== displayedLayer || snapshot !== shownConditions) return;
       if (hoverCell(point, layer) !== hoverCell(hoverPoint, layer)) {
         hoverLoad = null;
         queueHover();
         return;
       }
-      const value = sample.value === null ? "unavailable" : `${sample.value} ${sample.unit}`;
-      const direction = sample.toward_deg === undefined ? "" : ` · toward ${sample.toward_deg}°`;
-      hoverPoint.detail = `${sample.label} ${value}${direction}`;
+      hoverPoint.detail = sampleLabel(sample);
       paintHover(hoverPoint, hoverPoint.detail);
     } catch (error) {
       if (error.name !== "AbortError" && version === hoverVersion && hoverPoint) {
@@ -394,15 +451,29 @@ function pin(id, p, color, text) {
 
 new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e) => {
   const p = pickLatLon(e.position); if (!p) return;
+  const request = ++pointRequest;
+  if (!mode && shownConditions && hoverLayers.has(displayedLayer)) {
+    const layer = displayedLayer, snapshot = shownConditions;
+    $("info").textContent = pointLabel(p);
+    try {
+      const sample = await samplePoint(layer, snapshot, p);
+      if (request !== pointRequest || snapshot !== shownConditions) return;
+      $("info").textContent = `${pointLabel(p)}\n${sampleLabel(sample)}\nData grid ${sample.grid_step_deg}° · ${snapshot.local_hour} h local solar time · ${snapshot.ls}° Ls`;
+    } catch (err) {
+      if (request === pointRequest) $("info").textContent = `${pointLabel(p)}\n${err.message}`;
+    }
+    return;
+  }
   if (mode === "base")   { base = p;   pin("base", p, Cesium.Color.DODGERBLUE, "Base"); }
   if (mode === "target") { target = p; pin("target", p, Cesium.Color.ORANGE, "Target"); }
   mode = null; $("setBase").classList.remove("active"); $("setTarget").classList.remove("active");
   try {
     const px = await api(`/api/pixel?lat=${p.lat}&lon=${p.lon}&region=${$("region").value}`);
+    if (request !== pointRequest) return;
     const lines = Object.entries(px.values).map(([k, v]) => `${k.padEnd(13)} ${v ?? "no data"}`);
     $("info").textContent = `${p.lat.toFixed(4)}°N  ${p.lon.toFixed(4)}°E\n` +
       (px.ground ? `ground: ${px.ground}\n` : "") + `confidence: ${px.confidence}\n\n` + lines.join("\n");
-  } catch (err) { $("info").textContent = `${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}: ${err.message}`; }
+  } catch (err) { if (request === pointRequest) $("info").textContent = `${pointLabel(p)}: ${err.message}`; }
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
 $("setBase").onclick = () => { mode = "base"; $("setBase").classList.add("active"); };
@@ -424,8 +495,7 @@ $("plan").onclick = async () => {
       layerLoad?.abort();
       $("layer").value = "";
       wasGlobal = false;
-      timeline?.setLayer("", false);
-      $("stormEvidence").hidden = true;
+      timeline?.setEnabled(false);
       windMotion.stop();
       updateWindControl();
       hideHover();
@@ -472,8 +542,7 @@ $("wholeMars").onclick = () => {
   $("layer").value = "global_temperature";
   wasGlobal = true;
   showWholeMars();
-  timeline?.setLayer("global_temperature", true);
-  $("stormEvidence").hidden = true;
+  timeline?.setEnabled(true);
   refreshLayer();
 };
 $("zoomRegion").onclick = () => { if (current) flyTo(current.rect); };
@@ -488,13 +557,7 @@ $("layer").onchange = () => {
   if (isGlobal && !wasGlobal) showWholeMars();
   else if (!isGlobal && $("layer").value && current) flyTo(current.rect);
   wasGlobal = isGlobal;
-  timeline?.setLayer($("layer").value, isGlobal);
-  $("stormEvidence").hidden = $("layer").value !== "storm_dust";
-  if ($("layer").value === "storm_dust" && +$("ls").value < 180) {
-    $("ls").value = 180;
-    labels();
-    timeline?.sync();
-  }
+  timeline?.setEnabled(isGlobal);
   refreshLayer();
 };
 $("region").onchange = () => {
@@ -507,16 +570,16 @@ $("region").onchange = () => {
   refreshLayer();
 };
 labels();
-api("/api/weather/calendar").then(calendars => {
+api("/api/weather/calendar").then(calendar => {
   timeline = createWeatherTimeline({
-    calendars,
+    calendar,
     controls: { group: $("timeline"), start: $("startSol"), end: $("endSol"),
       position: $("timelinePosition"), play: $("playTimeline"), message: $("timelineMessage"),
       readout: $("timelineReadout"), note: $("timelineNote") },
     readSeason: () => +$("ls").value,
     showSol: ls => { $("ls").value = ls; labels(); return refreshLayer(); },
   });
-  timeline.setLayer($("layer").value, globalLayerSelected());
+  timeline.setEnabled(globalLayerSelected());
 }).catch(error => {
   $("timeline").hidden = false;
   for (const id of ["startSol", "endSol", "timelinePosition", "playTimeline"]) $(id).disabled = true;

@@ -7,6 +7,7 @@ import numpy as np
 
 
 WEATHER_LAYERS = {
+    "openmars_surface_temperature": ("OpenMARS ground temperature", "K", 145, 315, "mars_thermal"),
     "air_temperature": ("Near-surface air temperature", "K", 140, 290, "coolwarm"),
     "surface_pressure": ("Surface pressure", "Pa", 200, 1400, "viridis"),
     "wind_speed": ("Near-surface wind speed", "m/s", 0, 30, "plasma"),

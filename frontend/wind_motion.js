@@ -2,9 +2,9 @@
 
 const windMotion = (() => {
   const RAD = Math.PI / 180;
-  const TRAIL_LENGTH = 7;
-  const TRAIL_STEP = 0.13;
   const SIMULATION_SPEED = 18000; // Mars seconds per display second at globe scale.
+  const MAX_PARTICLES = 420;
+  const FRAME_INTERVAL = 1000 / 30;
   let animation = null;
 
   function wrap(value, period) {
@@ -54,7 +54,7 @@ const windMotion = (() => {
       out.north = interpolate(north, iy, nextY, firstX, nextX, fy, fx);
       return Number.isFinite(out.east) && Number.isFinite(out.north);
     }
-    return { sample, west, width, north: northEdge, south };
+    return { sample };
   }
 
   function painter(viewer, container, field) {
@@ -75,14 +75,21 @@ const windMotion = (() => {
     const scaled = new Cesium.Cartesian3();
     const cameraScaled = new Cesium.Cartesian3();
     const pixel = new Cesium.Cartesian2();
+    const seedPixel = new Cesium.Cartesian2();
+    const hit = new Cesium.Cartesian3();
+    const viewScratch = new Cesium.Rectangle();
+    const seedPosition = new Cesium.Cartographic();
+    const tailPoint = { lat: 0, lon: 0 };
+    const head = new Cesium.Cartesian2();
+    const tail = new Cesium.Cartesian2();
+    const lastView = new Cesium.Matrix4();
     const velocity = {};
     const radius = ellipsoid.maximumRadius;
     const tracks = [];
-    const projected = Array.from({length: TRAIL_LENGTH + 1}, () => ({ x: 0, y: 0, visible: false }));
     let paused = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
     let frameId, lastFrame, width, height, dpr;
     let fieldAtTime = field;
-    let lastCloseView = false;
+    let fieldChanged = true, nextViewCheck = 0, viewBounds;
 
     // Move along the local wind bearing on the sphere. This avoids the
     // longitude divisor becoming singular in the polar regions.
@@ -103,31 +110,19 @@ const windMotion = (() => {
       return true;
     }
 
-    function seed(timeScale, closeView) {
-      let point;
-      if (closeView) {
-        const hit = viewer.camera.pickEllipsoid(
-          new Cesium.Cartesian2(Math.random() * width, Math.random() * height), ellipsoid);
-        if (hit) {
-          const position = ellipsoid.cartesianToCartographic(hit);
-          point = { lat: position.latitude, lon: position.longitude };
-        }
+    function seed() {
+      // Screen-space seeding covers the part of Mars actually in view, including
+      // a tight close-up, without spending particles on the hidden hemisphere.
+      for (let attempt = 0; attempt < 5; attempt++) {
+        seedPixel.x = Math.random() * width;
+        seedPixel.y = Math.random() * height;
+        if (!viewer.camera.pickEllipsoid(seedPixel, ellipsoid, hit)) continue;
+        ellipsoid.cartesianToCartographic(hit, seedPosition);
+        const lat = seedPosition.latitude, lon = seedPosition.longitude;
+        if (!fieldAtTime.sample(lat, lon, velocity) || Math.hypot(velocity.east, velocity.north) < 0.1) continue;
+        return { lat, lon, age: 0.3 + Math.random() * 2.5, life: 3.5 + Math.random() * 4 };
       }
-      if (!point) {
-        // Equal-area seeds distribute the arrows across the sphere evenly.
-        const minY = Math.sin(fieldAtTime.south), maxY = Math.sin(fieldAtTime.north);
-        point = {
-          lat: Math.asin(minY + Math.random() * (maxY - minY)),
-          lon: fieldAtTime.west + Math.random() * fieldAtTime.width,
-        };
-      }
-      const tail = { ...point };
-      const trail = [];
-      for (let i = 0; i < TRAIL_LENGTH; i++) {
-        if (!advance(tail, -TRAIL_STEP * timeScale)) break;
-        trail.unshift({ ...tail });
-      }
-      return { ...point, trail, elapsed: 0, age: Math.random() * 2.8, life: 3.5 + Math.random() * 4 };
+      return null;
     }
 
     function surfaceProjection(point, result) {
@@ -135,56 +130,56 @@ const windMotion = (() => {
       ellipsoid.transformPositionToScaledSpace(world, scaled);
       // A scaled ellipsoid point is visible only on the viewing side of
       // the unit sphere's tangent plane.
-      if (Cesium.Cartesian3.dot(scaled, cameraScaled) <= 1.002 ||
-          !Cesium.SceneTransforms.worldToWindowCoordinates(scene, world, pixel)) {
-        result.visible = false;
-        return;
-      }
+      if (Cesium.Cartesian3.dot(scaled, cameraScaled) <= 1 + 1e-10 ||
+          !Cesium.SceneTransforms.worldToWindowCoordinates(scene, world, pixel)) return false;
       result.x = pixel.x;
       result.y = pixel.y;
-      result.visible = true;
+      return true;
     }
 
-    function draw(track) {
-      const count = track.trail.length;
-      surfaceProjection(track, projected[count]);
-      const head = projected[count];
-      if (!head.visible || head.x < -12 || head.y < -12 || head.x > width + 12 || head.y > height + 12) return;
-      for (let i = 0; i < count; i++) surfaceProjection(track.trail[i], projected[i]);
-      let first = count;
-      while (first > 0 && projected[first - 1].visible) first--;
-      if (first === count) return;
-      const tail = projected[count - 1];
+    function headVisible(track) {
+      seedPosition.latitude = track.lat;
+      seedPosition.longitude = track.lon;
+      return Cesium.Rectangle.contains(viewBounds, seedPosition) && surfaceProjection(track, head)
+        && head.x >= 0 && head.y >= 0 && head.x <= width && head.y <= height;
+    }
+
+    function draw(track, timeScale) {
+      tailPoint.lat = track.lat;
+      tailPoint.lon = track.lon;
+      if (!advance(tailPoint, -0.32 * timeScale) || !surfaceProjection(tailPoint, tail)) return;
       const dx = head.x - tail.x, dy = head.y - tail.y;
-      if (Math.hypot(dx, dy) < 0.06) return;
-      const angle = Math.atan2(dy, dx);
-      const arrowSize = Math.min(5, Math.max(2, Math.hypot(head.x - projected[first].x,
-        head.y - projected[first].y) * 0.45));
+      const distance = Math.hypot(dx, dy);
+      if (distance < 0.06) return;
+      const length = Math.min(12, Math.max(4.5, distance));
+      const ux = dx / distance, uy = dy / distance;
+      const arrowSize = Math.min(3.5, length * 0.4);
       ctx.beginPath();
-      ctx.moveTo(projected[first].x, projected[first].y);
-      for (let i = first + 1; i <= count; i++) ctx.lineTo(projected[i].x, projected[i].y);
-      for (const turn of [-0.61, 0.61]) {
-        ctx.moveTo(head.x - arrowSize * Math.cos(angle + turn), head.y - arrowSize * Math.sin(angle + turn));
+      ctx.moveTo(head.x - length * ux, head.y - length * uy);
+      ctx.lineTo(head.x, head.y);
+      for (const side of [-0.58, 0.58]) {
+        ctx.moveTo(head.x - arrowSize * (ux + side * uy), head.y - arrowSize * (uy - side * ux));
         ctx.lineTo(head.x, head.y);
       }
-      ctx.globalAlpha = Math.max(0, Math.min(1, track.age * 3, (track.life - track.age) * 3));
+      ctx.globalAlpha = 0.82 * Math.max(0, Math.min(1, track.age * 3, (track.life - track.age) * 3));
       ctx.strokeStyle = "#171427";
-      ctx.lineWidth = 2.9;
+      ctx.lineWidth = 1.9;
       ctx.stroke();
       ctx.strokeStyle = "#f7fcff";
-      ctx.lineWidth = 1.25;
+      ctx.lineWidth = 0.9;
       ctx.stroke();
     }
 
     function frame(now) {
       frameId = requestAnimationFrame(frame);
-      if (lastFrame !== undefined && now - lastFrame < 32) return;
+      if (lastFrame !== undefined && now - lastFrame < FRAME_INTERVAL - 1) return;
       const elapsed = lastFrame === undefined ? 0 : Math.min((now - lastFrame) / 1000, 0.085);
       lastFrame = now;
       const nextWidth = scene.canvas.clientWidth, nextHeight = scene.canvas.clientHeight;
-      const nextDpr = Math.min(2, window.devicePixelRatio || 1);
+      const nextDpr = Math.min(1.5, window.devicePixelRatio || 1);
       if (!nextWidth || !nextHeight) return;
-      if (width !== nextWidth || height !== nextHeight || dpr !== nextDpr) {
+      const resized = width !== nextWidth || height !== nextHeight || dpr !== nextDpr;
+      if (resized) {
         width = nextWidth;
         height = nextHeight;
         dpr = nextDpr;
@@ -194,36 +189,46 @@ const windMotion = (() => {
         ctx.lineCap = "round";
         ctx.lineJoin = "round";
       }
+      const cameraView = viewer.camera.viewMatrix;
+      const cameraChanged = !Cesium.Matrix4.equals(lastView, cameraView);
+      if (paused && !fieldChanged && !resized && !cameraChanged) return;
+      if (resized || now >= nextViewCheck || (paused && cameraChanged)) {
+        viewBounds = viewer.camera.computeViewRectangle(ellipsoid, viewScratch);
+        nextViewCheck = now + 120;
+      }
+      Cesium.Matrix4.clone(cameraView, lastView);
+      fieldChanged = false;
       ctx.clearRect(0, 0, width, height);
-      const altitude = viewer.camera.positionCartographic.height / radius;
-      const closeView = altitude < 0.25;
-      const timeScale = SIMULATION_SPEED * Math.max(0.015, Math.min(1, altitude));
-      const count = Math.max(220, Math.min(750, Math.round(width * height / (closeView ? 4800 : 1200))));
-      if (closeView !== lastCloseView) tracks.length = 0;
-      lastCloseView = closeView;
+      if (!viewBounds) return;
+      const altitude = Math.max(0.0001, viewer.camera.positionCartographic.height / radius);
+      const timeScale = SIMULATION_SPEED * Math.min(1, altitude);
+      const spacing = 43 + 14 * Math.min(1, altitude);
+      const count = Math.max(45, Math.min(MAX_PARTICLES, Math.round(width * height / spacing ** 2)));
       ellipsoid.transformPositionToScaledSpace(viewer.camera.positionWC, cameraScaled);
+      if (tracks.length > count) tracks.length = count;
+      let seedBudget = resized || (paused && cameraChanged) ? count : Math.min(count, 64);
       for (let i = 0; i < count; i++) {
         let track = tracks[i];
-        if (!track || track.age >= track.life) track = tracks[i] = seed(timeScale, closeView);
-        if (!paused && elapsed > 0) {
+        if (track && !paused && elapsed > 0) {
           track.age += elapsed;
-          track.elapsed += elapsed;
-          if (track.elapsed >= TRAIL_STEP) {
-            track.elapsed %= TRAIL_STEP;
-            track.trail.push({ lat: track.lat, lon: track.lon });
-            if (track.trail.length > TRAIL_LENGTH) track.trail.shift();
-          }
           if (!advance(track, elapsed * timeScale)) track.age = track.life;
         }
-        draw(track);
+        if (!track || track.age >= track.life || !headVisible(track)) {
+          tracks[i] = null;
+          if (seedBudget <= 0) continue;
+          seedBudget--;
+          track = tracks[i] = seed();
+          if (!track || !headVisible(track)) continue;
+        }
+        draw(track, timeScale);
       }
     }
 
     frameId = requestAnimationFrame(frame);
     return {
       viewer, container,
-      setField(nextField) { fieldAtTime = nextField; },
-      setPaused(value) { paused = value; },
+      setField(nextField) { fieldAtTime = nextField; fieldChanged = true; },
+      setPaused(value) { paused = value; fieldChanged = true; },
       stop() {
         cancelAnimationFrame(frameId);
         canvas.remove();

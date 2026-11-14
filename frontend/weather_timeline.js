@@ -1,9 +1,16 @@
 "use strict";
 
-function createWeatherTimeline({ calendars, controls, readSeason, showSol }) {
+function createWeatherTimeline({ calendar, controls, readSeason, showSol }) {
   const { group, start, end, position, play, message, readout, note } = controls;
-  let calendar = calendars.seasonal;
-  let mode = "", generation = 0, playing = false, timer;
+  let generation = 0, playing = false, timer;
+  const firstSol = calendar.sols[0], lastSol = calendar.sols.at(-1);
+  for (const input of [start, end, position]) {
+    input.min = firstSol;
+    input.max = lastSol;
+  }
+  start.value = firstSol;
+  end.value = lastSol;
+  note.textContent = "One sol is one Martian day. This timeline shows seasonal estimates at the selected local hour.";
 
   function stop() {
     ++generation;
@@ -37,26 +44,10 @@ function createWeatherTimeline({ calendars, controls, readSeason, showSol }) {
     position.value = sol;
   }
 
-  function setLayer(name, isGlobal) {
+  function setEnabled(isGlobal) {
     stop();
     group.hidden = !isGlobal;
-    if (!isGlobal) return;
-    const next = name === "storm_dust" ? "storm" : "seasonal";
-    if (next === mode) { sync(); return; }
-    mode = next;
-    calendar = calendars[next];
-    const first = calendar.sols[0], last = calendar.sols.at(-1);
-    for (const input of [start, end, position]) {
-      input.min = first;
-      input.max = last;
-    }
-    start.value = next === "storm" ? findSol(180) : first;
-    end.value = next === "storm" ? findSol(270) : last;
-    note.textContent = next === "storm"
-      ? "Historical Mars Year 34 archive. The preset dates cover the 2018 storm’s growth and fade."
-      : "One sol is one Martian day. This replay shows seasonal estimates at the selected local hour.";
-    message.textContent = "";
-    sync();
+    if (isGlobal) sync();
   }
 
   async function run() {
@@ -87,5 +78,5 @@ function createWeatherTimeline({ calendars, controls, readSeason, showSol }) {
   });
   position.addEventListener("change", () => showPosition(Number(position.value), true));
   for (const input of [start, end]) input.addEventListener("input", stop);
-  return { setLayer, sync, stop };
+  return { setEnabled, sync, stop };
 }

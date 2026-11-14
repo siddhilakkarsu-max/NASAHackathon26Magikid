@@ -18,7 +18,8 @@ SOURCE = ("https://huggingface.co/datasets/ananyo01/ARCO-OpenMars/resolve/"
 DUST = "https://www-mars.lmd.jussieu.fr/mars/dust_scenarios/dataset/dust_clim.nc"
 OUTPUT = Path(__file__).parent / "thermal_data" / "weather.npz"
 SEASON_CHUNKS = (66, 72, 78, 85, 92, 99, 105, 110, 115, 119, 124, 129)
-FIELDS = {"air_temperature": "temp", "surface_pressure": "ps", "east_wind": "u",
+FIELDS = {"air_temperature": "temp", "openmars_surface_temperature": "tsurf",
+          "surface_pressure": "ps", "east_wind": "u",
           "north_wind": "v", "visible_dust": "dustcol"}
 
 

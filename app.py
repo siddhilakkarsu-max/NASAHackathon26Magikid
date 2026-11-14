@@ -24,9 +24,9 @@ from pydantic import BaseModel, Field
 
 import physics
 from config import MARS_RADIUS_M, SCIENCE_TARGETS, VEHICLES
-from dust_history import STORM_THRESHOLD, dust_calendar, dust_snapshot, dust_sols
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
 from surface_temperature import temperature_overlay
+from thermal_detail import DETAIL_STEP, detail_overlay, detail_sample
 
 ROOT = Path(__file__).parent
 app = FastAPI(title="Mars Marswalk Planner")
@@ -38,6 +38,7 @@ THERMAL_PALETTE = LinearSegmentedColormap.from_list("mars_thermal", [
     (0.43, "#aed3df"), (0.51, "#f4e6db"), (0.65, "#eaba99"),
     (0.78, "#c26d52"), (1.00, "#641a34"),
 ])
+THERMAL_SCALE = (145, 315, "mars_thermal")
 
 
 def layer_palette(name):
@@ -83,7 +84,7 @@ def get_cube(region):
 
 
 # -------------------------------------------------------------- helpers ----
-def to_png(arr, cmap="viridis", vmin=None, vmax=None, alpha=0.65, max_px=1600, outline=None):
+def to_png(arr, cmap="viridis", vmin=None, vmax=None, alpha=0.65, max_px=1600):
     a = np.array(arr, dtype="float64")
     step = max(1, int(np.ceil(max(a.shape) / max_px)))   # keep overlays light for the browser
     a = a[::step, ::step]
@@ -94,8 +95,6 @@ def to_png(arr, cmap="viridis", vmin=None, vmax=None, alpha=0.65, max_px=1600, o
     norm = np.clip((np.where(bad, lo, a) - lo) / max(hi - lo, 1e-9), 0, 1)
     rgba = (layer_palette(cmap)(norm) * 255).astype("uint8")
     rgba[..., 3] = np.where(bad, 0, int(alpha * 255))
-    if outline is not None:
-        rgba[outline[::step, ::step] & ~bad] = (89, 227, 231, 255)
     buf = io.BytesIO()
     Image.fromarray(rgba).save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
@@ -153,6 +152,14 @@ class PlanRequest(Conditions):
 class LayerSample(Conditions):
     lat: float = Field(ge=-90, le=90)
     lon: float = Field(ge=-180, le=180)
+    detail: bool = False
+
+
+class ThermalView(Conditions):
+    west: float = Field(ge=-180, le=180)
+    south: float = Field(ge=-90, le=90)
+    east: float = Field(ge=-180, le=180)
+    north: float = Field(ge=-90, le=90)
 
 
 @lru_cache(maxsize=1)
@@ -164,13 +171,6 @@ def global_cell(lat, lon, shape):
     height, width = shape
     return (min(int((90 - lat) * height / 180), height - 1),
             int(((lon + 180) % 360) * width / 360))
-
-
-def dust_outline(arr, factor):
-    active = (arr >= STORM_THRESHOLD).repeat(factor, axis=0).repeat(factor, axis=1)
-    padded = np.pad(active, ((1, 1), (0, 0)), mode="edge")
-    interior = padded[:-2] & padded[2:] & np.roll(active, 1, axis=1) & np.roll(active, -1, axis=1)
-    return active & ~interior
 
 
 def conditions_layers(cube, cond):
@@ -212,14 +212,34 @@ def pixel(lat: float, lon: float, region: str = "jezero"):
 
 @app.get("/api/weather/calendar")
 def weather_calendar():
-    return {"seasonal": {"sols": list(range(1, len(season_calendar()) + 1)), "ls": season_calendar()},
-            "storm": {"sols": dust_sols().tolist(), "ls": dust_calendar().tolist()}}
+    return {"sols": list(range(1, len(season_calendar()) + 1)), "ls": season_calendar()}
 
 
 @app.get("/api/weather/sources", response_class=FileResponse)
 def weather_sources():
     return FileResponse(ROOT / "weather_sources.csv", media_type="text/csv",
                         filename="mars_weather_sources.csv")
+
+
+@lru_cache(maxsize=8)
+def temperature_image(west, south, east, north, local_hour, ls):
+    arr, rect = detail_overlay(west, south, east, north, local_hour, ls)
+    lo, hi, cmap = THERMAL_SCALE
+    display = interpolate_display(arr, factor=2)
+    finite = arr[np.isfinite(arr)]
+    return {"image": to_png(display, cmap, lo, hi, alpha=0.88), "rect": rect,
+            "grid_step_deg": DETAIL_STEP, "source_cells": int(arr.size),
+            "temperature_range": [round(float(finite.min()), 1), round(float(finite.max()), 1)] if finite.size else None}
+
+
+@app.post("/api/weather/temperature-detail")
+def temperature_detail(view: ThermalView):
+    if view.west >= view.east or view.south >= view.north:
+        raise HTTPException(422, "Use an ordered viewport within one side of the longitude seam")
+    try:
+        return temperature_image(view.west, view.south, view.east, view.north, view.local_hour, view.ls)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
 
 
 @app.post("/api/layer/{name}/sample")
@@ -232,12 +252,18 @@ def sample_layer(name: str, cond: LayerSample):
             cube = get_cube(cond.region)
             if not (cube.s <= lat <= cube.n and cube.w <= lon <= cube.e):
                 return {"value": None, "unit": "K", "label": "Ground temperature"}
-        row, col = global_cell(lat, lon, (360, 720))
-        north, west = 90 - row * 0.5, -180 + col * 0.5
-        cell = {"north": north, "south": north - 0.5, "west": west, "east": west + 0.5}
-        value = temperature_overlay(cell, (1, 1), cond.local_hour, cond.ls)[0, 0]
+        if name == "global_temperature" and cond.detail:
+            value = detail_sample(lat, lon, cond.local_hour, cond.ls)
+            extra["grid_step_deg"] = DETAIL_STEP
+        else:
+            row, col = global_cell(lat, lon, (360, 720))
+            north, west = 90 - row * 0.5, -180 + col * 0.5
+            cell = {"north": north, "south": north - 0.5, "west": west, "east": west + 0.5}
+            value = temperature_overlay(cell, (1, 1), cond.local_hour, cond.ls)[0, 0]
+            extra["grid_step_deg"] = 0.5
         unit, label = "K", "Ground temperature"
-    elif name in WEATHER_LAYERS or name == "storm_dust":
+    elif name in WEATHER_LAYERS:
+        extra["grid_step_deg"] = 5
         if name in ("wind_speed", "wind_direction"):
             east, north = wind_components(cond.local_hour, cond.ls)
             row, col = global_cell(lat, lon, east.shape)
@@ -247,13 +273,8 @@ def sample_layer(name: str, cond: LayerSample):
                 extra["toward_deg"] = round(float(np.degrees(np.arctan2(u, v)) % 360)) % 360
             unit, label = "m/s", "Wind speed"
         else:
-            if name == "storm_dust":
-                arr, sol, ls = dust_snapshot(cond.ls)
-                extra["archive_sol"], extra["archive_ls"] = sol, ls
-                label, unit = "Historical dust opacity", "τ"
-            else:
-                arr = weather_layer(name, cond.local_hour, cond.ls)
-                label, unit, *_ = WEATHER_LAYERS[name]
+            arr = weather_layer(name, cond.local_hour, cond.ls)
+            label, unit, *_ = WEATHER_LAYERS[name]
             value = arr[global_cell(lat, lon, arr.shape)]
     else:
         raise HTTPException(404, "No hover values for this layer")
@@ -264,18 +285,6 @@ def sample_layer(name: str, cond: LayerSample):
 @app.post("/api/layer/{name}")
 def layer(name: str, cond: Conditions):
     """Coloured overlay of one band or one computed layer, for the current conditions."""
-    if name == "storm_dust":
-        arr, sol, ls = dust_snapshot(cond.ls)
-        cmap, lo, hi, scale = "YlOrBr", 0, 3, 6
-        finite = arr[np.isfinite(arr)]
-        display = interpolate_display(arr, factor=scale, wrap_longitude=True)
-        weights = np.cos(np.deg2rad(90 - (np.arange(arr.shape[0]) + 0.5) * 180 / arr.shape[0]))
-        fraction = np.average((arr >= STORM_THRESHOLD).mean(axis=1), weights=weights)
-        return {"image": to_png(display, cmap, lo, hi, alpha=0.84, outline=dust_outline(arr, scale)),
-                "rect": GLOBAL_RECT, "weather": True, "archive_sol": sol, "archive_ls": ls,
-                "storm_threshold": STORM_THRESHOLD, "storm_area_pct": round(float(fraction * 100), 1),
-                "legend": legend("Historical dust storm · Mars Year 34", "τ", lo, hi, cmap),
-                "data_range": [round(float(finite.min()), 2), round(float(finite.max()), 2)] if finite.size else None}
     if name in WEATHER_LAYERS:
         title, unit, lo, hi, cmap = WEATHER_LAYERS[name]
         wind = None
@@ -297,6 +306,7 @@ def layer(name: str, cond: Conditions):
         return {"image": to_png(display, cmap, lo, hi, alpha=0.75), "rect": GLOBAL_RECT,
                 "legend": legend(title, unit, lo, hi, cmap),
                 "weather": True,
+                "grid_step_deg": 5,
                 "wind_vectors": wind,
                 "wind_field": field,
                 "data_range": [round(float(finite.min()), 2), round(float(finite.max()), 2)] if finite.size else None}
@@ -304,13 +314,14 @@ def layer(name: str, cond: Conditions):
     if name in ("temperature", "global_temperature"):
         rect, shape = (GLOBAL_RECT, (360, 720)) if c is None else (c.rect, (c.H, c.W))
         arr = temperature_overlay(rect, shape, cond.local_hour, cond.ls)
-        lo, hi, cmap = 145, 315, "mars_thermal"
+        lo, hi, cmap = THERMAL_SCALE
         sun_e, sun_az = physics.sun_position((rect["south"] + rect["north"]) / 2, cond.local_hour, cond.ls)
         valid = arr[np.isfinite(arr)]
         observed_range = [round(float(valid.min()), 1), round(float(valid.max()), 1)] if valid.size else None
         display = interpolate_display(arr, factor=2, wrap_longitude=True) if c is None else arr
         return {"image": to_png(display, cmap, lo, hi, alpha=0.88), "rect": rect,
                 "legend": legend("Simulated surface temperature", "K", lo, hi, cmap),
+                "grid_step_deg": 0.5,
                 "temperature_range": observed_range,
                 "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
     v, sun_e, sun_az, illum, cost = conditions_layers(c, cond)

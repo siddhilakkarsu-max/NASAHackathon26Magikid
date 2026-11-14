@@ -63,6 +63,35 @@ def _simulate_cells(lat, albedo, inertia, opacity, local_hour, ls):
     return mean_temperature + perturbation.real
 
 
+def solve_temperature(albedo, inertia, lat, lon, local_hour, ls):
+    """Solve at the supplied native raster cell centers without filling gaps."""
+    temperature = np.full(albedo.shape, np.nan, dtype=np.float32)
+    valid_rows, valid_cols = np.nonzero(
+        np.isfinite(albedo) & np.isfinite(inertia) & (inertia > 0)
+    )
+    if not valid_rows.size:
+        return temperature
+    # Interpolate the coarser atmosphere at the centers of the thermal cells.
+    # Dust columns are centered on -180°, -175°, … and wrap at the date line.
+    dust = visible_dust_grid(ls)
+    y = np.clip((87.5 - lat) / 5, 0, dust.shape[0] - 1)
+    x = ((lon + 180) % 360) / 5
+    y0, x0 = y.astype(int), x.astype(int)
+    y1 = np.minimum(y0 + 1, dust.shape[0] - 1)
+    x1 = (x0 + 1) % dust.shape[1]
+    fy, fx = (y - y0)[:, None], (x - x0)[None, :]
+    north = dust[np.ix_(y0, x0)] * (1 - fx) + dust[np.ix_(y0, x1)] * fx
+    south = dust[np.ix_(y1, x0)] * (1 - fx) + dust[np.ix_(y1, x1)] * fx
+    opacity = north * (1 - fy) + south * fy
+    for start in range(0, len(valid_rows), 4096):
+        r = valid_rows[start:start + 4096]
+        c = valid_cols[start:start + 4096]
+        temperature[r, c] = _simulate_cells(
+            lat[r], albedo[r, c], inertia[r, c], opacity[r, c], local_hour, ls
+        )
+    return temperature
+
+
 def temperature_overlay(rect, shape, local_hour, ls):
     """Sample model cells onto the map rectangle using pixel-center coordinates."""
     height, width = shape
@@ -74,24 +103,8 @@ def temperature_overlay(rect, shape, local_hour, ls):
     unique_cols, col_index = np.unique(cols, return_inverse=True)
     albedo, inertia = thermal_grid()
     area = np.ix_(unique_rows, unique_cols)
-    a, ti = albedo[area], inertia[area]
-    temperature = np.full(a.shape, np.nan, dtype=np.float32)
-    valid_rows, valid_cols = np.nonzero(np.isfinite(a) & np.isfinite(ti) & (ti > 0))
-    # Interpolate the coarser atmosphere at the centers of the thermal cells.
-    # Dust columns are centered on -180°, -175°, … and wrap at the date line.
-    dust = visible_dust_grid(ls)
-    y = np.clip((unique_rows - 4.5) / 10, 0, dust.shape[0] - 1)
-    x = (unique_cols + 0.5) / 10
-    y0, x0 = np.floor(y).astype(int), np.floor(x).astype(int)
-    y1 = np.minimum(y0 + 1, dust.shape[0] - 1)
-    x1 = (x0 + 1) % dust.shape[1]
-    fy, fx = (y - y0)[:, None], (x - x0)[None, :]
-    north = dust[np.ix_(y0, x0)] * (1 - fx) + dust[np.ix_(y0, x1)] * fx
-    south = dust[np.ix_(y1, x0)] * (1 - fx) + dust[np.ix_(y1, x1)] * fx
-    opacity = north * (1 - fy) + south * fy
-    for start in range(0, len(valid_rows), 4096):
-        r = valid_rows[start:start + 4096]
-        c = valid_cols[start:start + 4096]
-        centers = 89.75 - unique_rows[r] / 2
-        temperature[r, c] = _simulate_cells(centers, a[r, c], ti[r, c], opacity[r, c], local_hour, ls)
+    temperature = solve_temperature(
+        albedo[area], inertia[area], 89.75 - unique_rows / 2,
+        -179.75 + unique_cols / 2, local_hour, ls
+    )
     return temperature[np.ix_(row_index, col_index)]
