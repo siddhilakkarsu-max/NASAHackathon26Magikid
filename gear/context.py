@@ -65,7 +65,10 @@ ARCHETYPES = {
         sources=["cushing_skylights"]),
 }
 
-VEHICLE_KEYS = ("astronaut", "pressurized_rover", "small_rover", "perseverance")
+# Planner vehicle keys (config.VEHICLES) that carry crew and their tools, and those whose crew
+# breathe from suits. Every other vehicle is treated as robotic.
+CREW_VEHICLES = ("pressurized_rover", "unpressurized_rover")
+SUITED_VEHICLES = ("astronaut", "unpressurized_rover")
 
 
 class RouteStats(BaseModel):
@@ -163,7 +166,13 @@ class Resolved:
 
     @property
     def crewed_rover(self):
-        return self.vehicle == "pressurized_rover"
+        """A vehicle that carries the crew and their tools."""
+        return self.vehicle in CREW_VEHICLES
+
+    @property
+    def suited(self):
+        """The crew breathe from their suits on this trip."""
+        return self.vehicle in SUITED_VEHICLES
 
     @property
     def surface_days(self):

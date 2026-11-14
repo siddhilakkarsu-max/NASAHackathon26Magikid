@@ -165,19 +165,44 @@ CONSUMABLE_SOURCES = {
                     "~3.3 kWh per km.",
     "estimate": "Engineering estimate for a conceptual crew rover - no published NASA figure was "
                 "available for these loads. Treat the numbers as tunable, not as fact.",
+    "lrv_battery": "Apollo LRV: two 36 V silver-zinc batteries of 121 A-h each (about 8.7 kWh together) "
+                   "and a 92 km range, so about 0.095 kWh per km averaged over everything the batteries "
+                   "ran. The crew breathe suit oxygen at the astronaut rate. NASA's DRA 5.0 proposes "
+                   "open rovers roughly like the LRV for Mars.",
+    "mer_solar": "Spirit and Opportunity: arrays gave about 140 W for up to four hours per sol, about "
+                 "900 Wh per sol early in the mission and less as dust settled; the rover needs about "
+                 "100 W to drive. Modelled as 0.9 kWh per sol with the 100 W draw for the whole crossing.",
+    "sojourner_solar": "Sojourner: 0.22 m2 of solar cells giving about 13 to 15 W on Mars, plus a "
+                       "non-rechargeable 150 Wh battery. No driving load was published, so energy is not "
+                       "modelled; only the rated window applies.",
+    "zhurong_solar": "Zhurong: four solar panels. China has not published its energy budget, so energy "
+                     "is not modelled; only the rated window applies.",
+    "rfm_solar": "Rosalind Franklin: about 1,200 Wh per sol from its arrays and a 1,142 Wh battery "
+                 "(ESA). No driving load is published, so energy is not modelled; only the rated "
+                 "window applies.",
 }
+
+# The astronaut's suit oxygen. Shared by every traveller whose crew breathes from suits.
+_SUIT_O2_SUPPLY = dict(o2_rate_kg_per_h=0.085, o2_capacity_kg=0.68)
 
 # Vehicle / walker profiles. Weights are tunable during the demo.
 VEHICLES = {
     "astronaut": dict(label="Astronaut on foot (suited)", max_slope=18.0, base_speed_kmh=6.0,
                       suit_factor=0.5, sand_penalty=1.5, rough_penalty=1.0, uses_slip_table=False,
                       rated_hours=8.0, consumable_source="suit_o2",
-                      consumables=dict(o2_rate_kg_per_h=0.085, o2_capacity_kg=0.68)),
+                      consumables=dict(_SUIT_O2_SUPPLY)),
     "pressurized_rover": dict(label="Pressurized crew rover", max_slope=20.0, base_speed_kmh=10.0,
                               suit_factor=1.0, sand_penalty=3.0, rough_penalty=2.0, uses_slip_table=True,
                               rated_hours=12.0, consumable_source="estimate",
                               consumables=dict(energy_capacity_kwh=20.0, energy_idle_kw=1.5,
                                                energy_per_km_kwh=0.12)),
+    # Apollo LRV figures (flown 1971-72). Design top speed 10 km/h; NASA's LRV mobility report found
+    # 20-23 deg slopes workable (spec 25), so 20 here. Terrain penalties copied from the crew rover.
+    "unpressurized_rover": dict(label="Open crew rover (Apollo LRV-class)", max_slope=20.0, base_speed_kmh=10.0,
+                                suit_factor=1.0, sand_penalty=3.0, rough_penalty=2.0, uses_slip_table=True,
+                                rated_hours=8.0, consumable_source="lrv_battery",
+                                consumables=dict(_SUIT_O2_SUPPLY, energy_capacity_kwh=8.71, energy_idle_kw=0.0,
+                                                 energy_per_km_kwh=0.095)),
     "small_rover": dict(label="Robotic rover (Curiosity-class)", max_slope=25.0, base_speed_kmh=0.15,
                         suit_factor=1.0, sand_penalty=4.0, rough_penalty=2.0, uses_slip_table=True,
                         rated_hours=8.0, consumable_source="mmrtg_energy",
@@ -190,6 +215,29 @@ VEHICLES = {
                          rated_hours=8.0, consumable_source="mmrtg_energy",
                          consumables=dict(energy_capacity_kwh=2.5, energy_idle_kw=0.15,
                                           energy_per_km_kwh=3.33)),
+    # Earlier Mars rovers and the next one. Speeds are each rover's published top speed; terrain
+    # penalties are copied from the Curiosity-class profile. Rovers with no published driving load
+    # have no energy model (see their CONSUMABLE_SOURCES entry) and are limited by rated_hours only.
+    # Mars Pathfinder, 1997: top speed 1 cm/s; steered away from slopes over 30 deg (tips at 45).
+    # It also stayed within about 500 m of its lander for radio contact, which the planner does not check.
+    "sojourner": dict(label="Sojourner (Mars Pathfinder, 1997)", max_slope=30.0, base_speed_kmh=0.036,
+                      suit_factor=1.0, sand_penalty=4.0, rough_penalty=2.0, uses_slip_table=True,
+                      rated_hours=8.0, consumable_source="sojourner_solar"),
+    # Spirit and Opportunity, 2004: top speed 5 cm/s; hazard software kept tilts under 30 deg.
+    # rated_hours = the up-to-four hours a sol of full array output.
+    "mer": dict(label="Spirit / Opportunity (MER, 2004)", max_slope=30.0, base_speed_kmh=0.18,
+                suit_factor=1.0, sand_penalty=4.0, rough_penalty=2.0, uses_slip_table=True,
+                rated_hours=4.0, consumable_source="mer_solar",
+                consumables=dict(energy_capacity_kwh=0.9, energy_idle_kw=0.10, energy_per_km_kwh=0.0)),
+    # Tianwen-1, 2021: about 200 m/h top speed, slopes up to 20 deg (Xinhua).
+    "zhurong": dict(label="Zhurong (Tianwen-1, 2021)", max_slope=20.0, base_speed_kmh=0.2,
+                    suit_factor=1.0, sand_penalty=4.0, rough_penalty=2.0, uses_slip_table=True,
+                    rated_hours=8.0, consumable_source="zhurong_solar"),
+    # ExoMars, launch planned 2028: 100 m/h on a straight line; ESA gives about 20 deg as the worst case
+    # it can pass (15 on bedrock, 10 on bedrock under thin regolith).
+    "rosalind_franklin": dict(label="Rosalind Franklin (ExoMars, launch 2028)", max_slope=20.0, base_speed_kmh=0.1,
+                              suit_factor=1.0, sand_penalty=4.0, rough_penalty=2.0, uses_slip_table=True,
+                              rated_hours=8.0, consumable_source="rfm_solar"),
 }
 
 

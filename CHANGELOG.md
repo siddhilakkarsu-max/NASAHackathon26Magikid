@@ -3,6 +3,33 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-14, more vehicles
+
+### Added
+
+- Five vehicles in the route planner's `VEHICLES` (`config.py`), bringing it to nine. Each number comes from the
+  mission's published figures, with a `CONSUMABLE_SOURCES` entry saying where.
+
+| Key | Vehicle | Top speed | Max slope | Energy model |
+|---|---|---|---|---|
+| `unpressurized_rover` | Open crew rover (Apollo LRV-class) | 10 km/h | 20 deg | 8.7 kWh battery, 0.095 kWh/km, plus suit oxygen |
+| `sojourner` | Sojourner (Mars Pathfinder, 1997) | 1 cm/s | 30 deg | none published |
+| `mer` | Spirit / Opportunity (2004) | 5 cm/s | 30 deg | 0.9 kWh per sol, 100 W to drive |
+| `zhurong` | Zhurong (Tianwen-1, 2021) | 200 m/h | 20 deg | none published |
+| `rosalind_franklin` | Rosalind Franklin (ExoMars, launch 2028) | 100 m/h | 20 deg | none published |
+
+- Where no driving load has been published, the vehicle has no energy model and is limited by its rated window
+  only, rather than carrying invented numbers.
+- Matching gear catalog items. The gear rules treat the open rover as crewed (tools ride on it) and suited
+  (rule S1 checks its crew's oxygen at NASA's design rate). `list_mission_archetypes` now reads the vehicle
+  list from `config.py`.
+- 6 tests (41 total).
+
+### Not added
+
+- Ingenuity and other helicopters: the planner routes over ground slope, so a flying vehicle cannot be costed
+  properly. Ingenuity stays in the gear catalog as an aerial scout.
+
 ## [Unreleased] - 2026-11-14, gear system
 
 Branch `feat/Gk`. Builds on `MISSION_EQUIPMENT_RESEARCH.md`.

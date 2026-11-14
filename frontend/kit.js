@@ -363,6 +363,7 @@ function setMode(mode) {
     buildChips($("#goals"), arch.goals, GOAL_LABEL);
     buildChips($("#hazards"), arch.hazards, HAZARD_LABEL);
     const veh = regions.vehicles && Object.keys(regions.vehicles).length ? regions.vehicles : VEHICLE_LABEL;
+    Object.assign(VEHICLE_LABEL, veh);   // the planner's labels win, so new vehicles show by name everywhere
     $("#vehicle").innerHTML = Object.entries(veh).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join("");
     $("#region").innerHTML = state.regions.map((r) => `<option value="${r.region}">${esc(r.region)}</option>`).join("");
     if (!state.regions.length) { $("#useRoute").checked = false; $("#useRoute").disabled = true; $("#routeFields").hidden = true; }

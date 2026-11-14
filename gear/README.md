@@ -88,7 +88,7 @@ Everything is optional except it defaults sensibly from `archetype`. Anything de
 | `crew`, `stay_sols` | Crew on the surface; stay in sols |
 | `goals` | `biosignatures`, `geology`, `subsurface`, `water_ice`, `atmosphere`, `seismic`, `radiation`, `isru`, `construction` |
 | `hazards` | `pit`, `cliff`, `dunes`, `canyon_walls`, `night_ops`, `dust_storm_season` |
-| `vehicle` | The traveller for the route: `astronaut`, `pressurized_rover`, `small_rover`, `perseverance` |
+| `vehicle` | The traveller for the route, any key in `config.VEHICLES` (`list_mission_archetypes` returns them). Crewed: `astronaut`, `pressurized_rover`, `unpressurized_rover`. Robotic: `sojourner`, `mer`, `small_rover`, `zhurong`, `perseverance`, `rosalind_franklin` |
 | `eva_hours`, `eva_days` | Typical EVA length; EVA days over the stay |
 | `power` | `battery`, `solar`, `fission` |
 | `route`, `terrain` | The `stats` block from `/api/plan` and the terrain signals; or give `route_request` and they are filled in |

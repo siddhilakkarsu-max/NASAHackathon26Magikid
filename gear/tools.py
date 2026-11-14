@@ -92,11 +92,17 @@ class CarryIn(BaseModel):
 
 # ------------------------------------------------------------------ handlers
 def _list_archetypes(_):
+    from config import VEHICLES
+    from .context import CREW_VEHICLES
     return {"archetypes": archetype_public(),
             "goals": ["biosignatures", "geology", "subsurface", "water_ice", "atmosphere", "seismic", "radiation", "isru",
                       "construction"],
             "hazards": ["pit", "cliff", "dunes", "canyon_walls", "night_ops", "dust_storm_season"],
-            "vehicles": ["astronaut", "pressurized_rover", "small_rover", "perseverance"],
+            "vehicles": list(VEHICLES),
+            "vehicle_details": [{"id": k, "label": v["label"], "max_slope_deg": v["max_slope"],
+                                 "top_speed_kmh": v["base_speed_kmh"],
+                                 "kind": "on foot" if k == "astronaut" else "crewed" if k in CREW_VEHICLES else "robotic"}
+                                for k, v in VEHICLES.items()],
             "note": "Archetypes marked basis=published use figures from NASA documents. basis=assumed are planning "
                     "defaults and are listed as assumptions in the result."}
 
