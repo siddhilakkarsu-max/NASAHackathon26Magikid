@@ -128,4 +128,11 @@ VEHICLES = {
                         rated_hours=8.0, consumable_source="mmrtg_energy",
                         consumables=dict(energy_capacity_kwh=2.5, energy_idle_kw=0.15,
                                          energy_per_km_kwh=3.33)),
+    # Mars 2020. NASA rover page: top speed about 152 m/h, avoid tilts over 30 deg. Same MMRTG power
+    # system as Curiosity, so the energy numbers are the same published MMRTG ones as above.
+    "perseverance": dict(label="Perseverance rover (Mars 2020)", max_slope=30.0, base_speed_kmh=0.152,
+                         suit_factor=1.0, sand_penalty=4.0, rough_penalty=2.0, uses_slip_table=True,
+                         rated_hours=8.0, consumable_source="mmrtg_energy",
+                         consumables=dict(energy_capacity_kwh=2.5, energy_idle_kw=0.15,
+                                          energy_per_km_kwh=3.33)),
 }
