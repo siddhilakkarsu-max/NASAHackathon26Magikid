@@ -9,6 +9,7 @@ import base64
 import io
 import json
 import math
+import uuid
 from functools import lru_cache
 from pathlib import Path
 
@@ -22,8 +23,11 @@ from matplotlib.colors import LinearSegmentedColormap, to_hex
 from PIL import Image
 from pydantic import BaseModel, Field
 
+import mission
 import physics
-from config import CONSUMABLE_SOURCES, MARS_RADIUS_M, SCIENCE_TARGETS, VEHICLES
+import search
+from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
+                    PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, VEHICLES)
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
 from surface_temperature import temperature_overlay
 from thermal_detail import DETAIL_STEP, detail_overlay, detail_sample
@@ -124,7 +128,7 @@ def interpolate_display(arr, factor, wrap_longitude=False):
 
 
 def legend(name, unit, lo, hi, cmap):
-    return {"name": name, "unit": unit, "min": round(float(lo), 2), "max": round(float(hi), 2), "cmap": cmap,
+    return {"name": name, "unit": unit, "min": float(f"{lo:.3g}"), "max": float(f"{hi:.3g}"), "cmap": cmap,
             "colors": [to_hex(layer_palette(cmap)(fraction)) for fraction in np.linspace(0, 1, 17)]}
 
 
@@ -171,6 +175,22 @@ def global_cell(lat, lon, shape):
     height, width = shape
     return (min(int((90 - lat) * height / 180), height - 1),
             int(((lon + 180) % 360) * width / 360))
+
+
+class MissionRequest(BaseModel):
+    region: str = "jezero"
+    goal: str = Field(..., min_length=1, max_length=300, description='e.g. "sample clay where water once flowed"')
+    vehicle: str = "on_foot"
+    season: str = "northern_summer"
+    priority: str = "safety"
+    green_only: bool = Field(False, description="stick to green, rover-verified tracks where possible")
+
+
+class FindRequest(Conditions):
+    query: str = Field(..., min_length=1, max_length=300, description='e.g. "valley with clay"')
+    base: Point | None = None
+    focus: Point | None = Field(None, description="centre of the user's view; breaks ties between equal matches")
+    count: int = Field(5, ge=1, le=10)
 
 
 def conditions_layers(cube, cond):
@@ -255,7 +275,8 @@ def regions():
         c = get_cube(p.stem)
         out.append({"region": c.region, "rect": c.rect, "size": [c.W, c.H], "bands": c.names,
                     "pixel_m": [round(c.pixel_m[0]), round(c.pixel_m[1])], "provenance": c.provenance,
-                    "targets": SCIENCE_TARGETS.get(c.region, [])})
+                    "targets": SCIENCE_TARGETS.get(c.region, []),
+                    "minerals": {n: m["label"] for n, m in MINERALS.items() if n in c.bands}})
     return {"regions": out, "vehicles": {k: v["label"] for k, v in VEHICLES.items()},
             "vehicle_specs": {k: vehicle_spec(v) for k, v in VEHICLES.items()}}
 
@@ -266,10 +287,16 @@ def pixel(lat: float, lon: float, region: str = "jezero"):
     r, col = c.rc(lat, lon)
     vals = {n: (None if not np.isfinite(c.bands[n][r, col]) else round(float(c.bands[n][r, col]), 3))
             for n in c.names}
-    firm = vals.get("firmness")
-    ground = None if firm is None else ("loose sand/dust - slip risk" if firm < 0.3
-                                        else "mixed" if firm < 0.6 else "firm / bedrock")
-    return {"lat": lat, "lon": lon, "values": vals, "ground": ground,
+    ti, firm = vals.get("thermal_inertia"), vals.get("firmness")
+    if ti is not None:   # THEMIS thermal inertia classes (J m^-2 K^-1 s^-1/2)
+        ground = f"thermal inertia {ti:.0f}: {search.ti_class(ti)}" + (" - slip/sinkage risk" if ti < 300 else "")
+    else:
+        ground = None if firm is None else ("loose sand/dust - slip risk" if firm < 0.3
+                                            else "mixed" if firm < 0.6 else "firm / bedrock")
+    minerals = [f"{m['label']}: {search.mineral_strength(n, c.bands[n][r, col])}"
+                for n, m in MINERALS.items() if n in c.bands and np.isfinite(c.bands[n][r, col])
+                and c.bands[n][r, col] >= m["detect"]]
+    return {"lat": lat, "lon": lon, "values": vals, "ground": ground, "minerals": minerals,
             "confidence": round(float(c.coverage[r, col]), 2)}
 
 
@@ -394,6 +421,14 @@ def layer(name: str, cond: Conditions):
             arr, unit, cmap = arr, "deg", "magma"
         if name == "firmness":
             cmap = "cividis"
+        if name == "thermal_inertia":
+            unit, cmap = "J m-2 K-1 s-1/2", "cividis"
+        if name in MINERALS:   # show only real detections: transparent below the detection limit
+            m = MINERALS[name]
+            shown = np.where(arr >= m["detect"], arr, np.nan)
+            return {"image": to_png(shown, "YlOrRd", m["detect"], m["strong"], alpha=0.8), "rect": c.rect,
+                    "legend": legend(m["label"], "CRISM " + "/".join(m["params"]), m["detect"], m["strong"], "YlOrRd"),
+                    "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
         if name == "imagery":
             finite = arr[np.isfinite(arr)]
             lo, hi = (np.percentile(finite, 1), np.percentile(finite, 99)) if finite.size else (0, 1)
@@ -507,6 +542,94 @@ def plan(req: PlanRequest):
         "explanation": explanation,
     })
     return result
+
+
+@app.post("/api/find")
+def find(req: FindRequest):
+    """Turn a text description ("valley with clay") into the best matching target pixels."""
+    c = get_cube(req.region)
+    v, sun_e, sun_az, illum, cost = conditions_layers(c, req)
+    temp = physics.surface_temp_k(illum, c.bands.get("firmness"), sun_e)
+    t_base, notes = None, []
+    focus = (req.focus.lat, req.focus.lon) if req.focus else ((c.s + c.n) / 2, (c.w + c.e) / 2)
+    usable_s = min(req.budget_hours, v.get("rated_hours") or math.inf) * 3600 * (1 - req.reserve)
+    if req.base:
+        try:
+            t_base = physics.travel_time_from(cost, [c.rc(req.base.lat, req.base.lon)], c.pixel_m)
+            focus = (req.base.lat, req.base.lon)
+        except HTTPException:
+            notes.append("The base is outside this region, so distance from base was ignored.")
+    ctx = search.Ctx(c, v, sun_e, illum, temp, cost, t_base=t_base, usable_s=usable_s,
+                     zones=SEARCH_ZONES.get(c.region, []))
+    ctx.notes.extend(notes)
+    try:
+        res = search.find(ctx, req.query, count=req.count, focus=focus)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    score = res.pop("score")
+    res.update(rect=c.rect, heatmap=to_png(score, "plasma", 0, 1, alpha=0.55),
+               sun={"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)})
+    return res
+
+
+_missions = {}   # mission id -> facts for the explanation (last 50)
+
+
+@app.get("/api/mission/options")
+def mission_options():
+    return {"vehicles": {k: {"label": v["label"], "max_slope": v["max_slope"], "range_km": v["range_km"]}
+                         for k, v in MISSION_VEHICLES.items()},
+            "seasons": {k: v["label"] for k, v in SEASONS.items()},
+            "priorities": {k: v["label"] for k, v in PRIORITIES.items()},
+            "criteria": {k: {"label": v[0], "weight": v[1]} for k, v in MATRIX_CRITERIA.items()}}
+
+
+@app.post("/api/mission")
+def plan_mission(req: MissionRequest):
+    """Goal + vehicle + season + priority -> 3 candidate missions, the decision matrix and the winner."""
+    for name, value, allowed in (("vehicle", req.vehicle, MISSION_VEHICLES), ("season", req.season, SEASONS),
+                                 ("priority", req.priority, PRIORITIES)):
+        if value not in allowed:
+            raise HTTPException(400, f"{name} must be one of {list(allowed)}")
+    c = get_cube(req.region)
+    try:
+        res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    score, red = res.pop("_score"), res.pop("_red")
+    res["id"] = uuid.uuid4().hex[:12]
+    _missions[res["id"]] = mission.explain_facts(res)
+    while len(_missions) > 50:
+        _missions.pop(next(iter(_missions)))
+    res["science_image"] = to_png(np.where(score >= 0.15, score, np.nan), "plasma", 0.15, 1, alpha=0.55)
+    res["offlimits_image"] = to_png(np.where(red, 0.8, np.nan), "Reds", 0, 1, alpha=0.45)
+    return res
+
+
+@app.post("/api/mission/{mid}/explain")
+def explain_mission(mid: str):
+    """The AI-written explanation of a mission (slower, so the page asks for it after showing the plan)."""
+    facts = _missions.get(mid)
+    if facts is None:
+        raise HTTPException(404, "unknown mission id (the server may have restarted); plan the mission again")
+    text = mission.explain_ai(facts)
+    return {"explanation": text or facts["summary"], "source": "ai" if text else "template"}
+
+
+@app.get("/api/tracks")
+def rover_tracks(region: str = "jezero", vehicle: str = "on_foot"):
+    """Real rover drives classed green (no warning signs) / yellow (high strain), plus the red off-limits
+    terrain for a vehicle."""
+    c = get_cube(region)
+    tr = mission.tracks(c)
+    v = MISSION_VEHICLES.get(vehicle, MISSION_VEHICLES["on_foot"])
+    red = mission.offlimits(c, v)
+    out = {"rect": c.rect, "offlimits_image": to_png(np.where(red, 0.8, np.nan), "Reds", 0, 1, alpha=0.45),
+           "offlimits_pct": round(100 * float(red.mean()), 1)}
+    if tr is None:
+        return {**out, "rover": None, "segments": [], "km": {"green": 0, "yellow": 0}}
+    return {**out, "rover": tr["rover"], "source": tr["source"], "km": tr["km"],
+            "segments": [{k: s[k] for k in ("sol", "class", "why", "length_m", "coords")} for s in tr["segments"]]}
 
 
 # ------------------------------------------------- NASA Trek tile proxy ----

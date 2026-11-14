@@ -24,7 +24,7 @@ const weatherDisplay = (() => {
     elevation: "Elevation", walkback: "Walk-back zone",
   };
   const units = { elevation: "m", firmness: "", illumination: "" };
-  const format = new Intl.NumberFormat("en", { maximumFractionDigits: 2 });
+  const format = new Intl.NumberFormat("en", { maximumFractionDigits: 4 });
 
   function renderLegend({ bar, text, name, response }) {
     text.replaceChildren();
