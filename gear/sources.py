@@ -47,6 +47,10 @@ SOURCES = {
                      "https://www.lpi.usra.edu/lunar/artemis/NASA-EMU-Data-Book-JSC-E-DAA-TN55224.pdf"),
     "wiki_emu": ("Extravehicular Mobility Unit (ISS suit)", "https://en.wikipedia.org/wiki/Extravehicular_Mobility_Unit"),
     "strock_eva": ("Strock et al. 2026, EVA fitness review", "https://www.nature.com/articles/s41526-026-00619-8"),
+    "minetti2002": ("Minetti et al. 2002, energy cost of walking at extreme uphill and downhill slopes",
+                    "https://journals.physiology.org/doi/full/10.1152/japplphysiol.01177.2001"),
+    "team_resources": ("Team resource research (Gia): reserve, recharge ratio",
+                       "https://github.com/siddhilakkarsu-max/NASAHackathon26Magikid"),
     "kluis_prebreathe": ("Kluis and Diaz-Artiles 2021, prebreathe and suit pressure", "https://pmc.ncbi.nlm.nih.gov/articles/PMC8594431"),
     "nasa_suits_rovers": ("NASA, EVA and human surface mobility program", "https://www.nasa.gov/suits-and-rovers"),
     # --- radiation, dust, medical

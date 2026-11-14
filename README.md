@@ -137,27 +137,43 @@ Body for POST calls: `{"region":"jezero","vehicle":"astronaut","local_hour":11,"
 
 ## Consumables: O₂ and energy against what the traveller actually carries
 
-Every plan is costed as a **round trip** and compared with the vehicle's own capacity. `stats` reports
-`o2_used_kg` / `o2_max_kg` / `o2_pct`, `energy_used_kwh` / `energy_max_kwh` / `energy_pct`, `max_range_km`,
-and `limiting_factor` — whichever ceiling is closest to being hit.
+Every plan is costed as a **round trip** over the planned route and compared with the vehicle's own capacity.
+`stats` reports `o2_used_kg` / `o2_max_kg` / `o2_pct`, `energy_used_kwh` / `energy_max_kwh` / `energy_pct`,
+`max_range_km`, and `limiting_factor` — whichever ceiling is closest to being hit.
 
 | Traveller | Quantity | Rate | Carried | Basis |
 |---|---|---|---|---|
-| Astronaut on foot | O₂ | 0.085 kg/h | 0.68 kg | NASA figures, see below |
-| Pressurized crew rover | Energy | 1.5 kW idle + 0.12 kWh/km | 20 kWh | **estimate**, see below |
-| Curiosity-class rover | Energy | 0.15 kW idle + 3.33 kWh/km | 2.5 kWh | MMRTG figures, see below |
+| Astronaut on foot | O₂ | 0.114 kg/h on flat ground, adjusted for slope | 0.912 kg | NASA Mars suit design basis, see below |
+| Pressurized crew rover | Energy | 1.5 kW idle + 0.12 kWh/km + climbing | 20 kWh | **estimate**, see below |
+| Curiosity-class rover | Energy | 0.15 kW idle + 3.33 kWh/km + climbing | 2.5 kWh | MMRTG figures, see below |
 
-Both quantities scale with **time as well as distance**, which is why a rocky detour costs more without a
-second terrain term: `cost_seconds_per_meter()` has already made that ground slower, so it simply takes longer.
+**How the terrain is charged** (`consumables_block` in `app.py`, helpers in `physics.py`):
+
+- **Walking, slope.** The return leg is the route walked in reverse, so every climb out is a descent back.
+  Effort per metre follows Minetti et al. 2002 (*J Appl Physiol* 93:1039): uphill costs far more, gentle
+  downhill a little less. Over a 15 % grade the round trip costs about 46 % more oxygen than flat ground.
+  `slope_o2_factor` reports it; `elevation_gain_m` / `elevation_loss_m` give the climb.
+- **Walking, ground.** Slow sand and rough rock still cost their extra time. `terrain_o2_factor` compares the
+  route with walking the same distance on flat, firm ground.
+- **Carried load.** Walking cost is per kilogram moved, so tools are charged in proportion to body + suit + load
+  (`physics.load_factor`; suit 104 kg from NASA's Mars suit target, body 80 kg an assumption). The gear page
+  applies the kit's hand-carried mass.
+- **Vehicles, climbing.** The energy to lift the vehicle up each climb (m g h) is added, `climb_kwh`. A lower
+  bound: motor losses add to it.
+- **Reserve.** 15 % of every supply is held back, 20 % in the dust-storm season (Ls 180–330), from the team's
+  resource research. `o2_usable_kg` / `energy_usable_kwh`, the range and the binding limit use what is left.
+- **Dust and sunlight.** Dust opacity at the route comes from the team's weather data (`mars_weather`), turned
+  into the share of a sol's direct sunlight that reaches a panel, as in the temperature model (`sunlight_pct`).
+  Solar rovers report the sols of sunlight needed to recharge (`recharge_sols`); the crew rover uses the team's
+  2:1 charge-to-drive ratio (`recharge_h`). Nuclear rovers are unaffected. Direct light only, so it is the
+  pessimistic end.
 
 **Where the numbers come from** (also returned per vehicle as `vehicle_specs[k].source`):
 
-- **O₂, astronaut** — the ALS Baseline Values and Assumptions Document (NASA/JSC-47804) gives 0.076 kg/h for a
-  closed-loop PLSS; the X-Hab PLSS model uses a 350 W baseline metabolic rate at ~20 kJ per litre of O₂, i.e.
-  ~0.084 kg/h. 0.68 kg is the xEMU's 8 h design endurance at that rate, and the planner holds back the 1 h
-  contingency the Artemis surface-suit requirement asks for (that is the `reserve` slider).
-- **Endurance, astronaut** — xEMU is specified for 8 h of autonomous EVA; Artemis surface EVAs are planned at
-  4–8 h, ~2 km radius at 2 km/h over level terrain.
+- **O₂, astronaut** — NASA's Mars suit design basis (SBIR topic EVA.2.S26B, 2026) sizes the oxygen supply for
+  1.9 g/min averaged over 8 h: 0.114 kg/h and 0.912 kg. For comparison NASA's baseline document gives
+  0.076 kg/h for current EVAs and the Apollo walk-back rate was 0.181 kg/h.
+- **Endurance, astronaut** — 8 h, the same design basis; Artemis surface EVAs are planned at 4–8 h.
 - **Energy, Curiosity-class** — MSL's MMRTG produces ~110 W electrical, 2.5–2.7 kWh per sol (NASA/JPL). Loads:
   at least 150 W whenever awake, up to 500 W while driving (JPL), which at this profile's 0.15 km/h works out
   at ~3.3 kWh/km. So a sol of MMRTG output is genuinely about 0.3 km out-and-back — the rover is meant to
@@ -170,8 +186,8 @@ Rules the planner applies:
 - `rated_hours` is a hard per-vehicle ceiling, separate from the EVA budget. The budget slider's maximum
   follows the selected vehicle, so you cannot plan past its rating.
 - `reserve` still applies: only `budget_hours × (1 − reserve)` counts as usable time.
-- `max_range_km` is the furthest one-way distance you can reach **and** return from, on a full load, at the
-  pace of the route you just planned.
+- `max_range_km` is the furthest one-way distance you can reach **and** return from, on a full load less the
+  reserve, at the pace and terrain of the route you just planned.
 - Routing itself is still time-based only. An over-capacity trip is drawn and flagged rather than refused —
   state-space pathfinding on remaining energy would be the next step, not something this pretends to do.
 

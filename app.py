@@ -219,50 +219,135 @@ def vehicle_spec(v):
             "source": CONSUMABLE_SOURCES.get(v.get("consumable_source", ""), "")}
 
 
-def consumables_block(v, seconds, distance_m, veh_key=""):
+def _in_dust_season(ls, window):
+    if ls is None:
+        return False
+    lo, hi = window
+    return lo <= ls % 360 <= hi
+
+
+def consumables_block(v, seconds, distance_m, veh_key="", route=None):
     """Round-trip O2 / energy against what the vehicle carries, and which of ITS limits binds first.
 
-    The round trip is twice the outward leg, matching how the walk-back zone already assumes
-    the return costs what the outbound leg cost. limiting_factor deliberately compares only the
-    vehicle's own limits (O2, energy, rated endurance) - whether the user's time budget allows
-    the trip at all is reported separately, as within_budget.
+    The return leg is the outbound route walked or driven in reverse. With `route` (the planned path,
+    the cost grid and the season) the totals account for the terrain:
+      - walkers: oxygen follows metabolic effort, which rises uphill and falls downhill (Minetti 2002)
+      - vehicles: energy to lift the vehicle up every climb is added (a lower bound)
+      - solar vehicles: sunlight through this season's dust sets how long recharging takes
+    A contingency (15 %, 20 % in dust-storm season) is held back from every supply; limits, range and
+    the binding factor use what is left after it. limiting_factor compares only the vehicle's own limits
+    (O2, energy, rated endurance); whether the user's time budget allows the trip is within_budget.
     """
-    e = physics.endurance(v, seconds, distance_m)
-    trip_h = 2 * seconds / 3600.0
+    from config import CONSUMABLE_RESERVE, VEHICLE_POWER, WALKER
 
-    stats = {"endurance_h": round(e["endurance_h"], 1),
-             "max_range_km": round(e["max_range_km"], 2),
-             "o2_used_kg": None, "o2_max_kg": None, "o2_pct": None,
-             "energy_used_kwh": None, "energy_max_kwh": None, "energy_pct": None}
-    warnings = []
+    c = v.get("consumables") or {}
+    power = VEHICLE_POWER.get(veh_key, {})
+    hours = max(float(seconds), 0.0) / 3600.0
+    trip_h = 2 * hours
+    km = max(float(distance_m), 0.0) / 1000.0
+    avg_kmh = km / hours if hours > 1e-9 else 0.0
 
-    if e["o2_kg"] is not None:
-        o2, cap = 2 * e["o2_kg"], e["o2_capacity_kg"]
-        stats.update(o2_used_kg=round(o2, 2), o2_max_kg=round(cap, 2), o2_pct=int(round(100 * o2 / cap)))
+    profile, ls, latlon = None, None, None
+    if route:
+        cube = route["cube"]
+        profile = physics.route_profile(cube.bands["elevation"], route["path"], route["cost"], cube.pixel_m,
+                                        slope=cube.bands.get("slope"))
+        ls = route.get("ls")
+        mid = route["path"][len(route["path"]) // 2]
+        latlon = cube.latlon(*mid)
+    reserve = CONSUMABLE_RESERVE["dust_season" if _in_dust_season(ls, CONSUMABLE_RESERVE["dust_season_ls"])
+                                 else "normal"]
+    walking = veh_key == "astronaut"
+
+    stats = {"o2_used_kg": None, "o2_max_kg": None, "o2_pct": None,
+             "energy_used_kwh": None, "energy_max_kwh": None, "energy_pct": None,
+             "reserve_pct": int(round(100 * reserve)), "o2_usable_kg": None, "energy_usable_kwh": None,
+             "o2_flat_kg": None, "terrain_o2_factor": None, "slope_o2_factor": None, "o2_flat_pace_h": None,
+             "climb_kwh": None,
+             "elevation_gain_m": round(profile["gain_m"]) if profile else None,
+             "elevation_loss_m": round(profile["loss_m"]) if profile else None,
+             "power_source": power.get("source") or ("suit" if walking else None),
+             "dust_opacity": None, "sunlight_pct": None, "solar_kwh_per_sol": None,
+             "recharge_sols": None, "recharge_h": None}
+    warnings, limits = [], {}
+
+    if "o2_rate_kg_per_h" in c:
+        rate, cap = c["o2_rate_kg_per_h"], float(c["o2_capacity_kg"])
+        walk = physics.round_trip_walk(profile) if walking else {"slope_factor": 1.0, "flat_pace_share": 1.0}
+        factor = walk["slope_factor"] * walk["flat_pace_share"]      # oxygen per planner-hour vs flat walking
+        o2 = rate * trip_h * factor
+        usable = cap * (1 - reserve)
+        stats.update(o2_used_kg=round(o2, 2), o2_max_kg=round(cap, 2), o2_pct=int(round(100 * o2 / cap)),
+                     o2_usable_kg=round(usable, 2))
+        if walking:
+            flat_kmh = v["base_speed_kmh"] * v["suit_factor"] * math.exp(-3.5 * 0.05)
+            o2_flat = rate * 2 * km / max(flat_kmh, 1e-6)
+            # terrain = everything about this ground (slow sand, rough rock, slope) against flat firm ground;
+            # slope = the climb-out, descend-back effort alone, at this ground's pace
+            stats.update(o2_flat_kg=round(o2_flat, 2), terrain_o2_factor=round(o2 / o2_flat, 2) if o2_flat else None,
+                         slope_o2_factor=round(walk["slope_factor"], 2),
+                         o2_flat_pace_h=round(trip_h * walk["flat_pace_share"], 2))
+        limits["oxygen"] = usable / max(rate * factor, 1e-9)
         if o2 > cap:
             warnings.append(f"Round trip needs {o2:.2f} kg of O2 but the suit carries {cap:.2f} kg "
                             f"({stats['o2_pct']}%). Shorten the route or send a rover.")
-    if e["energy_kwh"] is not None:
-        kwh, cap = 2 * e["energy_kwh"], e["energy_capacity_kwh"]
+        elif o2 > usable:
+            warnings.append(f"Round trip uses {stats['o2_pct']}% of the suit's O2, cutting into the "
+                            f"{stats['reserve_pct']}% reserve held back for contingencies.")
+    if "energy_capacity_kwh" in c:
+        kw = c["energy_idle_kw"] + c["energy_per_km_kwh"] * avg_kmh
+        kwh = kw * trip_h
+        if profile and power.get("mass_kg"):
+            climb = physics.climb_energy_kwh(power["mass_kg"], profile["gain_m"] + profile["loss_m"])
+            kwh += climb
+            stats["climb_kwh"] = round(climb, 3)
+        cap = float(c["energy_capacity_kwh"])
+        usable = cap * (1 - reserve)
         stats.update(energy_used_kwh=round(kwh, 2), energy_max_kwh=round(cap, 2),
-                     energy_pct=int(round(100 * kwh / cap)))
+                     energy_pct=int(round(100 * kwh / cap)), energy_usable_kwh=round(usable, 2))
+        eff_kw = kwh / trip_h if trip_h > 1e-9 else kw
+        limits["energy"] = usable / eff_kw if eff_kw > 1e-9 else math.inf
         if kwh > cap:
             hint = "" if veh_key == "pressurized_rover" else \
                 " The pressurized rover has more headroom."
             warnings.append(f"Round trip needs {kwh:.2f} kWh but {v['label']} carries only {cap:.2f} kWh "
                             f"({stats['energy_pct']}%).{hint}")
+        elif kwh > usable:
+            warnings.append(f"Round trip uses {stats['energy_pct']}% of the battery, cutting into the "
+                            f"{stats['reserve_pct']}% reserve held back for contingencies.")
+    if v.get("rated_hours"):
+        limits["rated"] = float(v["rated_hours"])
+
+    # Sunlight through this season's dust, and what it means for recharging
+    if latlon and ls is not None and power.get("source") in ("solar", "battery", "nuclear"):
+        tau = physics.dust_opacity(latlon[0], latlon[1], ls)
+        frac = physics.daily_sunlight_fraction(latlon[0], ls, tau)
+        if frac is not None:
+            stats.update(dust_opacity=round(tau, 2), sunlight_pct=int(round(100 * frac)))
+            if power["source"] == "solar" and power.get("sol_kwh"):
+                per_sol = power["sol_kwh"] * frac
+                stats["solar_kwh_per_sol"] = round(per_sol, 2)
+                if stats["energy_used_kwh"] is not None:
+                    stats["recharge_sols"] = round(kwh / per_sol, 1) if per_sol > 1e-6 else None
+            if power["source"] == "battery" and power.get("recharge_ratio") and frac > 1e-6:
+                stats["recharge_h"] = round(power["recharge_ratio"] * trip_h / frac, 1)
+            if power["source"] in ("solar", "battery") and frac < 0.6:
+                warnings.append(f"Dust lets only about {stats['sunlight_pct']}% of direct sunlight through here this "
+                                f"season (opacity {tau:.2f}); skylight adds some back, but solar charging will be "
+                                "slow. A dust storm like this ended Opportunity's mission.")
 
     # Which limit actually runs out first: a consumable with the highest fraction used. The
     # rated endurance only wins when nothing is consumed over its limit but the trip outlasts
     # the vehicle's rating, so a bar at 1061% is never labelled "rated endurance".
-    limits = e["limits_hours"] or {}
     fractions = {k: trip_h / limits[k] for k in ("oxygen", "energy")
                  if k in limits and limits[k] > 0}
     binding = max(fractions, key=fractions.get) if fractions else None
     outlasts_rating = trip_h > limits.get("rated", math.inf)
     if outlasts_rating and (binding is None or fractions[binding] <= 1.0):
         binding = "rated"
-    stats["limiting_factor"] = binding
+    endurance_h = min(limits.values()) if limits else 0.0
+    stats.update(endurance_h=round(endurance_h, 1), max_range_km=round(0.5 * endurance_h * avg_kmh, 2),
+                 limiting_factor=binding)
     return {"stats": stats, "warnings": warnings,
             "binding_label": BINDING_LABEL.get(binding, "No rated limit")}
 
@@ -516,7 +601,7 @@ def plan(req: PlanRequest):
                         f"{usable_s / 3600:.1f} h is usable after the reserve.")
 
     # O2 / energy for the round trip, against what this vehicle actually carries
-    cons = consumables_block(v, seconds, dist_m, req.vehicle)
+    cons = consumables_block(v, seconds, dist_m, req.vehicle, route=dict(cube=c, path=path, cost=cost, ls=req.ls))
     warnings.extend(cons["warnings"])
 
     explanation = (f"{v['label']}: {dist_m / 1000:.2f} km route, about {seconds / 3600:.1f} h one way "

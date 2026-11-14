@@ -116,13 +116,30 @@ class Rules(unittest.TestCase):
         self.assertEqual(tubes["qty"], 35)           # 7 samples per site
         self.assertEqual(witness["qty"], 5)          # about 12 percent blanks
 
-    def test_oxygen_check_uses_nasa_design_rate(self):
-        route = RouteStats(distance_km=4.6, one_way_h=3.3, round_trip_h=6.55, o2_pct=82.0, max_slope_deg=5.0)
+    def test_oxygen_check_holds_back_the_reserve(self):
+        # 0.83 kg of a 0.912 kg supply fits, but not once 15 percent is held back (0.775 kg usable)
+        route = RouteStats(distance_km=4.8, one_way_h=3.7, round_trip_h=7.4, o2_used_kg=0.83, o2_pct=91.0,
+                           reserve_pct=15, max_slope_deg=5.0)
         m = self.kit(archetype="traverse", route=route)
-        self.assertIn("S1", self.triggered(m))       # fits at 0.085 kg/h, not at 0.114 kg/h
+        self.assertIn("S1", self.triggered(m))
         self.assertIn("v_pressurized_rover", self.ids(m))
-        short = RouteStats(distance_km=1.0, one_way_h=0.4, round_trip_h=0.8, o2_pct=10.0, max_slope_deg=5.0)
-        self.assertNotIn("S1", self.triggered(self.kit(archetype="traverse", route=short)))
+        ok = RouteStats(distance_km=2.0, one_way_h=1.0, round_trip_h=2.0, o2_used_kg=0.25, o2_pct=27.0,
+                        reserve_pct=15, max_slope_deg=5.0)
+        self.assertNotIn("S1", self.triggered(self.kit(archetype="traverse", route=ok)))
+        # without the planner's figure the rule falls back to NASA's design rate times the hours
+        bare = RouteStats(distance_km=4.6, one_way_h=3.3, round_trip_h=7.0, max_slope_deg=5.0)
+        self.assertIn("S1", self.triggered(self.kit(archetype="traverse", route=bare)))   # 0.80 kg > 0.775
+
+    def test_carried_load_raises_route_oxygen(self):
+        route = RouteStats(distance_km=3.0, one_way_h=1.5, round_trip_h=3.0, o2_used_kg=0.40, o2_pct=44.0,
+                           o2_usable_kg=0.775, reserve_pct=15, max_slope_deg=5.0)
+        m = self.kit(archetype="traverse", goals=["geology", "biosignatures"], route=route)
+        lines = {ln["label"]: ln for g in m["budget"]["groups"] for ln in g["lines"]}
+        loaded = lines["With the kit's hand-carried load"]
+        self.assertGreater(loaded["value"], 0.40)
+        per_person = m["carry"]["load_kg"] / m["carry"]["team_size"]
+        self.assertAlmostEqual(loaded["value"], 0.40 * (184 + per_person) / 184, places=2)
+        self.assertIn("route_o2_with_load_kg", m["budget"]["planner_check"])
 
     def test_shelter_time_rule(self):
         near = self.kit(archetype="traverse", route=RouteStats(one_way_h=0.4, round_trip_h=0.8, distance_km=1.0))
@@ -309,7 +326,17 @@ class ToolContract(unittest.TestCase):
         self.assertGreater(m["context"]["route"]["distance_km"], 3)
         self.assertGreater(m["context"]["route"]["round_trip_h"], 2)
         ids = {r["id"] for r in m["triggered_rules"]}
-        self.assertTrue({"S1", "S2", "S3"} <= ids, ids)
+        self.assertTrue({"S2", "S3"} <= ids, ids)
+        # The walk fits the suit's oxygen after the normal 15 percent reserve, but not after the 20 percent
+        # held back in the dust-storm season.
+        o2 = m["context"]["route"]
+        self.assertLessEqual(o2["o2_used_kg"], o2["o2_usable_kg"])
+        self.assertNotIn("S1", ids)
+        storm = tools.call_tool("recommend_gear", {"context": {"archetype": "traverse",
+                                                               "route_request": dict(request, ls=250)}})
+        s = storm["context"]["route"]
+        self.assertGreater(s["o2_used_kg"], s["o2_usable_kg"])
+        self.assertIn("S1", {r["id"] for r in storm["triggered_rules"]})
 
     def test_unreachable_point_comes_back_as_data(self):
         r = tools.call_tool("get_route_context", {"region": "jezero", "vehicle": "astronaut", "base": {"lat": 0, "lon": 0},
@@ -421,6 +448,111 @@ class VehicleList(unittest.TestCase):
         self.assertEqual(kinds["unpressurized_rover"], "crewed")
         self.assertEqual(kinds["zhurong"], "robotic")
         self.assertEqual(kinds["astronaut"], "on foot")
+
+
+class TerrainLoadAndPower(unittest.TestCase):
+    """Slope-aware oxygen, carried load, climbing energy, reserve and dust on solar power."""
+
+    def test_minetti_curve_matches_the_paper(self):
+        import physics
+        self.assertAlmostEqual(float(physics.minetti_cw(0.0)), 2.5)
+        self.assertTrue(16.5 < float(physics.minetti_cw(0.45)) < 18.5)       # paper: 17.33 J/kg/m measured
+        self.assertLess(float(physics.minetti_cw(-0.10)), float(physics.minetti_cw(0.0)))   # gentle downhill is cheapest
+        self.assertAlmostEqual(float(physics.minetti_cw(0.9)), float(physics.minetti_cw(0.45)))  # clipped to the fit
+
+    def test_walking_effort(self):
+        import math
+        import numpy as np
+        import physics
+        flat = {"grade": np.zeros(5), "seg_s": np.ones(5), "slope_deg": np.zeros(5)}
+        self.assertAlmostEqual(physics.round_trip_walk(flat)["slope_factor"], 1.0)
+        self.assertAlmostEqual(physics.round_trip_walk(flat)["flat_pace_share"], 1.0)
+        self.assertEqual(physics.round_trip_walk(None)["slope_factor"], 1.0)
+        # out and back over a 15 percent grade: Minetti's (Cw(+0.15) + Cw(-0.15)) / (2 Cw(0)), about 1.46
+        deg = math.degrees(math.atan(0.15))
+        slow = float(physics.walker_slope_slowdown(deg))
+        hill = {"grade": np.full(4, 0.15), "slope_deg": np.full(4, deg), "seg_s": np.full(4, 10.0 / slow)}
+        walk = physics.round_trip_walk(hill)
+        expected = float(physics.minetti_cw(0.15) + physics.minetti_cw(-0.15)) / 5.0
+        self.assertAlmostEqual(walk["slope_factor"], expected, places=6)
+        self.assertTrue(1.4 < walk["slope_factor"] < 1.5)
+        self.assertAlmostEqual(walk["flat_pace_share"], slow, places=6)   # the slope slowdown is taken back out
+        # the same distance over a gentle grade costs less in total
+        g_deg = math.degrees(math.atan(0.02))
+        g_slow = float(physics.walker_slope_slowdown(g_deg))
+        gentle = {"grade": np.full(4, 0.02), "slope_deg": np.full(4, g_deg), "seg_s": np.full(4, 10.0 / g_slow)}
+        total = lambda p: physics.round_trip_walk(p)["slope_factor"] * np.sum(p["seg_s"]) * physics.round_trip_walk(p)["flat_pace_share"]
+        self.assertGreater(total(hill), total(gentle))
+
+    def test_load_and_climb(self):
+        import physics
+        self.assertAlmostEqual(physics.load_factor(22.7, 80, 104), 1 + 22.7 / 184)
+        self.assertEqual(physics.load_factor(0, 80, 104), 1.0)
+        self.assertAlmostEqual(physics.climb_energy_kwh(4000, 100), 4000 * 3.711 * 100 / 3.6e6)
+        self.assertEqual(physics.climb_energy_kwh(4000, -5), 0.0)
+
+    def test_dust_and_sunlight(self):
+        import physics
+        tau = physics.dust_opacity(18.45, 77.45, 90)
+        self.assertIsNotNone(tau)
+        self.assertTrue(0 < tau < 5)
+        self.assertAlmostEqual(physics.daily_sunlight_fraction(18.45, 90, 0.0), 1.0)
+        clear, dusty = (physics.daily_sunlight_fraction(18.45, 90, t) for t in (0.3, 1.5))
+        self.assertGreater(clear, dusty)
+        self.assertIsNone(physics.daily_sunlight_fraction(18.45, 90, None))
+        self.assertGreater(physics.dust_opacity(18.45, 77.45, 250), tau)   # storm season is dustier at Jezero
+
+    def plan(self, vehicle, ls=90):
+        import app as planner
+        client = TestClient(planner.app)
+        r = client.post("/api/plan", json={"region": "jezero", "vehicle": vehicle, "budget_hours": 8, "ls": ls,
+                                           "base": BASE, "target": TARGET})
+        self.assertEqual(r.status_code, 200)
+        return r.json()
+
+    def test_walker_oxygen_follows_the_terrain(self):
+        s = self.plan("astronaut")["stats"]
+        self.assertEqual(s["o2_max_kg"], 0.91)                      # NASA design basis, 0.912 kg
+        self.assertIsNotNone(s["slope_o2_factor"])
+        self.assertGreater(s["elevation_gain_m"], 0)
+        self.assertGreater(s["terrain_o2_factor"], 1.0)             # this ground costs more than flat, firm ground
+        self.assertAlmostEqual(s["o2_used_kg"], 0.114 * s["o2_flat_pace_h"] * s["slope_o2_factor"], delta=0.02)
+        self.assertLessEqual(s["o2_flat_pace_h"], s["round_trip_h"])
+        self.assertEqual(s["power_source"], "suit")
+
+    def test_reserve_grows_in_dust_season(self):
+        calm, storm = self.plan("astronaut", 90)["stats"], self.plan("astronaut", 250)["stats"]
+        self.assertEqual(calm["reserve_pct"], 15)
+        self.assertEqual(storm["reserve_pct"], 20)
+        self.assertLess(storm["o2_usable_kg"], calm["o2_usable_kg"])
+        self.assertLess(storm["max_range_km"], calm["max_range_km"])
+
+    def test_vehicles_pay_for_climbing_and_dust(self):
+        rover = self.plan("pressurized_rover")["stats"]
+        self.assertGreater(rover["climb_kwh"], 0)
+        self.assertIsNotNone(rover["recharge_h"])
+        stormy = self.plan("pressurized_rover", 250)
+        self.assertGreater(stormy["stats"]["recharge_h"], rover["recharge_h"])
+        self.assertTrue(any("sunlight" in w for w in stormy["warnings"]))
+        mer = self.plan("mer")["stats"]
+        self.assertEqual(mer["power_source"], "solar")
+        self.assertGreater(mer["recharge_sols"], 0)
+        nuclear = self.plan("perseverance", 250)
+        self.assertEqual(nuclear["stats"]["power_source"], "nuclear")
+        self.assertIsNone(nuclear["stats"]["recharge_sols"])
+        self.assertFalse(any("sunlight" in w for w in nuclear["warnings"]))
+
+    def test_mission_planner_still_runs(self):
+        import app as planner
+        client = TestClient(planner.app)
+        r = client.post("/api/mission", json={"region": "jezero", "goal": "sample clay in the delta", "vehicle": "on_foot",
+                                              "season": "northern_summer", "priority": "safety"})
+        self.assertEqual(r.status_code, 200)
+        cands = r.json()["candidates"]
+        self.assertTrue(cands)
+        o2 = cands[0]["resources"]["items"][0]
+        self.assertEqual(o2["name"], "oxygen")
+        self.assertAlmostEqual(o2["capacity"], 0.91, places=2)
 
 
 class PerseveranceVehicle(unittest.TestCase):

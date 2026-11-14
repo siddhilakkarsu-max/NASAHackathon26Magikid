@@ -206,34 +206,33 @@ def _c6(r):
 
 
 # =============================================================== SAFETY (from the planned route)
-@rule("S1", "safety", "Round trip does not fit the suit's oxygen", "V",
-      evidence=["O2 design rate 0.114 kg/h (NASA Mars suit design basis)"],
-      srcs=("sbir_mars_plss", "bvad2"),
-      explain="Checks the planned round trip against the suit's capacity, both at the planner's own rate and at "
-              "NASA's Mars design rate.")
+@rule("S1", "safety", "Round trip does not fit the suit's oxygen after the reserve", "V",
+      evidence=["O2 design rate 0.114 kg/h (NASA Mars suit design basis)", "Slope effect from Minetti et al. 2002",
+                "15-20% contingency reserve (team research)"],
+      srcs=("sbir_mars_plss", "minetti2002", "team_resources"),
+      explain="Uses the planner's terrain-aware oxygen for the route when it has one, otherwise NASA's design rate "
+              "times the round-trip hours, and compares it with what the suit carries less the reserve.")
 def _s1(r):
     if not (r.suited and r.route and r.route.round_trip_h):
         return None
-    cap = None
     try:
-        from config import VEHICLES
+        from config import CONSUMABLE_RESERVE, VEHICLES
         cap = VEHICLES["astronaut"]["consumables"]["o2_capacity_kg"]
+        default_reserve = CONSUMABLE_RESERVE["normal"]
     except Exception:
-        pass
-    design = RATES["suit_o2_design"][0]
-    need = design * r.route.round_trip_h
-    over_planner = (r.route.o2_pct or 0) > 100
-    over_design = cap is not None and need > cap
-    if not (over_planner or over_design):
         return None
-    why = ("exceeds the planner's own O2 limit" if over_planner
-           else "fits at the planner's rate but not at NASA's Mars design rate")
-    return Hit(f"Round trip {n(r.route.round_trip_h)} h needs {n(need, 2)} kg at {design} kg/h; suit carries "
-               f"{n(cap, 2) if cap else '?'} kg. It {why}.",
+    rt = r.route
+    reserve = (rt.reserve_pct / 100) if rt.reserve_pct is not None else default_reserve
+    need = rt.o2_used_kg if rt.o2_used_kg is not None else RATES["suit_o2_design"][0] * rt.round_trip_h
+    usable = cap * (1 - reserve)
+    if need <= usable:
+        return None
+    over = "more than the suit carries" if need > cap else f"into the {reserve:.0%} reserve"
+    return Hit(f"Round trip {n(rt.round_trip_h)} h needs {n(need, 2)} kg of {n(cap, 2)} kg: {over}",
                [A("v_pressurized_rover", "Vehicle support so the suit is not the limiting supply", qty=1)],
-               warnings=[f"Suited O2 for this round trip is {n(need, 2)} kg at NASA's design rate against "
-                         f"{n(cap, 2) if cap else '?'} kg carried."],
-               observed=f"{n(need, 2)} kg needed", threshold=f"{n(cap, 2) if cap else '?'} kg carried")
+               warnings=[f"Suit oxygen for this round trip is {n(need, 2)} kg against {n(usable, 2)} kg usable after "
+                         f"the {reserve:.0%} reserve ({n(cap, 2)} kg carried)."],
+               observed=f"{n(need, 2)} kg needed", threshold=f"{n(usable, 2)} kg usable")
 
 
 @rule("S2", "safety", "Work site is more than 30 minutes from shelter", "V",

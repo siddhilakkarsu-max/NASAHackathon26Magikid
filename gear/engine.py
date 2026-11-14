@@ -154,7 +154,12 @@ def build_manifest(ctx: MissionContext, adjustments: Optional[dict] = None, reso
     applied = _apply_adjustments(merged, adjustments, r, warnings)
     rows, carry = _assign_carriers(merged, r, warnings)
 
-    budget = size_consumables(r)
+    budget = size_consumables(r, carry)
+    loaded = budget.get("route_with_load")
+    if loaded and loaded["over_usable"]:
+        warnings.append(f"With {loaded['per_person_kg']:g} kg carried per person, the round trip needs "
+                        f"{loaded['o2_kg']:.2f} kg of oxygen, more than the {loaded['usable_kg']:g} kg usable after "
+                        "the reserve. Move tools to a vehicle or shorten the route.")
     lines = {ln["label"]: ln["value"] for g in budget["groups"] for ln in g["lines"]}
     # what one crew member uses on one EVA, shown on the consumables rows
     per_use = {"c_suit_o2": lines.get("Suit oxygen, one EVA (design rate)"),
