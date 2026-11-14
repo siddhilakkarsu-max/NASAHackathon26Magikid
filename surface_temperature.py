@@ -77,12 +77,21 @@ def temperature_overlay(rect, shape, local_hour, ls):
     a, ti = albedo[area], inertia[area]
     temperature = np.full(a.shape, np.nan, dtype=np.float32)
     valid_rows, valid_cols = np.nonzero(np.isfinite(a) & np.isfinite(ti) & (ti > 0))
+    # Interpolate the coarser atmosphere at the centers of the thermal cells.
+    # Dust columns are centered on -180°, -175°, … and wrap at the date line.
     dust = visible_dust_grid(ls)
+    y = np.clip((unique_rows - 4.5) / 10, 0, dust.shape[0] - 1)
+    x = (unique_cols + 0.5) / 10
+    y0, x0 = np.floor(y).astype(int), np.floor(x).astype(int)
+    y1 = np.minimum(y0 + 1, dust.shape[0] - 1)
+    x1 = (x0 + 1) % dust.shape[1]
+    fy, fx = (y - y0)[:, None], (x - x0)[None, :]
+    north = dust[np.ix_(y0, x0)] * (1 - fx) + dust[np.ix_(y0, x1)] * fx
+    south = dust[np.ix_(y1, x0)] * (1 - fx) + dust[np.ix_(y1, x1)] * fx
+    opacity = north * (1 - fy) + south * fy
     for start in range(0, len(valid_rows), 4096):
         r = valid_rows[start:start + 4096]
         c = valid_cols[start:start + 4096]
         centers = 89.75 - unique_rows[r] / 2
-        dust_cols = ((unique_cols[c] + 5) // 10) % 72
-        opacity = dust[unique_rows[r] // 10, dust_cols]
-        temperature[r, c] = _simulate_cells(centers, a[r, c], ti[r, c], opacity, local_hour, ls)
+        temperature[r, c] = _simulate_cells(centers, a[r, c], ti[r, c], opacity[r, c], local_hour, ls)
     return temperature[np.ix_(row_index, col_index)]
