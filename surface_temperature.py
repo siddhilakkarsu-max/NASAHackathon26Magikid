@@ -5,6 +5,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 import numpy as np
+from mars_weather import visible_dust_grid
 
 
 GRID_PATH = Path(__file__).parent / "thermal_data" / "mars_grid.zip"
@@ -31,7 +32,7 @@ def thermal_grid():
     return grid[:, :, 2], grid[:, :, 3]
 
 
-def _simulate_cells(lat, albedo, inertia, local_hour, ls):
+def _simulate_cells(lat, albedo, inertia, opacity, local_hour, ls):
     """Solve a periodic, linearized radiative/conductive energy balance."""
     season = np.deg2rad(ls % 360)
     declination = np.arcsin(np.sin(np.deg2rad(25.19)) * np.sin(season))
@@ -45,9 +46,7 @@ def _simulate_cells(lat, albedo, inertia, local_hour, ls):
     cos_zenith = (np.sin(latitude) * np.sin(declination)
                   + np.cos(latitude) * np.cos(declination) * np.cos(sample_angle))
     direct = np.maximum(cos_zenith, 0)
-    # Fixed illustrative atmosphere. Replace with a wavelength-compatible
-    # seasonal dust opacity and atmospheric longwave input when available.
-    transmission = np.exp(-0.3 / np.maximum(direct, 0.05))
+    transmission = np.exp(-opacity[:, None] / np.maximum(direct, 0.05))
     absorbed = (1 - albedo[:, None]) * top_of_atmosphere * direct * transmission
     mean_flux = absorbed.mean(axis=1) + 25.0  # fixed downwelling longwave, W/m²
     emission = EMISSIVITY * STEFAN_BOLTZMANN
@@ -78,9 +77,12 @@ def temperature_overlay(rect, shape, local_hour, ls):
     a, ti = albedo[area], inertia[area]
     temperature = np.full(a.shape, np.nan, dtype=np.float32)
     valid_rows, valid_cols = np.nonzero(np.isfinite(a) & np.isfinite(ti) & (ti > 0))
+    dust = visible_dust_grid(ls)
     for start in range(0, len(valid_rows), 4096):
         r = valid_rows[start:start + 4096]
         c = valid_cols[start:start + 4096]
         centers = 89.75 - unique_rows[r] / 2
-        temperature[r, c] = _simulate_cells(centers, a[r, c], ti[r, c], local_hour, ls)
+        dust_cols = ((unique_cols[c] + 5) // 10) % 72
+        opacity = dust[unique_rows[r] // 10, dust_cols]
+        temperature[r, c] = _simulate_cells(centers, a[r, c], ti[r, c], opacity, local_hour, ls)
     return temperature[np.ix_(row_index, col_index)]

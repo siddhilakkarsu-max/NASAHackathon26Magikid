@@ -16,11 +16,13 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from matplotlib import colormaps
+from matplotlib.colors import to_hex
 from PIL import Image
 from pydantic import BaseModel, Field
 
 import physics
 from config import MARS_RADIUS_M, SCIENCE_TARGETS, VEHICLES
+from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer
 from surface_temperature import temperature_overlay
 
 ROOT = Path(__file__).parent
@@ -84,7 +86,8 @@ def to_png(arr, cmap="viridis", vmin=None, vmax=None, alpha=0.65, max_px=1600):
 
 
 def legend(name, unit, lo, hi, cmap):
-    return {"name": name, "unit": unit, "min": round(float(lo), 2), "max": round(float(hi), 2), "cmap": cmap}
+    return {"name": name, "unit": unit, "min": round(float(lo), 2), "max": round(float(hi), 2), "cmap": cmap,
+            "colors": [to_hex(colormaps[cmap](fraction)) for fraction in np.linspace(0, 1, 9)]}
 
 
 class Point(BaseModel):
@@ -148,14 +151,23 @@ def pixel(lat: float, lon: float, region: str = "jezero"):
 @app.post("/api/layer/{name}")
 def layer(name: str, cond: Conditions):
     """Coloured overlay of one band or one computed layer, for the current conditions."""
-    c = get_cube(cond.region)
-    if name == "temperature":
-        arr = temperature_overlay(c.rect, (c.H, c.W), cond.local_hour, cond.ls)
+    if name in WEATHER_LAYERS:
+        title, unit, lo, hi, cmap = WEATHER_LAYERS[name]
+        arr = weather_layer(name, cond.local_hour, cond.ls)
+        finite = arr[np.isfinite(arr)]
+        return {"image": to_png(arr, cmap, lo, hi, alpha=0.75), "rect": GLOBAL_RECT,
+                "legend": legend(title, unit, lo, hi, cmap),
+                "weather": True,
+                "data_range": [round(float(finite.min()), 2), round(float(finite.max()), 2)] if finite.size else None}
+    c = None if name == "global_temperature" else get_cube(cond.region)
+    if name in ("temperature", "global_temperature"):
+        rect, shape = (GLOBAL_RECT, (360, 720)) if c is None else (c.rect, (c.H, c.W))
+        arr = temperature_overlay(rect, shape, cond.local_hour, cond.ls)
         lo, hi, cmap = 140, 330, "coolwarm"
-        sun_e, sun_az = physics.sun_position((c.s + c.n) / 2, cond.local_hour, cond.ls)
+        sun_e, sun_az = physics.sun_position((rect["south"] + rect["north"]) / 2, cond.local_hour, cond.ls)
         valid = arr[np.isfinite(arr)]
         observed_range = [round(float(valid.min()), 1), round(float(valid.max()), 1)] if valid.size else None
-        return {"image": to_png(arr, cmap, lo, hi), "rect": c.rect,
+        return {"image": to_png(arr, cmap, lo, hi), "rect": rect,
                 "legend": legend("Simulated surface temperature", "K", lo, hi, cmap),
                 "temperature_range": observed_range,
                 "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
