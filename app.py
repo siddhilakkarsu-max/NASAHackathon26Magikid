@@ -16,7 +16,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from matplotlib import colormaps
-from matplotlib.colors import to_hex
+from matplotlib.colors import LinearSegmentedColormap, to_hex
 from PIL import Image
 from pydantic import BaseModel, Field
 
@@ -29,6 +29,16 @@ ROOT = Path(__file__).parent
 app = FastAPI(title="Mars Marswalk Planner")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# Violet shadows, icy blues, cream, and copper inspired by false-color imagery.
+THERMAL_PALETTE = LinearSegmentedColormap.from_list("mars_thermal", [
+    (0.00, "#291444"), (0.18, "#4d3690"), (0.32, "#6b9dcc"),
+    (0.43, "#aed3df"), (0.51, "#f4e6db"), (0.65, "#eaba99"),
+    (0.78, "#c26d52"), (1.00, "#641a34"),
+])
+
+
+def layer_palette(name):
+    return THERMAL_PALETTE if name == "mars_thermal" else colormaps[name]
 
 # ------------------------------------------------------------- cube I/O ----
 class Cube:
@@ -78,7 +88,7 @@ def to_png(arr, cmap="viridis", vmin=None, vmax=None, alpha=0.65, max_px=1600):
     lo = np.nanpercentile(a[~bad], 2) if vmin is None else vmin
     hi = np.nanpercentile(a[~bad], 98) if vmax is None else vmax
     norm = np.clip((np.where(bad, lo, a) - lo) / max(hi - lo, 1e-9), 0, 1)
-    rgba = (colormaps[cmap](norm) * 255).astype("uint8")
+    rgba = (layer_palette(cmap)(norm) * 255).astype("uint8")
     rgba[..., 3] = np.where(bad, 0, int(alpha * 255))
     buf = io.BytesIO()
     Image.fromarray(rgba).save(buf, format="PNG")
@@ -87,7 +97,7 @@ def to_png(arr, cmap="viridis", vmin=None, vmax=None, alpha=0.65, max_px=1600):
 
 def legend(name, unit, lo, hi, cmap):
     return {"name": name, "unit": unit, "min": round(float(lo), 2), "max": round(float(hi), 2), "cmap": cmap,
-            "colors": [to_hex(colormaps[cmap](fraction)) for fraction in np.linspace(0, 1, 9)]}
+            "colors": [to_hex(layer_palette(cmap)(fraction)) for fraction in np.linspace(0, 1, 17)]}
 
 
 class Point(BaseModel):
@@ -163,11 +173,11 @@ def layer(name: str, cond: Conditions):
     if name in ("temperature", "global_temperature"):
         rect, shape = (GLOBAL_RECT, (360, 720)) if c is None else (c.rect, (c.H, c.W))
         arr = temperature_overlay(rect, shape, cond.local_hour, cond.ls)
-        lo, hi, cmap = 140, 330, "coolwarm"
+        lo, hi, cmap = 145, 315, "mars_thermal"
         sun_e, sun_az = physics.sun_position((rect["south"] + rect["north"]) / 2, cond.local_hour, cond.ls)
         valid = arr[np.isfinite(arr)]
         observed_range = [round(float(valid.min()), 1), round(float(valid.max()), 1)] if valid.size else None
-        return {"image": to_png(arr, cmap, lo, hi), "rect": rect,
+        return {"image": to_png(arr, cmap, lo, hi, alpha=0.88), "rect": rect,
                 "legend": legend("Simulated surface temperature", "K", lo, hi, cmap),
                 "temperature_range": observed_range,
                 "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}

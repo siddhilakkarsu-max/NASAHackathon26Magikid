@@ -2,15 +2,18 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Marswalk Planner</title>
 <script src="https://cesium.com/downloads/cesiumjs/releases/1.147/Build/Cesium/Cesium.js"></script>
 <link href="https://cesium.com/downloads/cesiumjs/releases/1.147/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
 <style>
   /* Designers: restyle freely. Everything visual lives in this file. */
   :root { --bg: rgba(18, 12, 10, 0.88); --fg: #f3e7dd; --accent: #e0703a; --muted: #b9a79a; }
-  html, body, #map { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
-  #panel { position: absolute; top: 12px; left: 12px; width: 320px; max-height: calc(100% - 24px); overflow: auto;
-           background: var(--bg); color: var(--fg); border-radius: 10px; padding: 14px; font-size: 13px; z-index: 10; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; background: #000; }
+  body { display: grid; grid-template-columns: min(310px, 34vw) minmax(0, 1fr); }
+  #map { grid-area: 1 / 2; min-width: 0; min-height: 0; overflow: hidden; }
+  #panel { grid-area: 1 / 1; min-height: 0; overflow: auto;
+           background: var(--bg); color: var(--fg); padding: 14px; font-size: 13px; z-index: 10; }
   h1 { font-size: 17px; margin: 0 0 8px; color: var(--accent); }
   h2 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
   label { display: block; margin: 6px 0 2px; }
@@ -23,6 +26,11 @@
   #warn { color: #ffb08a; }
   #legend { height: 10px; border-radius: 4px; margin-top: 4px; }
   .small { color: var(--muted); font-size: 11px; }
+  @media (max-width: 600px) {
+    body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 55% minmax(0, 1fr); }
+    #map { grid-area: 1 / 1; }
+    #panel { grid-area: 2 / 1; }
+  }
 </style>
 </head>
 <body>
@@ -42,6 +50,10 @@
   <input type="range" id="budget" min="1" max="8" step="0.5" value="4" />
 
   <h2>Map layer</h2>
+  <div class="row">
+    <button id="wholeMars" class="secondary" type="button">Whole Mars</button>
+    <button id="zoomRegion" class="secondary" type="button">Zoom to region</button>
+  </div>
   <select id="layer">
     <option value="">(none)</option>
     <option value="imagery">CTX image (6 m, sharp)</option>
@@ -49,9 +61,9 @@
     <option value="firmness">Ground firmness (THEMIS night)</option>
     <option value="cost">Travel cost</option>
     <option value="illumination">Sunlight on slopes</option>
-    <option value="temperature" selected>Simulated surface temperature (K)</option>
+    <option value="temperature">Regional simulated surface temperature</option>
     <optgroup label="Global weather">
-      <option value="global_temperature">Global simulated surface temperature</option>
+      <option value="global_temperature" selected>Global simulated surface temperature</option>
       <option value="air_temperature">Near-surface air temperature</option>
       <option value="surface_pressure">Surface pressure</option>
       <option value="wind_speed">Near-surface wind speed</option>
@@ -101,6 +113,10 @@ const viewer = new Cesium.Viewer("map", {
 });
 if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false;
 if (viewer.scene.globe) viewer.scene.globe.showGroundAtmosphere = false;
+if (viewer.scene.skyBox) viewer.scene.skyBox.show = false;
+if (viewer.scene.sun) viewer.scene.sun.show = false;
+if (viewer.scene.moon) viewer.scene.moon.show = false;
+viewer.scene.backgroundColor = Cesium.Color.BLACK;
 
 let tileset = null;
 (async () => {
@@ -114,7 +130,7 @@ let tileset = null;
 
 // ---------------------------------------------------------------- state ----
 let regions = [], current = null, overlay = [], mode = null;
-let base = null, target = null;
+let base = null, target = null, layerRequest = 0;
 const marks = viewer.entities;
 
 function conditions() {
@@ -136,13 +152,15 @@ async function api(path, body) {
 }
 
 // -------------------------------------------------------------- overlays ----
-async function showImage(dataUrl, rect, keep = false) {
-  if (!keep) clearOverlay();
+async function showImage(dataUrl, rect, keep = false, request = layerRequest) {
   const provider = await Cesium.SingleTileImageryProvider.fromUrl(dataUrl, {
     rectangle: Cesium.Rectangle.fromDegrees(rect.west, rect.south, rect.east, rect.north) });
+  if (request !== layerRequest) return false;
+  if (!keep) clearOverlay();
   const layer = new Cesium.ImageryLayer(provider);
   (tileset ? tileset.imageryLayers : viewer.imageryLayers).add(layer);
   overlay.push(layer);
+  return true;
 }
 function clearOverlay() {
   for (const l of overlay) (tileset ? tileset.imageryLayers : viewer.imageryLayers).remove(l, true);
@@ -150,11 +168,12 @@ function clearOverlay() {
 }
 
 async function refreshLayer() {
+  const request = ++layerRequest;
   const name = $("layer").value;
   if (!name) { clearOverlay(); $("legend").style.background = "none"; $("legendText").textContent = ""; return; }
   try {
     const res = await api(`/api/layer/${name}`, conditions());
-    await showImage(res.image, res.rect);
+    if (request !== layerRequest || !await showImage(res.image, res.rect, false, request)) return;
     const lg = res.legend;
     $("legend").style.background = `linear-gradient(90deg, ${lg.colors.join(", ")})`;
     if (res.weather) {
@@ -166,12 +185,12 @@ async function refreshLayer() {
     } else if ("temperature_range" in res) {
       const range = res.temperature_range;
       $("legendText").textContent = range
-        ? `Simulated range ${range[0]}–${range[1]} K · Color scale ${lg.min}–${lg.max} K`
+        ? `${name === "global_temperature" ? "Global" : "Regional"} simulated range ${range[0]}–${range[1]} K · Color scale ${lg.min}–${lg.max} K. Uncolored terrain has no thermal inertia data.`
         : "No thermal inertia data for this view.";
     } else {
       $("legendText").textContent = `${lg.min} → ${lg.max} ${lg.unit}   ·   sun ${res.sun.elevation}° up`;
     }
-  } catch (e) { $("status").textContent = e.message; }
+  } catch (e) { if (request === layerRequest) $("status").textContent = e.message; }
 }
 
 // --------------------------------------------------------------- picking ----
@@ -217,6 +236,7 @@ $("plan").onclick = async () => {
   $("explain").textContent = "Planning…"; $("warn").textContent = "";
   try {
     const res = await api("/api/plan", { ...conditions(), base, target });
+    ++layerRequest;
     $("layer").value = ""; clearOverlay();
     await showImage(res.walkback_image, res.rect, true);         // green = can go AND come back
     marks.removeById("route");
@@ -236,14 +256,38 @@ $("plan").onclick = async () => {
 function flyTo(r) {
   viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
 }
+function showWholeMars() {
+  const canvas = viewer.scene.canvas;
+  const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+  const halfAngle = Math.atan(Math.tan(viewer.camera.frustum.fov / 2) * Math.min(aspect, 1 / aspect) * 0.91);
+  const distance = MARS.maximumRadius * (1 / Math.sin(halfAngle) - 1);
+  viewer.camera.setView({
+    destination: Cesium.Cartesian3.fromDegrees(15, 4, distance, MARS),
+    orientation: { heading: 0, pitch: -Math.PI / 2, roll: 0 },
+  });
+}
+function globalLayerSelected() {
+  return $("layer").selectedOptions[0]?.parentElement.tagName === "OPTGROUP";
+}
+showWholeMars();
+$("wholeMars").onclick = () => {
+  $("layer").value = "global_temperature";
+  showWholeMars();
+  refreshLayer();
+};
+$("zoomRegion").onclick = () => { if (current) flyTo(current.rect); };
 ["hour", "ls", "budget"].forEach((id) => $(id).addEventListener("input", labels));
 ["hour", "ls", "vehicle"].forEach((id) => $(id).addEventListener("change", refreshLayer));
-$("layer").onchange = refreshLayer;
+$("layer").onchange = () => {
+  if (globalLayerSelected()) showWholeMars();
+  else if ($("layer").value && current) flyTo(current.rect);
+  refreshLayer();
+};
 $("region").onchange = () => {
   current = regions.find((r) => r.region === $("region").value);
   $("targets").innerHTML = '<option value="">…or pick a science target</option>' +
     current.targets.map((t, i) => `<option value="${i}">${t.name}</option>`).join("");
-  flyTo(current.rect);
+  if (!globalLayerSelected()) flyTo(current.rect);
   $("status").textContent = `${current.size[0]}×${current.size[1]} px · ~${current.pixel_m[1]} m/px · ` +
     `bands: ${current.bands.join(", ")}`;
   refreshLayer();
@@ -256,7 +300,10 @@ labels();
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
     $("region").innerHTML = regions.map((r) => `<option>${r.region}</option>`).join("");
     if (regions.length) $("region").onchange();
-    else $("status").textContent = "No cubes yet. Run: python make_demo_cube.py";
+    else {
+      $("status").textContent = "Global view available. Load a region cube for route planning.";
+      refreshLayer();
+    }
   } catch (e) { $("status").textContent = "Back end not reachable: " + e.message; }
 })();
 </script>
