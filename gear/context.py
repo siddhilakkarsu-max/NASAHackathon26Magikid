@@ -114,6 +114,12 @@ class TerrainSignals(BaseModel):
     mean_firmness: Optional[float] = Field(None, description="0 = loose sand or dust, 1 = bedrock (THEMIS night proxy)")
     min_firmness: Optional[float] = None
     loose_fraction: Optional[float] = Field(None, description="share of route pixels with firmness below 0.3")
+    ti_mean: Optional[float] = Field(None, description="mean THEMIS thermal inertia along the route (J m^-2 K^-1 s^-1/2)")
+    ti_min: Optional[float] = Field(None, description="lowest thermal inertia along the route")
+    ti_samples: Optional[int] = Field(None, description="route pixels with a measured thermal inertia")
+    dust_fraction: Optional[float] = Field(None, description="share of measured route pixels with thermal inertia below 150 (fine dust)")
+    sand_fraction: Optional[float] = Field(None, description="share with thermal inertia 150 to 300 (sand)")
+    ti_loose_fraction: Optional[float] = Field(None, description="share with thermal inertia below 300 (dust or sand)")
     roughness_ratio: Optional[float] = Field(None, description="route roughness divided by the cube's 95th percentile")
     surface_temp_min_k: Optional[float] = None
     surface_temp_mean_k: Optional[float] = None
