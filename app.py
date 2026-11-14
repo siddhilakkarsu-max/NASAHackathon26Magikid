@@ -153,8 +153,11 @@ def layer(name: str, cond: Conditions):
         arr = temperature_overlay(c.rect, (c.H, c.W), cond.local_hour, cond.ls)
         lo, hi, cmap = 140, 330, "coolwarm"
         sun_e, sun_az = physics.sun_position((c.s + c.n) / 2, cond.local_hour, cond.ls)
+        valid = arr[np.isfinite(arr)]
+        observed_range = [round(float(valid.min()), 1), round(float(valid.max()), 1)] if valid.size else None
         return {"image": to_png(arr, cmap, lo, hi), "rect": c.rect,
                 "legend": legend("Simulated surface temperature", "K", lo, hi, cmap),
+                "temperature_range": observed_range,
                 "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
     v, sun_e, sun_az, illum, cost = conditions_layers(c, cond)
     if name in c.bands:

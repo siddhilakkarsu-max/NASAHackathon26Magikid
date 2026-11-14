@@ -35,7 +35,7 @@
   <label>Region <select id="region"></select></label>
   <label>Who is travelling <select id="vehicle"></select></label>
   <label>Local solar time: <b id="hourVal"></b></label>
-  <input type="range" id="hour" min="5" max="19" step="0.25" value="11" />
+  <input type="range" id="hour" min="0" max="24" step="0.25" value="11" />
   <label>Season (Ls): <b id="lsVal"></b></label>
   <input type="range" id="ls" min="0" max="355" step="5" value="90" />
   <label>EVA budget (hours): <b id="budgetVal"></b></label>
@@ -49,7 +49,7 @@
     <option value="firmness">Ground firmness (THEMIS night)</option>
     <option value="cost">Travel cost</option>
     <option value="illumination">Sunlight on slopes</option>
-    <option value="temperature">Simulated surface temperature (K)</option>
+    <option value="temperature" selected>Simulated surface temperature (K)</option>
     <option value="shelter">Minutes to shelter</option>
     <option value="elevation">Elevation</option>
   </select>
@@ -148,8 +148,17 @@ async function refreshLayer() {
     const res = await api(`/api/layer/${name}`, conditions());
     await showImage(res.image, res.rect);
     const lg = res.legend;
-    $("legend").style.background = "linear-gradient(90deg, #222, #ddd)";
-    $("legendText").textContent = `${lg.min} → ${lg.max} ${lg.unit}   ·   sun ${res.sun.elevation}° up`;
+    $("legend").style.background = name === "temperature"
+      ? "linear-gradient(90deg, #3b4cc0, #ddd, #b40426)"
+      : "linear-gradient(90deg, #222, #ddd)";
+    if (name === "temperature") {
+      const range = res.temperature_range;
+      $("legendText").textContent = range
+        ? `Simulated range ${range[0]}–${range[1]} K · Color scale ${lg.min}–${lg.max} K`
+        : "No thermal inertia data for this view.";
+    } else {
+      $("legendText").textContent = `${lg.min} → ${lg.max} ${lg.unit}   ·   sun ${res.sun.elevation}° up`;
+    }
   } catch (e) { $("status").textContent = e.message; }
 }
 
@@ -225,6 +234,7 @@ $("region").onchange = () => {
   flyTo(current.rect);
   $("status").textContent = `${current.size[0]}×${current.size[1]} px · ~${current.pixel_m[1]} m/px · ` +
     `bands: ${current.bands.join(", ")}`;
+  refreshLayer();
 };
 labels();
 (async () => {
