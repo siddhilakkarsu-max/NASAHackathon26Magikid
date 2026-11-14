@@ -124,6 +124,8 @@ NASA document; otherwise it is `assumed` and the page says so.
 - The hand-carry limit is 22.7 kg per person (the 50 lbm tool and sample allowance in NASA's Mars suit study,
   excerpt-level source). When a team's load goes over it, items move to a rover if one is in the kit, otherwise a
   hand cart is added.
-- The planner's astronaut oxygen numbers (0.085 kg/h, 0.68 kg) are compared against NASA's Mars design rate of
-  0.114 kg/h in rule S1 and in the budget. See section 7 of the research file.
+- Suit oxygen follows NASA's Mars design basis (0.114 kg/h, 0.912 kg). On a planned route the planner adjusts it
+  for slope and holds back a 15-20 % reserve. Rule S1 fires when the round trip needs more than what is usable
+  after the reserve. The budget then adds the kit's hand-carried load, and a separate warning fires if that load
+  pushes the trip past the reserve.
 - `published` is held in memory, one kit, and is lost on restart.

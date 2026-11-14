@@ -87,6 +87,23 @@ class RouteStats(BaseModel):
     energy_pct: Optional[float] = None
     max_range_km: Optional[float] = None
     limiting_factor: Optional[str] = None
+    endurance_h: Optional[float] = None
+    reserve_pct: Optional[float] = None
+    o2_usable_kg: Optional[float] = None
+    energy_usable_kwh: Optional[float] = None
+    o2_flat_kg: Optional[float] = None
+    terrain_o2_factor: Optional[float] = None
+    slope_o2_factor: Optional[float] = None
+    o2_flat_pace_h: Optional[float] = None
+    climb_kwh: Optional[float] = None
+    elevation_gain_m: Optional[float] = None
+    elevation_loss_m: Optional[float] = None
+    power_source: Optional[str] = None
+    dust_opacity: Optional[float] = None
+    sunlight_pct: Optional[float] = None
+    solar_kwh_per_sol: Optional[float] = None
+    recharge_sols: Optional[float] = None
+    recharge_h: Optional[float] = None
 
 
 class TerrainSignals(BaseModel):

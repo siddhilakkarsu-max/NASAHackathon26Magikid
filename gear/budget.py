@@ -1,10 +1,12 @@
-"""
+﻿"""
 Consumables and dose budget.
 
 Every line carries its formula, so a reader can see how the number was made and which input is
 published and which is a choice. Rates come from MISSION_EQUIPMENT_RESEARCH.md.
 """
 import math
+
+import physics
 
 from .context import Resolved
 from .sources import CONFIDENCE, sources
@@ -49,7 +51,8 @@ def personal_allowance_kg(days):
     return 50
 
 
-def size_consumables(r: Resolved):
+def size_consumables(r: Resolved, carry=None):
+    """carry: the engine's carry-load result, so the route's oxygen can include what the team carries."""
     groups = []
 
     # ---- suit consumables
@@ -96,19 +99,74 @@ def size_consumables(r: Resolved):
     ]
     groups.append({"id": "cabin", "label": "Cabin and crew supplies", "lines": cabin})
 
-    # ---- route energy, only when a route was planned
+    # ---- this route, as the planner costed it (terrain, reserve, dust), plus what the team carries
+    loaded = None
     if r.route and (r.route.o2_used_kg is not None or r.route.energy_used_kwh is not None):
-        lines = []
-        rt = r.route
+        lines, rt = [], r.route
+        climb = (f"climbs {rt.elevation_gain_m:g} m out and {rt.elevation_loss_m:g} m back"
+                 if rt.elevation_gain_m is not None else "no elevation data")
         if rt.o2_used_kg is not None:
-            lines.append(_line("Planner: round-trip suit oxygen", rt.o2_used_kg, "kg",
-                               f"planner rate x {rt.round_trip_h:g} h round trip; capacity {rt.o2_max_kg} kg "
-                               f"({rt.o2_pct}%)", "I", ("sbir_mars_plss",), per="this route",
-                               note="Uses the planner's own rate. See the planner check below."))
+            if rt.slope_o2_factor is not None and rt.o2_flat_pace_h is not None:
+                formula = (f"0.114 kg/h x {rt.o2_flat_pace_h:g} h at flat-ground pace x slope effect "
+                           f"{rt.slope_o2_factor:g}")
+            else:
+                formula = f"0.114 kg/h x {rt.round_trip_h:g} h"
+            lines.append(_line("Round-trip suit oxygen on this route", rt.o2_used_kg, "kg",
+                               formula, "I", ("sbir_mars_plss", "minetti2002"),
+                               per="this route",
+                               note=f"Route {climb}. Effort rises uphill and falls downhill (Minetti 2002); "
+                                    f"capacity {rt.o2_max_kg} kg, so {rt.o2_pct:g}% used."))
+            if rt.o2_flat_kg is not None:
+                lines.append(_line("Same distance on flat, firm ground", rt.o2_flat_kg, "kg",
+                                   f"0.114 kg/h x 2 x {rt.distance_km:g} km at flat walking pace", "I", ("sbir_mars_plss",),
+                                   per="comparison",
+                                   note=f"This ground costs {rt.terrain_o2_factor:g}x that: slow sand and rough rock "
+                                        "stretch the time, slopes change the effort."))
+            if rt.o2_usable_kg is not None:
+                lines.append(_line(f"Usable after the {rt.reserve_pct:g}% reserve", rt.o2_usable_kg, "kg",
+                                   f"{rt.o2_max_kg} kg x (1 - {rt.reserve_pct / 100:g})", "I", ("team_resources",),
+                                   per="this route", note="15 percent, 20 percent in the dust-storm season (Ls 180-330)."))
+            per_person = (carry["load_kg"] / max(carry["team_size"], 1)) if carry else 0.0
+            if r.suited and per_person > 0 and r.vehicle == "astronaut":
+                from config import WALKER
+                f = physics.load_factor(per_person, WALKER["body_kg"], WALKER["suit_kg"])
+                o2_loaded = rt.o2_used_kg * f
+                loaded = {"o2_kg": round(o2_loaded, 3), "usable_kg": rt.o2_usable_kg, "factor": round(f, 3),
+                          "per_person_kg": round(per_person, 1),
+                          "over_usable": rt.o2_usable_kg is not None and o2_loaded > rt.o2_usable_kg}
+                lines.append(_line("With the kit's hand-carried load", o2_loaded, "kg",
+                                   f"{rt.o2_used_kg:g} kg x ({WALKER['body_kg']:g} + {WALKER['suit_kg']:g} + "
+                                   f"{per_person:.1f}) / ({WALKER['body_kg']:g} + {WALKER['suit_kg']:g})", "I",
+                                   ("minetti2002", "ices2026_mars_suit"), per="this route",
+                                   note=f"{per_person:.1f} kg per person. Walking cost is per kilogram moved, so load "
+                                        "is charged in proportion to body + suit + load. Body mass is an assumption."))
         if rt.energy_used_kwh is not None:
-            lines.append(_line("Planner: round-trip vehicle energy", rt.energy_used_kwh, "kWh",
+            lines.append(_line("Round-trip vehicle energy", rt.energy_used_kwh, "kWh",
                                f"capacity {rt.energy_max_kwh} kWh ({rt.energy_pct}%)", "I", (), per="this route",
-                               note="The crew rover's loads are a labelled engineering estimate."))
+                               note="Driving plus housekeeping loads for the route's hours. The crew rover's loads "
+                                    "are a labelled engineering estimate."))
+            if rt.climb_kwh is not None:
+                lines.append(_line("of which climbing", rt.climb_kwh, "kWh", f"mass x 3.711 m/s2 x height, route {climb}",
+                                   "I", (), per="this route",
+                                   note="Energy to lift the vehicle up each climb. A lower bound: motor losses add more."))
+        if rt.sunlight_pct is not None:
+            if rt.recharge_sols is not None:
+                lines.append(_line("Sols of sunlight to recharge", rt.recharge_sols, "sols",
+                                   f"{rt.energy_used_kwh:g} kWh / {rt.solar_kwh_per_sol:g} kWh per sol",
+                                   "I", ("insight_dust",), per="this route",
+                                   note=f"Dust lets about {rt.sunlight_pct:g}% of direct sunlight through this season "
+                                        f"(opacity {rt.dust_opacity:g}, from the team's weather data)."))
+            elif rt.recharge_h is not None:
+                lines.append(_line("Hours of charging afterwards", rt.recharge_h, "h",
+                                   f"2 h of charging per hour driven / {rt.sunlight_pct:g}% sunlight", "I",
+                                   ("team_resources",), per="this route",
+                                   note="The 2:1 charge ratio is the team's research figure for battery rovers, "
+                                        f"not a NASA one. Dust opacity {rt.dust_opacity:g} this season."))
+            elif rt.power_source == "nuclear":
+                lines.append(_line("Dust effect on power", 0, "kWh", f"{rt.sunlight_pct:g}% sunlight, nuclear source",
+                                   "P", ("nasa_rover_page",), per="this route",
+                                   note="A radioisotope generator does not need sunlight, so dust storms do not cut "
+                                        "its power."))
         groups.append({"id": "route", "label": "This route", "lines": lines})
 
     # ---- radiation
@@ -123,12 +181,12 @@ def size_consumables(r: Resolved):
                   "are not directly comparable.",
     }
 
-    check = planner_o2_check(r)
-    return {"groups": groups, "radiation": radiation, "planner_check": check}
+    check = planner_o2_check(r, loaded)
+    return {"groups": groups, "radiation": radiation, "planner_check": check, "route_with_load": loaded}
 
 
-def planner_o2_check(r: Resolved):
-    """Compare the planner's own astronaut O2 numbers with NASA's Mars design rate."""
+def planner_o2_check(r: Resolved, loaded=None):
+    """How the planner's suit oxygen is set up, and what this route needs from it."""
     try:
         from config import VEHICLES
         c = VEHICLES["astronaut"]["consumables"]
@@ -137,14 +195,18 @@ def planner_o2_check(r: Resolved):
         return None
     design = RATES["suit_o2_design"][0]
     out = {"planner_rate_kg_h": rate, "planner_capacity_kg": cap, "nasa_design_rate_kg_h": design,
-           "planner_hours_at_design_rate": round(cap / design, 2),
-           "message": (f"The planner assumes {rate} kg/h and {cap} kg carried, which lasts 8 h. At NASA's Mars design "
-                       f"rate of {design} kg/h the same {cap} kg lasts {cap / design:.1f} h."),
-           "confidence": {"tag": "V", **CONFIDENCE["V"]}, "sources": sources(("sbir_mars_plss",))}
-    if r.route and r.route.round_trip_h and r.vehicle == "astronaut":
-        need = design * r.route.round_trip_h
-        out["route_need_at_design_kg"] = round(need, 3)
-        out["route_need_pct_of_capacity"] = round(100 * need / cap)
-        out["message"] += (f" This {r.route.round_trip_h:g} h round trip needs {need:.2f} kg at the design rate, "
-                           f"{100 * need / cap:.0f}% of the suit's capacity.")
+           "message": (f"Suit oxygen uses NASA's Mars design basis: {rate} kg/h with {cap} kg carried, sized for "
+                       f"8 h. On a planned route the rate follows slope and carried load."),
+           "confidence": {"tag": "V", **CONFIDENCE["V"]}, "sources": sources(("sbir_mars_plss", "minetti2002"))}
+    rt = r.route
+    if rt and rt.o2_used_kg is not None and r.suited:
+        out["route_o2_kg"] = rt.o2_used_kg
+        out["message"] += f" This round trip needs {rt.o2_used_kg:g} kg, {rt.o2_pct:g}% of the suit's supply"
+        if loaded:
+            out["route_o2_with_load_kg"] = loaded["o2_kg"]
+            out["message"] += (f", or {loaded['o2_kg']:.2f} kg with {loaded['per_person_kg']:g} kg carried per person")
+        if rt.o2_usable_kg is not None:
+            out["message"] += f". {rt.o2_usable_kg:g} kg is usable after the {rt.reserve_pct:g}% reserve."
+        else:
+            out["message"] += "."
     return out

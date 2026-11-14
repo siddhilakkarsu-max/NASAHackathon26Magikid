@@ -525,6 +525,9 @@ than guessing, and always record where each number came from.
 
 Nothing here has been changed in code. These are things to decide.
 
+> **Update, 2026-11-14:** items 1 and 2 are resolved. The planner now uses NASA's Mars design basis
+> (0.114 kg/h, 0.912 kg) and adjusts it for slope and carried load; see the README's consumables section.
+
 1. **Suit O2 rate.** NASA's Mars design basis is 0.114 kg/h **[V]**, current EVA is 0.076 kg/h **[E]**, and your
    config is 0.085 kg/h. 0.085 is between the two and is not unreasonable for a planning default. The
    0.114 figure is a sizing requirement for the supply system and may include margin, so it is not a
