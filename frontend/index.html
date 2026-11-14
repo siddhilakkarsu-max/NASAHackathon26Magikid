@@ -32,6 +32,27 @@
   #warn { color: #ffb08a; }
   #legend { height: 10px; border-radius: 4px; margin-top: 4px; }
   .small { color: var(--muted); font-size: 11px; }
+
+  /* Consumables readout — one block reused by every traveller */
+  .cons { margin-top: 8px; }
+  .cons-spec { color: var(--muted); font-size: 11px; line-height: 1.4; }
+  .crow { margin-top: 9px; }
+  .crow .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .crow .nm { color: var(--fg); }
+  .crow .val { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .crow .val b { color: var(--fg); }
+  .bar { height: 7px; border-radius: 4px; background: #3a2c25; overflow: hidden; margin-top: 5px; }
+  .bar > i { display: block; height: 100%; border-radius: 4px; width: 0;
+             background: linear-gradient(90deg, #8f4526, var(--accent)); transition: width .3s ease; }
+  .crow.over .nm, .crow.over .val { color: #ff8f78; }
+  .crow.over .bar > i { background: linear-gradient(90deg, #b03a2e, #ff6b52); }
+  .cons-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+               margin-top: 10px; color: var(--muted); font-size: 11px; }
+  .chip { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #4a3a33;
+          color: var(--fg); font-size: 11px; white-space: nowrap; }
+  .chip.over { background: #6d2b22; color: #ffd9cf; }
+
+  /* Mission planner */
   label.check { display: flex; gap: 6px; align-items: center; } label.check input { width: auto; margin: 0; }
   details > summary { cursor: pointer; color: var(--muted); margin: 14px 0 6px; text-transform: uppercase;
                       font-size: 13px; letter-spacing: .05em; }
@@ -45,7 +66,6 @@
   table.matrix tr.total td { font-weight: bold; border-bottom: 0; }
   .card { border: 1px solid #3d2f29; border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
   .card summary { cursor: pointer; } .card.sel { border-color: var(--accent); }
-  .chip { display: inline-block; padding: 0 5px; border-radius: 8px; font-size: 10px; background: #4a3a33; }
   .chip.nasa { background: #2f5d8a; } .ok { color: #8fd18f; } .bad { color: #ff8a7a; }
   #mExplain { line-height: 1.45; white-space: pre-wrap; } #mCompare { white-space: pre-wrap; }
   .legendkey span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 8px; }
@@ -82,7 +102,7 @@
   <label>Season (Ls): <b id="lsVal"></b></label>
   <input type="range" id="ls" min="0" max="355" step="5" value="90" />
   <label>EVA budget (hours): <b id="budgetVal"></b></label>
-  <input type="range" id="budget" min="1" max="8" step="0.5" value="4" />
+  <input type="range" id="budget" min="1" max="12" step="0.5" value="4" />
 
 
   <h2>Plan a walk</h2>
@@ -100,6 +120,10 @@
   <select id="targets"><option value="">…or pick a science target</option></select>
   <button id="plan">Plan route</button>
   <div id="warn"></div>
+
+  <h2>Consumables</h2>
+  <div id="consumes" class="cons small"></div>
+
   <div id="explain"></div>
   </details>
 
@@ -162,6 +186,9 @@ let tileset = null;
 let regions = [], current = null, overlay = [], mode = null;
 let base = null, target = null;
 const marks = viewer.entities;
+const SPECS = {};        // vehicle -> limits, filled from /api/regions
+let lastPlan = null;     // stats from the last plan; null = nothing current to show
+let replanHint = "";
 
 function conditions() {
   return { region: $("region").value, vehicle: $("vehicle").value, local_hour: +$("hour").value,
@@ -226,8 +253,8 @@ function pin(id, p, color, text) {
 
 new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e) => {
   const p = pickLatLon(e.position); if (!p) return;
-  if (mode === "base")   { base = p;   pin("base", p, Cesium.Color.DODGERBLUE, "Base"); }
-  if (mode === "target") { target = p; pin("target", p, Cesium.Color.ORANGE, "Target"); }
+  if (mode === "base")   { base = p;   pin("base", p, Cesium.Color.DODGERBLUE, "Base"); invalidatePlan(); }
+  if (mode === "target") { target = p; pin("target", p, Cesium.Color.ORANGE, "Target"); invalidatePlan(); }
   mode = null; $("setBase").classList.remove("active"); $("setTarget").classList.remove("active");
   try {
     const px = await api(`/api/pixel?lat=${p.lat}&lon=${p.lon}&region=${$("region").value}`);
@@ -243,6 +270,7 @@ $("setTarget").onclick = () => { mode = "target"; $("setTarget").classList.add("
 $("targets").onchange = () => {
   const t = current.targets[+$("targets").value]; if (!t) return;
   target = { lat: t.lat, lon: t.lon }; pin("target", target, Cesium.Color.ORANGE, t.name);
+  invalidatePlan();
 };
 
 // ----------------------------------------------------------- text search ----
@@ -298,6 +326,75 @@ async function findTarget() {
 $("find").onclick = findTarget;
 $("query").addEventListener("keydown", (e) => { if (e.key === "Enter") findTarget(); });
 
+// -------------------------------------------------------- consumables ----
+const BINDING = { oxygen: "O2 capacity", energy: "on-board energy", rated: "rated endurance" };
+
+function specLine(spec) {
+  if (!spec) return "";
+  const bits = [];
+  if (spec.o2_rate_kg_per_h) bits.push(`O2 ${spec.o2_rate_kg_per_h} kg/h`);
+  if (spec.o2_capacity_kg) bits.push(`${spec.o2_capacity_kg} kg carried`);
+  if (spec.energy_capacity_kwh) bits.push(`${spec.energy_capacity_kwh} kWh carried`);
+  if (spec.energy_idle_kw) bits.push(`${spec.energy_idle_kw} kW idle`);
+  if (spec.rated_hours) bits.push(`${spec.rated_hours} h rated`);
+  return bits.join(" · ");
+}
+
+function pctLabel(pct) { return pct >= 999 ? "999+%" : `${Math.round(pct)}%`; }
+
+function barRow(name, used, max, unit, pct) {
+  const over = pct > 100;
+  const width = Math.min(100, Math.max(1.5, pct));
+  return `<div class="crow${over ? " over" : ""}">
+      <div class="top"><span class="nm">${name}</span>
+        <span class="val">${used.toFixed(2)} / ${max.toFixed(2)} ${unit} <b>${pctLabel(pct)}</b></span></div>
+      <div class="bar" role="progressbar" aria-label="${name} used" aria-valuemin="0" aria-valuemax="100"
+           aria-valuenow="${Math.min(100, Math.round(pct))}"><i style="width:${width}%"></i></div>
+    </div>`;
+}
+
+function renderConsumables() {
+  const box = $("consumes");
+  const head = `<div class="cons-spec">${specLine(SPECS[$("vehicle").value])}</div>`;
+  if (!lastPlan) {                       // nothing planned yet, or the inputs moved
+    box.innerHTML = head + (replanHint ? `<div class="cons-spec">${replanHint}</div>` : "");
+    return;
+  }
+  const s = lastPlan.stats;
+  if (!s) {                              // planned, but no route exists
+    box.innerHTML = head + '<div class="cons-spec">No route under these limits - nothing to consume.</div>';
+    return;
+  }
+  let rows = "";
+  if (s.o2_used_kg != null) rows += barRow("O2", s.o2_used_kg, s.o2_max_kg, "kg", s.o2_pct);
+  if (s.energy_used_kwh != null) rows += barRow("Energy", s.energy_used_kwh, s.energy_max_kwh, "kWh", s.energy_pct);
+  const overCap = (s.o2_pct || 0) > 100 || (s.energy_pct || 0) > 100;
+  const overTime = s.within_budget === false;
+  const range = s.max_range_km != null ? `max ${s.max_range_km.toFixed(1)} km out and back` : "";
+  const chip = overCap ? "over capacity"
+    : overTime ? "over time budget"
+    : `${BINDING[s.limiting_factor] || s.limiting_factor || "limit"} binds`;
+  box.innerHTML = head + rows +
+    `<div class="cons-foot"><span>${range}</span>` +
+    `<span class="chip${overCap || overTime ? " over" : ""}">${chip}</span></div>` +
+    '<div class="cons-spec">Amounts are the round trip.</div>';
+}
+
+function applyVehicleLimits() {
+  const spec = SPECS[$("vehicle").value] || {};
+  const el = $("budget");
+  el.max = Math.min(12, Math.max(1, spec.rated_hours || 8));   // you cannot plan past the vehicle's rating
+  if (+el.value > +el.max) el.value = el.max;
+  labels();
+}
+
+function invalidatePlan() {
+  if (!lastPlan) return;
+  lastPlan = null;
+  replanHint = "Conditions changed - plan again.";
+  renderConsumables();
+}
+
 // ------------------------------------------------------------------ plan ----
 $("plan").onclick = async () => {
   if (!base || !target) { $("warn").textContent = "Set a base and a target first."; return; }
@@ -316,7 +413,14 @@ $("plan").onclick = async () => {
     $("explain").textContent = res.explanation +
       (res.stats ? `\n\nMax slope ${res.stats.max_slope_deg}°, mean ${res.stats.mean_slope_deg}°` : "") +
       "\nGreen area = places you can reach and still return within the budget.";
-  } catch (e) { $("explain").textContent = e.message; }
+    lastPlan = { stats: res.stats || null };
+    replanHint = "";
+    renderConsumables();
+  } catch (e) {
+    $("explain").textContent = e.message;
+    lastPlan = null;
+    renderConsumables();
+  }
 };
 
 // ---------------------------------------------------------------- mission ----
@@ -452,8 +556,10 @@ function candidateCard(c, i) {
   add(`Landing spot A ${deg(c.A)}: ${k.from_A}`);
   add(`Route: ${rt.distance_km} km, ${rt.one_way_h} h one way, ${rt.round_trip_h} h round trip incl. sampling; ` +
       `max slope ${rt.max_slope}°, loose ground ${rt.loose_pct}%, green track ${rt.green_pct}% (${rt.green_km} km), yellow ${rt.yellow_pct}%`);
-  for (const it of R.items)
+  for (const it of R.items) {
     add(`${it.name}: ${it.used} of ${it.capacity} ${it.unit} used, ${it.left_pct}% left (reserve ${R.reserve_pct}%)`, it.ok ? "ok" : "bad");
+    if (it.source) ul.lastChild.title = it.source;                // hover: where the number comes from
+  }
   add(`Turn back no later than ${ta.h} h after leaving A` + (ta.at_B ? " (B is reached before then)" : ` (at ${deg(ta)})`));
   d.append(ul, el("button", { className: "secondary", textContent: i === selected ? "Showing this route" : "Show this route",
                               onclick: () => selectRoute(i) }));
@@ -534,6 +640,8 @@ function flyTo(r) {
 }
 ["hour", "ls", "budget"].forEach((id) => $(id).addEventListener("input", labels));
 ["hour", "ls", "vehicle"].forEach((id) => $(id).addEventListener("change", refreshLayer));
+["hour", "ls", "vehicle", "budget", "region"].forEach((id) => $(id).addEventListener("change", invalidatePlan));
+$("vehicle").addEventListener("change", () => { applyVehicleLimits(); renderConsumables(); });
 $("layer").onchange = refreshLayer;
 $("region").onchange = () => {
   current = regions.find((r) => r.region === $("region").value);
@@ -562,8 +670,11 @@ labels();
     fill("mPriority", opts.priorities, "safety");
     const meta = await api("/api/regions");
     regions = meta.regions;
+    Object.assign(SPECS, meta.vehicle_specs || {});
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
     $("region").innerHTML = regions.map((r) => `<option>${r.region}</option>`).join("");
+    applyVehicleLimits();
+    renderConsumables();
     if (regions.length) $("region").onchange();
     else $("status").textContent = "No cubes yet. Run: python make_demo_cube.py";
   } catch (e) { $("status").textContent = "Back end not reachable: " + e.message; }

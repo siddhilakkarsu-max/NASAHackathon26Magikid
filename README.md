@@ -109,16 +109,17 @@ from within the EVA budget rank first.
 | `physics.py` → `sun_position`, `illumination`, `surface_temp_k` | Jason | Replace the approximate temperature with the thermal model |
 | `physics.py` → `shelter_seeds`, walk-back in `app.py` | Gia, Siddhi | Real shelter locations, O₂ budget instead of hours |
 | `config.py` → `SOURCES`, `SCIENCE_TARGETS`, `VEHICLES` | Siddhi, Darren | Real data paths, CRISM targets, vehicle limits |
+| `physics.py` → `endurance`, `config.py` → `consumables`, `CONSUMABLE_SOURCES` | Gk | Real EVA and cabin O₂ loads, rover power curves |
 | `app.py` → `explanation` text | Darren, Jason | Hook an LLM in here for richer route reasoning |
 | `frontend/index.html` | Gia, Victoria, Olivia | All styling and layout |
 
 ## API (for the front end team)
 | Call | Returns |
 |---|---|
-| `GET /api/regions` | regions, bounds, bands, vehicles, science targets |
+| `GET /api/regions` | regions, bounds, bands, vehicles, science targets, `vehicle_specs` (rated hours + consumable limits) |
 | `GET /api/pixel?lat=&lon=&region=` | every value stored in that pixel + ground type + confidence |
 | `POST /api/layer/{slope|firmness|cost|illumination|temperature|shelter|elevation}` | PNG overlay + bounds + legend |
-| `POST /api/plan` | route (lat/lon list), stats, warnings, explanation, walk-back zone PNG |
+| `POST /api/plan` | route (lat/lon list), stats (distance, time, slope, **O₂/energy vs capacity**, max range), warnings, explanation, walk-back zone PNG |
 | `POST /api/find` | best target spots for a text description (`"query": "valley with clay"`), why each matched, match heatmap PNG |
 | `GET /api/mission/options` | vehicles, seasons, priorities, decision-matrix criteria and default weights |
 | `POST /api/mission` | `{"goal", "vehicle", "season", "priority", "green_only"}` → settings, tools, 3 candidates (A, B, card, route, resources, scores), dropped, decision matrix totals, template explanation, science + off-limits PNGs, `id` |
@@ -127,6 +128,46 @@ from within the EVA budget rank first.
 
 Body for POST calls: `{"region":"jezero","vehicle":"astronaut","local_hour":11,"ls":90,"budget_hours":4}`
 (+ `"base":{"lat":..,"lon":..}, "target":{...}` for `/api/plan`).
+
+## Consumables: O₂ and energy against what the traveller actually carries
+
+Every plan is costed as a **round trip** and compared with the vehicle's own capacity. `stats` reports
+`o2_used_kg` / `o2_max_kg` / `o2_pct`, `energy_used_kwh` / `energy_max_kwh` / `energy_pct`, `max_range_km`,
+and `limiting_factor` — whichever ceiling is closest to being hit.
+
+| Traveller | Quantity | Rate | Carried | Basis |
+|---|---|---|---|---|
+| Astronaut on foot | O₂ | 0.085 kg/h | 0.68 kg | NASA figures, see below |
+| Pressurized crew rover | Energy | 1.5 kW idle + 0.12 kWh/km | 20 kWh | **estimate**, see below |
+| Curiosity-class rover | Energy | 0.15 kW idle + 3.33 kWh/km | 2.5 kWh | MMRTG figures, see below |
+
+Both quantities scale with **time as well as distance**, which is why a rocky detour costs more without a
+second terrain term: `cost_seconds_per_meter()` has already made that ground slower, so it simply takes longer.
+
+**Where the numbers come from** (also returned per vehicle as `vehicle_specs[k].source`):
+
+- **O₂, astronaut** — the ALS Baseline Values and Assumptions Document (NASA/JSC-47804) gives 0.076 kg/h for a
+  closed-loop PLSS; the X-Hab PLSS model uses a 350 W baseline metabolic rate at ~20 kJ per litre of O₂, i.e.
+  ~0.084 kg/h. 0.68 kg is the xEMU's 8 h design endurance at that rate, and the planner holds back the 1 h
+  contingency the Artemis surface-suit requirement asks for (that is the `reserve` slider).
+- **Endurance, astronaut** — xEMU is specified for 8 h of autonomous EVA; Artemis surface EVAs are planned at
+  4–8 h, ~2 km radius at 2 km/h over level terrain.
+- **Energy, Curiosity-class** — MSL's MMRTG produces ~110 W electrical, 2.5–2.7 kWh per sol (NASA/JPL). Loads:
+  at least 150 W whenever awake, up to 500 W while driving (JPL), which at this profile's 0.15 km/h works out
+  at ~3.3 kWh/km. So a sol of MMRTG output is genuinely about 0.3 km out-and-back — the rover is meant to
+  look limited next to the crew rover, not broken.
+- **Energy, pressurized crew rover** — a **labelled engineering estimate**; no published NASA figure was found
+  for these loads. It is the "estimate" entry in `CONSUMABLE_SOURCES` in `config.py` and should be tuned.
+
+Rules the planner applies:
+
+- `rated_hours` is a hard per-vehicle ceiling, separate from the EVA budget. The budget slider's maximum
+  follows the selected vehicle, so you cannot plan past its rating.
+- `reserve` still applies: only `budget_hours × (1 − reserve)` counts as usable time.
+- `max_range_km` is the furthest one-way distance you can reach **and** return from, on a full load, at the
+  pace of the route you just planned.
+- Routing itself is still time-based only. An over-capacity trip is drawn and flagged rather than refused —
+  state-space pathfinding on remaining energy would be the next step, not something this pretends to do.
 
 ## Optional: Cesium Mars 3D terrain
 The globe works without an account (NASA Mars Trek imagery). For 3D terrain, create a free
@@ -139,7 +180,10 @@ at the top of the `<script>` in `frontend/index.html`.
 - CRISM band depths show where a mineral's spectral signature is, not how much of it there is; the targeted
   observations (18 m) and the map tile (180 m) have different noise, so seams can appear at their edges.
 - Surface temperature is a simple approximation, not a full thermal model.
-- Walk-back assumes the return trip costs the same as the way out.
+- Walk-back assumes the return trip costs the same as the way out, and so does the consumables total.
+- O₂ is a flat rate: uphill work is charged in **time** by the cost map, not by a separate metabolic term.
+- Cabin O₂ for a crewed rover is not modelled — only the astronaut's suit supply is tracked.
+- Pressurized-rover loads are estimates, and are labelled as such everywhere they appear.
 - "Shelter" = within a few pixels of steep walls; real overhangs/lava tubes need HiRISE inspection.
 - At ~110 m/px slopes are smoothed; HiRISE DEMs (1 m) give the real meter-scale hazards.
 - Rover track colors are a proxy: green = Perseverance drove there; yellow = the rover recorded ≥12° tilt or the

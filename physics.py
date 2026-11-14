@@ -104,6 +104,46 @@ def best_route(cost, start, goal, pixel_m):
     return mcp.traceback(goal), float(t[goal])
 
 
+# ------------------------------------------------------- consumables ----
+def endurance(v, seconds, distance_m):
+    """What ONE leg costs in O2 / energy, and how far a full load would take this traveller.
+
+    Both consumables scale with time as well as distance, which is what makes a rocky detour
+    automatically expensive: cost_seconds_per_meter() already made that ground slower, so the
+    same detour costs more breathing time and more idle power without a second terrain term.
+
+    seconds/distance_m describe the leg actually planned. Returns the leg's amounts (the round
+    trip is twice), the per-consumable time limits at this pace, and max_range_km = the furthest
+    one-way distance that can still be walked out AND back on a full load at this route's speed.
+    """
+    c = v.get("consumables") or {}
+    hours = max(float(seconds), 0.0) / 3600.0
+    km = max(float(distance_m), 0.0) / 1000.0
+    avg_kmh = km / hours if hours > 1e-9 else 0.0     # pace of this route, not the vehicle's top speed
+
+    o2_kg = o2_cap = None
+    energy_kwh = energy_cap = None
+    limits = {}
+    if "o2_rate_kg_per_h" in c:
+        o2_kg = c["o2_rate_kg_per_h"] * hours
+        o2_cap = float(c["o2_capacity_kg"])
+        limits["oxygen"] = o2_cap / c["o2_rate_kg_per_h"]
+    if "energy_capacity_kwh" in c:
+        kw = c["energy_idle_kw"] + c["energy_per_km_kwh"] * avg_kmh   # load at this pace
+        energy_kwh = kw * hours
+        energy_cap = float(c["energy_capacity_kwh"])
+        limits["energy"] = energy_cap / kw if kw > 1e-9 else math.inf
+    if v.get("rated_hours"):
+        limits["rated"] = float(v["rated_hours"])
+
+    limiting = min(limits, key=limits.get) if limits else None
+    endurance_h = limits[limiting] if limiting else 0.0
+    return {"o2_kg": o2_kg, "o2_capacity_kg": o2_cap,
+            "energy_kwh": energy_kwh, "energy_capacity_kwh": energy_cap,
+            "limits_hours": limits, "limiting": limiting, "endurance_h": endurance_h,
+            "avg_speed_kmh": avg_kmh, "max_range_km": 0.5 * endurance_h * avg_kmh}
+
+
 def shelter_seeds(slope, passable, steep_deg=22.0, extra=()):
     """Places to take cover: walkable pixels at the foot of steep walls (+ base/rover)."""
     from scipy.ndimage import binary_dilation

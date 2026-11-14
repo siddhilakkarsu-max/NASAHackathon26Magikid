@@ -144,14 +144,45 @@ _JEZERO_ZONES = [
 ]
 SEARCH_ZONES = {"jezero": _JEZERO_ZONES, "jezero_hirise": _JEZERO_ZONES}
 
+# ---------------------------------------------------------------------------
+# CONSUMABLES: how fast each traveller drinks its supply, and how much it carries.
+# rated_hours  = design endurance for one excursion (a hard ceiling, separate from the user's budget)
+# consumables  = the rate + capacity the plan is costed against (only the ones that apply)
+#   o2_rate_kg_per_h / o2_capacity_kg            breathing supply carried on the suit
+#   energy_idle_kw / energy_per_km_kwh / energy_capacity_kwh   battery or fuel-cell load
+# consumable_source names the entry in CONSUMABLE_SOURCES shown to the user, so a number can
+# always be traced back. Anything tagged "estimate" is NOT a published NASA figure.
+# ---------------------------------------------------------------------------
+CONSUMABLE_SOURCES = {
+    "suit_o2": "O2 rate 0.085 kg/h: NASA ALS Baseline Values & Assumptions (JSC-47804) gives "
+               "0.076 kg/h for a closed-loop PLSS; the X-Hab PLSS model uses a 350 W baseline "
+               "metabolic rate at ~20 kJ per litre of O2, i.e. ~0.084 kg/h. Capacity 0.68 kg is "
+               "the xEMU's 8 h design endurance at that rate, less than the 1 h contingency "
+               "reserve the planner holds back.",
+    "mmrtg_energy": "Capacity 2.5 kWh: MSL's MMRTG delivers ~110 W electrical, 2.5-2.7 kWh per "
+                    "sol (NASA/JPL). Loads: at least 150 W whenever the rover is awake, up to "
+                    "500 W while driving (JPL), which at the 0.15 km/h this profile assumes is "
+                    "~3.3 kWh per km.",
+    "estimate": "Engineering estimate for a conceptual crew rover - no published NASA figure was "
+                "available for these loads. Treat the numbers as tunable, not as fact.",
+}
+
 # Vehicle / walker profiles. Weights are tunable during the demo.
 VEHICLES = {
     "astronaut": dict(label="Astronaut on foot (suited)", max_slope=18.0, base_speed_kmh=6.0,
-                      suit_factor=0.5, sand_penalty=1.5, rough_penalty=1.0, uses_slip_table=False),
+                      suit_factor=0.5, sand_penalty=1.5, rough_penalty=1.0, uses_slip_table=False,
+                      rated_hours=8.0, consumable_source="suit_o2",
+                      consumables=dict(o2_rate_kg_per_h=0.085, o2_capacity_kg=0.68)),
     "pressurized_rover": dict(label="Pressurized crew rover", max_slope=20.0, base_speed_kmh=10.0,
-                              suit_factor=1.0, sand_penalty=3.0, rough_penalty=2.0, uses_slip_table=True),
+                              suit_factor=1.0, sand_penalty=3.0, rough_penalty=2.0, uses_slip_table=True,
+                              rated_hours=12.0, consumable_source="estimate",
+                              consumables=dict(energy_capacity_kwh=20.0, energy_idle_kw=1.5,
+                                               energy_per_km_kwh=0.12)),
     "small_rover": dict(label="Robotic rover (Curiosity-class)", max_slope=25.0, base_speed_kmh=0.15,
-                        suit_factor=1.0, sand_penalty=4.0, rough_penalty=2.0, uses_slip_table=True),
+                        suit_factor=1.0, sand_penalty=4.0, rough_penalty=2.0, uses_slip_table=True,
+                        rated_hours=8.0, consumable_source="mmrtg_energy",
+                        consumables=dict(energy_capacity_kwh=2.5, energy_idle_kw=0.15,
+                                         energy_per_km_kwh=3.33)),
 }
 
 
@@ -175,7 +206,7 @@ TRACK_RULES = dict(
 )
 
 # Vehicles. max_slope / range_km are hard limits. Suited crews (on foot, open rovers) are also limited by
-# suit oxygen: o2_kg per EVA (~8 h), used at o2_walk_kg_h walking at ~250 W or o2_ride_kg_h riding.
+# suit oxygen (SUIT below).
 # Battery vehicles: battery_wh, wh_per_km on flat firm ground, hotel_w for computers/heaters/radios.
 MISSION_VEHICLES = {
     "on_foot": dict(label="On foot (suited astronaut)", max_slope=15.0, range_km=2.0, base_speed_kmh=6.0,
@@ -191,7 +222,12 @@ MISSION_VEHICLES = {
                   suit_factor=1.0, sand_penalty=2.0, rough_penalty=1.5, uses_slip_table=True,
                   mass_kg=3000, suited=False, battery_wh=90000, wh_per_km=600, hotel_w=1500),
 }
-SUIT = dict(o2_kg=1.2, o2_walk_kg_h=0.075, o2_ride_kg_h=0.05, o2_site_kg_h=0.06)   # ~8 h EVA
+# Suit oxygen = the astronaut profile in VEHICLES (NASA-sourced, see CONSUMABLE_SOURCES["suit_o2"]). The same rate
+# applies walking, riding an open rover and sampling; mission.py adds the extra cost of walking uphill.
+_SUIT_O2 = VEHICLES["astronaut"]["consumables"]
+SUIT = dict(o2_kg=_SUIT_O2["o2_capacity_kg"], o2_walk_kg_h=_SUIT_O2["o2_rate_kg_per_h"],
+            o2_ride_kg_h=_SUIT_O2["o2_rate_kg_per_h"], o2_site_kg_h=_SUIT_O2["o2_rate_kg_per_h"],
+            source=CONSUMABLE_SOURCES["suit_o2"])
 SITE_HOURS = 1.0           # time spent sampling at the destination
 
 # Mission season -> Mars solar longitude and dust risk (global/regional storms mostly start Ls 180-330).

@@ -256,7 +256,8 @@ def _resources(v, tools, seg_len, rr, cc, L, priority, season):
             o2_out = out_time_h * SUIT["o2_ride_kg_h"]
         else:
             o2_out = float(np.sum(seg_len * L["energy"][rr, cc])) * load
-        res.append(dict(name="oxygen", unit="kg", cap=SUIT["o2_kg"], out=o2_out, site=SITE_HOURS * SUIT["o2_site_kg_h"]))
+        res.append(dict(name="oxygen", unit="kg", cap=SUIT["o2_kg"], out=o2_out, site=SITE_HOURS * SUIT["o2_site_kg_h"],
+                        source=SUIT["source"]))
     if v["battery_wh"]:
         drive = float(np.sum(seg_len * L["energy"][rr, cc])) * load
         res.append(dict(name="battery", unit="Wh", cap=v["battery_wh"], out=drive + out_time_h * v["hotel_w"],
@@ -369,7 +370,7 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
         cand["resources"] = dict(
             reserve_pct=round(100 * R["reserve"]), binding=R["binding"]["name"], ok=R["ok"],
             items=[dict(name=r["name"], unit=r["unit"], capacity=round(r["cap"], 2), used=round(r["used"], 2),
-                        left_pct=round(100 * r["left"]), ok=r["ok"]) for r in R["items"]],
+                        left_pct=round(100 * r["left"]), ok=r["ok"], source=r.get("source", "")) for r in R["items"]],
             turnaround=dict(h=round(R["turn_h"], 2), lat=round(tlat, 5), lon=round(tlon, 5),
                             at_B=bool(R["turn_h"] >= R["out_h"])))
         if dist_km > v["range_km"]:
