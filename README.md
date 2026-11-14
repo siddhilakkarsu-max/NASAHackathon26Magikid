@@ -71,7 +71,9 @@ at the top of the `<script>` in `frontend/index.html`.
 
 ## Honest limits (say these if judges ask)
 - THEMIS night IR is used as a **proxy** for thermal inertia (warm at night = rock, cold = loose sand).
-- Surface temperature is a simple approximation, not a full thermal model.
+- **Simulated surface temperature** uses the bundled half-degree grid of TES broadband albedo and apparent thermal inertia. The grid covers all longitudes, with unavailable thermal inertia shown as transparent. This global grid sets the spatial resolution of the model even over higher-resolution Jezero terrain.
+- The model uses the selected Mars local solar hour and solar longitude (`Ls`) to compute diurnal solar heating. It approximates thermal emission and subsurface conduction, including heat retained after sunset. The calculation assumes level terrain, emissivity 0.95, fixed illustrative atmospheric opacity 0.3, and fixed downwelling longwave flux of 25 W/m². It has no seasonal frost model or site-specific atmosphere, and its absolute temperature has not been calibrated to Jezero observations.
+- Primary grid sources are [NASA PDS TES albedo](https://pds-geosciences.wustl.edu/missions/mgs/tesspecial.html) and [NASA PDS TES apparent thermal inertia](https://pds-geosciences.wustl.edu/missions/mgs/tes-timap.html). The thermal grid uses observation-backed TES nighttime values where available, with observation-backed TES daytime values filling remaining supported cells.
 - Walk-back assumes the return trip costs the same as the way out.
 - "Shelter" = within a few pixels of steep walls; real overhangs/lava tubes need HiRISE inspection.
 - At ~230 m/px slopes are smoothed; HiRISE DEMs (1 m) give the real meter-scale hazards.

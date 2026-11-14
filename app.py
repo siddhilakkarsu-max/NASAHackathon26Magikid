@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 
 import physics
 from config import MARS_RADIUS_M, SCIENCE_TARGETS, VEHICLES
+from surface_temperature import temperature_overlay
 
 ROOT = Path(__file__).parent
 app = FastAPI(title="Mars Marswalk Planner")
@@ -115,9 +116,8 @@ def conditions_layers(cube, cond):
     lat_c = (cube.s + cube.n) / 2
     sun_e, sun_az = physics.sun_position(lat_c, cond.local_hour, cond.ls)
     illum = physics.illumination(b["slope"], b["aspect"], sun_e, sun_az)
-    temp = physics.surface_temp_k(illum, b.get("firmness"), sun_e)
     cost = physics.cost_seconds_per_meter(b, v, cond.weights)
-    return v, sun_e, sun_az, illum, temp, cost
+    return v, sun_e, sun_az, illum, cost
 
 
 # ------------------------------------------------------------ endpoints ----
@@ -149,7 +149,14 @@ def pixel(lat: float, lon: float, region: str = "jezero"):
 def layer(name: str, cond: Conditions):
     """Coloured overlay of one band or one computed layer, for the current conditions."""
     c = get_cube(cond.region)
-    v, sun_e, sun_az, illum, temp, cost = conditions_layers(c, cond)
+    if name == "temperature":
+        arr = temperature_overlay(c.rect, (c.H, c.W), cond.local_hour, cond.ls)
+        lo, hi, cmap = 140, 330, "coolwarm"
+        sun_e, sun_az = physics.sun_position((c.s + c.n) / 2, cond.local_hour, cond.ls)
+        return {"image": to_png(arr, cmap, lo, hi), "rect": c.rect,
+                "legend": legend("Simulated surface temperature", "K", lo, hi, cmap),
+                "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
+    v, sun_e, sun_az, illum, cost = conditions_layers(c, cond)
     if name in c.bands:
         arr, unit, cmap = c.bands[name], "", "viridis"
         if name == "slope":
@@ -164,8 +171,6 @@ def layer(name: str, cond: Conditions):
                     "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
     elif name == "illumination":
         arr, unit, cmap = np.clip(illum, 0, 1), "cos(i)", "inferno"
-    elif name == "temperature":
-        arr, unit, cmap = temp, "K (approx.)", "coolwarm"
     elif name == "cost":
         arr, unit, cmap = cost, "s/m", "RdYlGn_r"
     elif name == "shelter":
@@ -184,7 +189,7 @@ def layer(name: str, cond: Conditions):
 @app.post("/api/plan")
 def plan(req: PlanRequest):
     c = get_cube(req.region)
-    v, sun_e, sun_az, illum, temp, cost = conditions_layers(c, req)
+    v, sun_e, sun_az, illum, cost = conditions_layers(c, req)
     start, goal = c.rc(req.base.lat, req.base.lon), c.rc(req.target.lat, req.target.lon)
     warnings = []
     if sun_e < req.min_sun_elev:
