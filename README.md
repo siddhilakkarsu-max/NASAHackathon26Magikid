@@ -74,8 +74,9 @@ Type a goal (**sample clay where water once flowed**, **olivine**, **carbonate i
    trip's oxygen and/or battery with tool mass, a 15–25 % reserve and a turnaround deadline, dropping failures;
 5. scores the survivors 1–5 in a **decision matrix** (`config.MATRIX_CRITERIA`; the priority adds +10 to
    safety, time or resources) and recommends the best;
-6. shows the winner colored by risk, #2/#3 faded, and explains why (template at once, AI wording a few
-   seconds later). Change vehicle/priority/season, tick "stick to green tracks" or click #2/#3 to adjust; the new
+6. shows the winner colored by risk, #2/#3 faded, and explains why: the summary from the numbers appears at once,
+   then the AI model's reasoning streams into a "AI reasoning" box and its explanation streams in word by word.
+   When the AI reads the goal, its thinking streams live too (kept under "How … read the goal"). Change vehicle/priority/season, tick "stick to green tracks" or click #2/#3 to adjust; the new
    plan is compared with the previous one.
 
 Rover tracks: `python fetch_tracks.py jezero` downloads Perseverance's real traverse (NASA/JPL mission maps).
@@ -101,6 +102,10 @@ from within the EVA budget rank first.
 - Offline or over the free limit? Any OpenAI-compatible server works, e.g. Ollama:
   `OPENROUTER_BASE_URL=http://<host>:11434/v1 OPENROUTER_API_KEY=local OPENROUTER_MODELS=gemma4:26b-a4b`.
   Tested on a laptop with a 4 GB T1200 GPU: `gemma4:26b-a4b` ~9 s per query, `gemma4:e4b` ~4 s.
+- The mission panel streams the AI's thinking. `AI_REASONING` sets the thinking effort (`low` by default, `none` to
+  turn it off); `AI_THINK_SECONDS` (default 40) stops a model that is still thinking after that long and asks for
+  the answer right away. With the local gemma4:26b a full mission with AI takes ~2 min (thinking is visible
+  throughout); give Ollama at least an 8k context (`OLLAMA_CONTEXT_LENGTH=8192`) so the thinking fits.
 
 ## Who owns what
 | File / function | Owner | What to improve |
@@ -123,6 +128,7 @@ from within the EVA budget rank first.
 | `POST /api/find` | best target spots for a text description (`"query": "valley with clay"`), why each matched, match heatmap PNG |
 | `GET /api/mission/options` | vehicles, seasons, priorities, decision-matrix criteria and default weights |
 | `POST /api/mission` | `{"goal", "vehicle", "season", "priority", "green_only"}` → settings, tools, 3 candidates (A, B, card, route, resources, scores), dropped, decision matrix totals, template explanation, science + off-limits PNGs, `id` |
+| `POST /api/mission/stream` | the same plan as server-sent events with the AI's thinking live: `status`, `ai` (`phase`: goal / explain, `kind`: reasoning / content, `text`), `result` (the full plan), `explanation`, `done` |
 | `POST /api/mission/{id}/explain` | the AI-written explanation for that plan (slower; falls back to the template) |
 | `GET /api/tracks?region=&vehicle=` | rover drive segments classed green / yellow, km of each, red off-limits PNG for the vehicle |
 

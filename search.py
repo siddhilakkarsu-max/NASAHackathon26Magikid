@@ -504,15 +504,18 @@ def _llm_schema():
     }
 
 
-def _http_json(url, body=None, headers=None, timeout=30):
+def _ssl_ctx():
     try:
         import certifi
-        ctx = ssl.create_default_context(cafile=certifi.where())
+        return ssl.create_default_context(cafile=certifi.where())
     except ImportError:
-        ctx = ssl.create_default_context()
+        return ssl.create_default_context()
+
+
+def _http_json(url, body=None, headers=None, timeout=30):
     req = urllib.request.Request(url, data=None if body is None else json.dumps(body).encode(),
                                  headers={"Content-Type": "application/json", **(headers or {})})
-    with urllib.request.urlopen(req, timeout=timeout, context=ctx) as r:
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx()) as r:
         return json.loads(r.read())
 
 
@@ -563,56 +566,84 @@ def _json_object(text):
         return json.loads(text[a:b + 1]) if 0 <= a < b else None
 
 
+AI_REASONING = os.environ.get("AI_REASONING", "low")   # thinking effort when the page streams it ("none" = off)
+# Some models think for minutes on a short job; after this many seconds of thinking without an answer the
+# stream stops them and asks for the answer straight away, passing along the notes made so far.
+AI_THINK_SECONDS = float(os.environ.get("AI_THINK_SECONDS", "40"))
+FAIL = "so only built-in words were used"
+
+
+def _parse_messages(query):
+    features = "\n".join(f"- {k}: {f['label']} ({f['help']})" for k, f in FEATURES.items())
+    return [{"role": "system", "content": _LLM_SYSTEM.format(features=features)}, {"role": "user", "content": query}]
+
+
+def _parse_format():
+    return {"type": "json_schema", "json_schema": {"name": "search_criteria", "strict": True, "schema": _llm_schema()}}
+
+
+def _spec_from_text(text, model):
+    """The model's JSON answer -> spec; raises ValueError if it can't be read."""
+    try:
+        data = _json_object(text or "")
+        criteria = [dict(feature=c["feature"], negate=bool(c.get("negate")),
+                         near=bool(c.get("near")) and c["feature"] != "near_base",   # already a distance
+                         strong=bool(c.get("strong"))) for c in data["criteria"] if c.get("feature") in FEATURES]
+        unknown = [str(x) for x in data.get("not_covered", [])]
+    except (ValueError, KeyError, TypeError, AttributeError) as e:
+        raise ValueError(f"The AI model's answer could not be read, {FAIL}.") from e
+    return dict(criteria=_dedupe(criteria), unknown=unknown, model=model)
+
+
+def _error_text(e):
+    """A short, user-facing reason for a failed AI request."""
+    if isinstance(e, urllib.error.HTTPError):
+        if e.code == 401:
+            return f"OPENROUTER_API_KEY was rejected, {FAIL}."
+        if e.code == 429:
+            return (f"Free AI model limit reached (20/min, 50/day; 1000/day after buying $10 of OpenRouter credits), "
+                    f"{FAIL}.")
+        return f"{SERVER} returned error {e.code}, {FAIL}."
+    if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
+        return f"The AI model stopped answering for too long, {FAIL}."
+    return f"Could not reach {SERVER}, {FAIL}."
+
+
+def _no_key():
+    return "Set OPENROUTER_API_KEY (free at openrouter.ai) to let a free AI model read words the search doesn't know."
+
+
 def ai_parse(query):
-    """Ask a free OpenRouter model to map a free-form query onto FEATURES.
+    """Ask a free OpenRouter model to map a free-form query onto FEATURES (no streaming, thinking off: fast).
     Returns (spec, None) or (None, reason it could not)."""
     key = query.strip().lower()
     if key in _llm_cache:
         return _llm_cache[key], None
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
-        return None, ("Set OPENROUTER_API_KEY (free at openrouter.ai) to let a free AI model read "
-                      "words the search doesn't know.")
+        return None, _no_key()
     models = free_models()
-    features = "\n".join(f"- {k}: {f['label']} ({f['help']})" for k, f in FEATURES.items())
     body = {
         "model": models[0],
         "models": models,                                # OpenRouter tries these in order if one fails
-        "messages": [{"role": "system", "content": _LLM_SYSTEM.format(features=features)},
-                     {"role": "user", "content": query}],
-        "response_format": {"type": "json_schema", "json_schema": {
-            "name": "search_criteria", "strict": True, "schema": _llm_schema()}},
+        "messages": _parse_messages(query),
+        "response_format": _parse_format(),
         "provider": {"require_parameters": True},       # only providers that enforce the schema
         "reasoning": {"effort": "none"},                # a short lookup: thinking made it 3-8x slower, no better
         "max_tokens": 3000,
     }
-    fail = "so only built-in words were used"
     try:
         resp = _http_json(f"{OPENROUTER_URL}/chat/completions", body,
                           {"Authorization": f"Bearer {api_key}"}, timeout=40)
-    except urllib.error.HTTPError as e:
-        if e.code == 401:
-            return None, f"OPENROUTER_API_KEY was rejected, {fail}."
-        if e.code == 429:
-            return None, (f"Free AI model limit reached (20/min, 50/day; 1000/day after buying $10 of "
-                          f"OpenRouter credits), {fail}.")
-        return None, f"{SERVER} returned error {e.code}, {fail}."
-    except (OSError, ValueError) as e:                  # URLError, timeout, bad JSON
-        if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
-            return None, f"The AI model took longer than 40 s, {fail}."
-        return None, f"Could not reach {SERVER}, {fail}."
+    except (OSError, ValueError) as e:                  # HTTPError, URLError, timeout, bad JSON
+        return None, _error_text(e)
     if resp.get("error"):
-        return None, f"{SERVER} error: {resp['error'].get('message', 'unknown')}, {fail}."
+        return None, f"{SERVER} error: {resp['error'].get('message', 'unknown')}, {FAIL}."
     message = ((resp.get("choices") or [{}])[0].get("message") or {})
     try:
-        data = _json_object(message.get("content") or "")
-        criteria = [dict(feature=c["feature"], negate=bool(c.get("negate")),
-                         near=bool(c.get("near")) and c["feature"] != "near_base",   # already a distance
-                         strong=bool(c.get("strong"))) for c in data["criteria"] if c.get("feature") in FEATURES]
-        unknown = [str(x) for x in data.get("not_covered", [])]
-    except (ValueError, KeyError, TypeError, AttributeError):
-        return None, f"The AI model's answer could not be read, {fail}."
-    spec = dict(criteria=_dedupe(criteria), unknown=unknown, model=resp.get("model") or models[0])
+        spec = _spec_from_text(message.get("content"), resp.get("model") or models[0])
+    except ValueError as e:
+        return None, str(e)
     _llm_cache[key] = spec
     return spec, None
 
@@ -631,6 +662,87 @@ def ai_write(system, user, max_tokens=600):
         return None
     text = (((resp.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
     return text or None
+
+
+def ai_stream(messages, response_format=None, max_tokens=4000, reasoning=None, think_seconds=None):
+    """Stream an answer with the model's thinking. Yields ("reasoning", text) and ("content", text) pieces as
+    they arrive, then ("done", full_answer, model) - or ("error", reason) if it fails. Thinking is cut off after
+    think_seconds (default AI_THINK_SECONDS) without an answer; the answer is then asked for without thinking."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        yield ("error", _no_key())
+        return
+    models = free_models()
+    effort = reasoning or AI_REASONING
+    body = {"model": models[0], "models": models, "messages": messages, "stream": True, "max_tokens": max_tokens,
+            "reasoning": {"effort": effort}}
+    if response_format:
+        body.update(response_format=response_format, provider={"require_parameters": True})
+    req = urllib.request.Request(f"{OPENROUTER_URL}/chat/completions", data=json.dumps(body).encode(),
+                                 headers={"Content-Type": "application/json", "Accept": "text/event-stream",
+                                          "Authorization": f"Bearer {api_key}"})
+    budget = AI_THINK_SECONDS if think_seconds is None else think_seconds
+    parts, thoughts, model, t_think, cut = [], [], models[0], None, False
+    try:
+        with urllib.request.urlopen(req, timeout=90, context=_ssl_ctx()) as r:   # 90 s max between pieces
+            for raw in r:
+                line = raw.decode("utf-8", "ignore").strip()
+                if not line.startswith("data:"):
+                    continue                            # blank lines and ": keep-alive" comments
+                data = line[5:].strip()
+                if data == "[DONE]":
+                    break
+                chunk = json.loads(data)
+                if chunk.get("error"):
+                    yield ("error", f"{SERVER} error: {chunk['error'].get('message', 'unknown')}, {FAIL}.")
+                    return
+                model = chunk.get("model") or model
+                for choice in chunk.get("choices") or []:
+                    delta = choice.get("delta") or {}
+                    thought = delta.get("reasoning") or delta.get("reasoning_content")
+                    if thought:
+                        thoughts.append(thought)
+                        t_think = t_think or time.time()
+                        yield ("reasoning", thought)
+                    if delta.get("content"):
+                        parts.append(delta["content"])
+                        yield ("content", delta["content"])
+                if budget and not parts and t_think and time.time() - t_think > budget:
+                    cut = True                          # closing the connection makes the server stop
+                    break
+    except (OSError, ValueError) as e:
+        yield ("error", _error_text(e))
+        return
+    if cut:
+        yield ("reasoning", f"\n\n[Thinking stopped after {budget:.0f} s; answering from these notes.]")
+        notes = "".join(thoughts)[-6000:]
+        yield from ai_stream(messages + [{"role": "user", "content": f"Your notes so far:\n{notes}\n\n"
+                                          "Now give only the final answer."}],
+                             response_format, max_tokens, reasoning="none", think_seconds=0)
+        return
+    yield ("done", "".join(parts), model)
+
+
+def ai_parse_stream(query):
+    """ai_parse, streamed with the model's thinking: yields ("reasoning"|"content", text) pieces, then
+    ("spec", spec) or ("error", reason)."""
+    key = query.strip().lower()
+    if key in _llm_cache:
+        yield ("spec", _llm_cache[key])
+        return
+    for event in ai_stream(_parse_messages(query), response_format=_parse_format()):
+        if event[0] == "done":
+            try:
+                spec = _spec_from_text(event[1], event[2])
+            except ValueError as e:
+                yield ("error", str(e))
+                return
+            _llm_cache[key] = spec
+            yield ("spec", spec)
+            return
+        yield event
+        if event[0] == "error":
+            return
 
 
 # -------------------------------------------------------------- search ----

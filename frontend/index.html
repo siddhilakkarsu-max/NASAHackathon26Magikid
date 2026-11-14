@@ -68,6 +68,15 @@
   .card summary { cursor: pointer; } .card.sel { border-color: var(--accent); }
   .chip.nasa { background: #2f5d8a; } .ok { color: #8fd18f; } .bad { color: #ff8a7a; }
   #mExplain { line-height: 1.45; white-space: pre-wrap; } #mCompare { white-space: pre-wrap; }
+  details.ai { margin: 6px 0; }
+  details.ai > summary { cursor: pointer; color: var(--muted); font-size: 11px; text-transform: none;
+                         letter-spacing: 0; margin: 4px 0; }
+  pre.thinking { max-height: 170px; overflow: auto; white-space: pre-wrap; margin: 4px 0 0; padding: 6px 8px;
+                 font: 11px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; color: var(--muted);
+                 background: #1d1512; border-radius: 6px; }
+  pre.thinking.answer { color: var(--fg); }
+  .live::after { content: " ▍"; animation: blink 1s steps(2) infinite; color: var(--accent); }
+  @keyframes blink { 50% { opacity: 0; } }
   .legendkey span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 8px; }
 </style>
 </head>
@@ -446,30 +455,94 @@ function marker(ds, p, color, text, size = 11) {
     label: { text, font: "12px sans-serif", pixelOffset: new Cesium.Cartesian2(0, -18), disableDepthTestDistance: 1e9 } });
 }
 
+let missionCtl = null;                       // the plan being streamed; a new plan aborts the old stream
+
+async function streamEvents(path, body, onEvent, signal) {
+  const r = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" },
+                                     body: JSON.stringify(body), signal });
+  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  const reader = r.body.getReader(), dec = new TextDecoder();
+  let buf = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buf += dec.decode(value, { stream: true });
+    let i;
+    while ((i = buf.indexOf("\n\n")) >= 0) {                   // one server-sent event per blank-line block
+      const block = buf.slice(0, i); buf = buf.slice(i + 2);
+      for (const line of block.split("\n")) if (line.startsWith("data: ")) onEvent(JSON.parse(line.slice(6)));
+    }
+  }
+}
+
+function scrollEnd(node) { if (node) node.scrollTop = node.scrollHeight; }
+
+function renderLiveGoal(g) {                 // the AI reading the goal, before the plan exists
+  let box = $("mGoalLive");
+  if (!box) {
+    $("mResult").innerHTML = "";
+    box = el("details", { className: "ai", id: "mGoalLive", open: true });
+    box.append(el("summary", { id: "mGoalSum" }), el("pre", { className: "thinking", id: "mGoalThink" }),
+               el("pre", { className: "thinking answer", id: "mGoalAns" }));
+    $("mResult").append(box);
+  }
+  $("mGoalSum").textContent = g.content ? "AI reading the goal: answering" : "AI reading the goal: thinking";
+  $("mGoalSum").className = "live";
+  $("mGoalThink").textContent = g.reasoning || "…"; scrollEnd($("mGoalThink"));
+  $("mGoalAns").textContent = g.content; $("mGoalAns").hidden = !g.content;
+}
+
 async function runMission() {
   const goal = $("goal").value.trim();
   if (!goal) { $("mStatus").textContent = "Type a goal, e.g. sample clay where water once flowed."; return; }
-  $("mStatus").textContent = "Planning… reading the goal, scoring every pixel, finding landing spots, routing 3 candidates";
+  if (missionCtl) missionCtl.abort();
+  const ctl = missionCtl = new AbortController();
+  const goalAI = { reasoning: "", content: "" };
+  let res = null;
+  $("mStatus").textContent = "Planning…";
   $("runMission").disabled = true;
   try {
-    const res = await api("/api/mission", { region: $("region").value, goal, vehicle: $("mVehicle").value,
-      season: $("mSeason").value, priority: $("mPriority").value, green_only: $("greenOnly").checked });
-    if (mission) prevMission = mission;
-    mission = res; selected = 0; $("mStatus").textContent = "";
-    $("layer").value = ""; $("legend").style.background = "none"; $("legendText").textContent = "";
-    await showImage(res.science_image, res.rect);                 // bright = better match for the goal
-    renderMission(); drawMission(true);
-    if ($("showTracks").checked) await showTracks(true);
-    if (res.candidates.length) {                                   // the AI wording arrives a few seconds later
-      $("mStatus").textContent = "AI model is writing the explanation…";
-      api(`/api/mission/${res.id}/explain`, {}).then((ex) => {
-        if (mission !== res) return;
-        res.explanation = ex.explanation; res.explanation_source = ex.source;
-        $("mStatus").textContent = ""; renderMission();
-      }).catch(() => { if (mission === res) $("mStatus").textContent = ""; });
-    }
-  } catch (e) { $("mStatus").textContent = e.message; }
-  $("runMission").disabled = false;
+    await streamEvents("/api/mission/stream", { region: $("region").value, goal, vehicle: $("mVehicle").value,
+      season: $("mSeason").value, priority: $("mPriority").value, green_only: $("greenOnly").checked }, async (e) => {
+      if (ctl !== missionCtl) return;
+      if (e.type === "status") $("mStatus").textContent = e.text;
+      else if (e.type === "ai" && e.phase === "goal") { goalAI[e.kind] += e.text; renderLiveGoal(goalAI); }
+      else if (e.type === "result") {
+        res = e.mission; res.goal_ai = goalAI; res.explain_ai = { reasoning: "", content: "", live: !!res.candidates.length };
+        if (mission) prevMission = mission;
+        mission = res; selected = 0; $("runMission").disabled = false;
+        $("layer").value = ""; $("legend").style.background = "none"; $("legendText").textContent = "";
+        renderMission(); drawMission(true);
+        await showImage(res.science_image, res.rect);            // bright = better match for the goal
+        if ($("showTracks").checked) await showTracks(true);
+      } else if (e.type === "ai" && e.phase === "explain" && res) { res.explain_ai[e.kind] += e.text; updateExplain(); }
+      else if (e.type === "note" && res) res.explain_ai.note = e.text;
+      else if (e.type === "explanation" && res) {
+        res.explanation = e.text; res.explanation_source = e.source; res.explain_ai.live = false;
+        $("mStatus").textContent = ""; updateExplain();
+      } else if (e.type === "error") $("mStatus").textContent = e.text;
+      else if (e.type === "done" && res && !res.explain_ai.live) $("mStatus").textContent = "";
+    }, ctl.signal);
+  } catch (err) { if (err.name !== "AbortError") $("mStatus").textContent = err.message; }
+  if (ctl === missionCtl) $("runMission").disabled = false;
+}
+
+function updateExplain() {                   // fill the "Why" section from the streamed state
+  const ai = mission && mission.explain_ai;
+  if (!ai || !$("mExplain")) return;
+  const box = $("mThinkBox"), think = $("mThinking");
+  box.hidden = !ai.reasoning;
+  if (ai.live && ai.reasoning && !ai.content) box.open = true;     // follow the thinking while it streams
+  $("mThinkSum").textContent = ai.live && !ai.content ? "AI reasoning (thinking…)" : "AI reasoning";
+  $("mThinkSum").className = ai.live && !ai.content ? "live" : "";
+  think.textContent = ai.reasoning; scrollEnd(think);
+  $("mExplain").textContent = ai.content || mission.explanation;
+  $("mExplain").className = ai.live && ai.content ? "live" : "";
+  $("mExplainNote").textContent = ai.live
+    ? (ai.content ? "AI model is writing…" : ai.reasoning ? "AI model is thinking; summary from the numbers shown meanwhile."
+                                                         : "Waiting for the AI model; summary from the numbers shown meanwhile.")
+    : mission.explanation_source === "ai" ? "Written by the AI model from the numbers above."
+    : (ai.note ? ai.note + " " : "") + "Summary from the numbers above.";
 }
 
 function selectRoute(i) { selected = i; renderMission(); drawMission(true); }
@@ -487,6 +560,14 @@ function renderMission() {
           `risk ${s.priority.cost.risk}` + (s.green_only ? "; sticking to green tracks" : ""));
   out.append(set);
   for (const n of r.notes) out.append(el("div", { className: "small", textContent: n }));
+  const g = r.goal_ai;
+  if (g && (g.reasoning || g.content)) {                       // how the AI read the goal (collapsed)
+    const d = el("details", { className: "ai" });
+    d.append(el("summary", { textContent: `How ${s.model || "the AI model"} read the goal` }),
+             el("pre", { className: "thinking", textContent: g.reasoning || "(no reasoning returned)" }),
+             el("pre", { className: "thinking answer", textContent: g.content }));
+    out.append(d);
+  }
 
   h3(`Tools: ${r.tools.kg} kg, ${r.tools.w} W if all run at once`);
   const tl = el("ul");
@@ -513,9 +594,10 @@ function renderMission() {
   }
 
   h3("Why");
-  out.append(el("div", { id: "mExplain", textContent: r.explanation }));
-  out.append(el("div", { className: "small", textContent: r.explanation_source === "ai"
-    ? "Written by the AI model from the numbers above." : "Summary from the numbers above (no AI model configured)." }));
+  const think = el("details", { className: "ai", id: "mThinkBox" });
+  think.append(el("summary", { id: "mThinkSum" }), el("pre", { className: "thinking", id: "mThinking" }));
+  out.append(think, el("div", { id: "mExplain" }), el("div", { className: "small", id: "mExplainNote" }));
+  updateExplain();
   if (selected > 0) {
     const a = r.candidates[0], b = r.candidates[selected];
     out.append(el("div", { className: "small", textContent: `Showing #${b.rank}: ${(a.total - b.total).toFixed(1)} points ` +

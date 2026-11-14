@@ -279,18 +279,26 @@ def _score(x, steps):
     return 1 + sum(x >= s for s in steps)
 
 
-def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safety", green_only=False):
-    v = MISSION_VEHICLES[vehicle]
-    notes = []
-
-    # 1-2. settings and tools ------------------------------------------------------------------
-    spec, parser = search.keyword_parse(goal), "keywords"
+def read_goal(goal):
+    """Goal text -> (spec, parser, notes): keywords first, the AI model only for words they don't cover."""
+    spec, parser, notes = search.keyword_parse(goal), "keywords", []
     if spec["unknown"] or not spec["criteria"]:
         llm, why = search.ai_parse(goal)
         if llm and llm["criteria"]:
             spec, parser = llm, "ai"
         elif why:
             notes.append(why)
+    return spec, parser, notes
+
+
+def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safety", green_only=False,
+         goal_spec=None):
+    """goal_spec: (spec, parser, notes) when the goal was already read (e.g. streamed); else read_goal(goal)."""
+    v = MISSION_VEHICLES[vehicle]
+
+    # 1-2. settings and tools ------------------------------------------------------------------
+    spec, parser, notes = goal_spec or read_goal(goal)
+    notes = list(notes)
     criteria = [c for c in spec["criteria"] if c["feature"] != "near_base"]   # the start A is chosen later
     if not criteria:
         raise ValueError(f"Couldn't find a target in '{goal}'. Try e.g. 'clay', 'carbonate in a valley', "
@@ -524,12 +532,21 @@ def explain_facts(res):
             "rover": (res["tracks"] or {}).get("rover"), "summary": res["explanation"]}
 
 
+EXPLAIN_SYSTEM = (
+    "You explain a Mars traverse plan to an astronaut in 2-3 plain sentences. Rewrite the 'summary' more "
+    "naturally and keep its numbers; you may add one more comparison from the candidates table. Routes #2 and "
+    "#3 are backups, not dropped; only entries under 'dropped' were dropped. Use only numbers given. "
+    "No lists, no markdown.")
+
+
 def explain_ai(facts):
-    """The AI model rewrites the template summary; None if no model is available."""
+    """The AI model rewrites the template summary (no streaming, no thinking); None if no model is available."""
     if not facts["candidates"]:
         return None
-    return search.ai_write(
-        "You explain a Mars traverse plan to an astronaut in 2-3 plain sentences. Rewrite the 'summary' more "
-        "naturally and keep its numbers; you may add one more comparison from the candidates table. Routes #2 and "
-        "#3 are backups, not dropped; only entries under 'dropped' were dropped. Use only numbers given. "
-        "No lists, no markdown.", json.dumps(facts), max_tokens=300)
+    return search.ai_write(EXPLAIN_SYSTEM, json.dumps(facts), max_tokens=300)
+
+
+def explain_stream(facts):
+    """The same, streamed with the model's thinking: search.ai_stream events."""
+    yield from search.ai_stream([{"role": "system", "content": EXPLAIN_SYSTEM},
+                                 {"role": "user", "content": json.dumps(facts)}], max_tokens=4000)
