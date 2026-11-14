@@ -20,7 +20,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 import physics
-from config import MARS_RADIUS_M, SCIENCE_TARGETS, VEHICLES
+from config import CONSUMABLE_SOURCES, MARS_RADIUS_M, SCIENCE_TARGETS, VEHICLES
 
 ROOT = Path(__file__).parent
 app = FastAPI(title="Mars Marswalk Planner")
@@ -120,6 +120,68 @@ def conditions_layers(cube, cond):
     return v, sun_e, sun_az, illum, temp, cost
 
 
+# ---------------------------------------------------------- consumables ----
+BINDING_LABEL = {"oxygen": "The suit's O2", "energy": "On-board energy", "rated": "Rated endurance"}
+
+
+def vehicle_spec(v):
+    """Public description of one vehicle's limits, so the front end never hardcodes a constant."""
+    c = v.get("consumables") or {}
+    return {"label": v["label"], "max_slope": v["max_slope"], "rated_hours": v.get("rated_hours"),
+            "o2_rate_kg_per_h": c.get("o2_rate_kg_per_h"), "o2_capacity_kg": c.get("o2_capacity_kg"),
+            "energy_capacity_kwh": c.get("energy_capacity_kwh"), "energy_idle_kw": c.get("energy_idle_kw"),
+            "energy_per_km_kwh": c.get("energy_per_km_kwh"),
+            "source": CONSUMABLE_SOURCES.get(v.get("consumable_source", ""), "")}
+
+
+def consumables_block(v, seconds, distance_m, veh_key=""):
+    """Round-trip O2 / energy against what the vehicle carries, and which of ITS limits binds first.
+
+    The round trip is twice the outward leg, matching how the walk-back zone already assumes
+    the return costs what the outbound leg cost. limiting_factor deliberately compares only the
+    vehicle's own limits (O2, energy, rated endurance) - whether the user's time budget allows
+    the trip at all is reported separately, as within_budget.
+    """
+    e = physics.endurance(v, seconds, distance_m)
+    trip_h = 2 * seconds / 3600.0
+
+    stats = {"endurance_h": round(e["endurance_h"], 1),
+             "max_range_km": round(e["max_range_km"], 2),
+             "o2_used_kg": None, "o2_max_kg": None, "o2_pct": None,
+             "energy_used_kwh": None, "energy_max_kwh": None, "energy_pct": None}
+    warnings = []
+
+    if e["o2_kg"] is not None:
+        o2, cap = 2 * e["o2_kg"], e["o2_capacity_kg"]
+        stats.update(o2_used_kg=round(o2, 2), o2_max_kg=round(cap, 2), o2_pct=int(round(100 * o2 / cap)))
+        if o2 > cap:
+            warnings.append(f"Round trip needs {o2:.2f} kg of O2 but the suit carries {cap:.2f} kg "
+                            f"({stats['o2_pct']}%). Shorten the route or send a rover.")
+    if e["energy_kwh"] is not None:
+        kwh, cap = 2 * e["energy_kwh"], e["energy_capacity_kwh"]
+        stats.update(energy_used_kwh=round(kwh, 2), energy_max_kwh=round(cap, 2),
+                     energy_pct=int(round(100 * kwh / cap)))
+        if kwh > cap:
+            hint = "" if veh_key == "pressurized_rover" else \
+                " The pressurized rover has more headroom."
+            warnings.append(f"Round trip needs {kwh:.2f} kWh but {v['label']} carries only {cap:.2f} kWh "
+                            f"({stats['energy_pct']}%).{hint}")
+
+    # Which limit actually runs out first: a consumable with the highest fraction used. The
+    # rated endurance only wins when nothing is consumed over its limit but the trip outlasts
+    # the vehicle's rating, so a bar at 1061% is never labelled "rated endurance".
+    limits = e["limits_hours"] or {}
+    fractions = {k: trip_h / limits[k] for k in ("oxygen", "energy")
+                 if k in limits and limits[k] > 0}
+    binding = max(fractions, key=fractions.get) if fractions else None
+    outlasts_rating = trip_h > limits.get("rated", math.inf)
+    if outlasts_rating and (binding is None or fractions[binding] <= 1.0):
+        binding = "rated"
+    stats["limiting_factor"] = binding
+    return {"stats": stats, "warnings": warnings,
+            "binding_label": BINDING_LABEL.get(binding, "No rated limit")}
+
+
 # ------------------------------------------------------------ endpoints ----
 @app.get("/api/regions")
 def regions():
@@ -129,7 +191,8 @@ def regions():
         out.append({"region": c.region, "rect": c.rect, "size": [c.W, c.H], "bands": c.names,
                     "pixel_m": [round(c.pixel_m[0]), round(c.pixel_m[1])], "provenance": c.provenance,
                     "targets": SCIENCE_TARGETS.get(c.region, [])})
-    return {"regions": out, "vehicles": {k: v["label"] for k, v in VEHICLES.items()}}
+    return {"regions": out, "vehicles": {k: v["label"] for k, v in VEHICLES.items()},
+            "vehicle_specs": {k: vehicle_spec(v) for k, v in VEHICLES.items()}}
 
 
 @app.get("/api/pixel")
@@ -239,16 +302,31 @@ def plan(req: PlanRequest):
     if not within:
         warnings.append(f"Round trip needs {round_trip_h:.1f} h but only "
                         f"{req.budget_hours * (1 - req.reserve):.1f} h is usable after the reserve.")
+
+    # O2 / energy for the round trip, against what this vehicle actually carries
+    cons = consumables_block(v, seconds, dist_m, req.vehicle)
+    warnings.extend(cons["warnings"])
+
     explanation = (f"{v['label']}: {dist_m / 1000:.2f} km route, about {seconds / 3600:.1f} h one way "
                    f"({round_trip_h:.1f} h round trip). Straight line would be {straight_dist / 1000:.2f} km. ")
     explanation += ("Detour chosen because " + "; ".join(reasons) + ".") if reasons else \
         "The direct path is already the safest."
+    spent = []
+    if cons["stats"]["o2_used_kg"] is not None:
+        spent.append(f"{cons['stats']['o2_used_kg']:.2f} kg of O2 (of {cons['stats']['o2_max_kg']:.2f} kg)")
+    if cons["stats"]["energy_used_kwh"] is not None:
+        spent.append(f"{cons['stats']['energy_used_kwh']:.2f} kWh (of {cons['stats']['energy_max_kwh']:.2f} kWh)")
+    if spent:
+        explanation += (f" Round trip uses {' and '.join(spent)}. "
+                        f"{cons['binding_label']} is the tightest vehicle limit")
+        explanation += ", and the EVA time budget is already exceeded." if not within else "."
     result.update({
         "route": [{"lat": a, "lon": b} for a, b in coords[:: max(1, len(coords) // 400)]] + [
             {"lat": coords[-1][0], "lon": coords[-1][1]}],
         "stats": {"distance_km": round(dist_m / 1000, 2), "one_way_h": round(seconds / 3600, 2),
                   "round_trip_h": round(round_trip_h, 2), "max_slope_deg": round(float(np.nanmax(route_slope)), 1),
-                  "mean_slope_deg": round(float(np.nanmean(route_slope)), 1), "within_budget": within},
+                  "mean_slope_deg": round(float(np.nanmean(route_slope)), 1), "within_budget": within,
+                  **cons["stats"]},
         "explanation": explanation,
     })
     return result
