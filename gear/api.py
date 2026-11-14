@@ -5,6 +5,7 @@ HTTP surface for the gear system.
     POST /api/gear/tools/{name}                    call a tool with its arguments as the JSON body
     POST /api/gear/kit                             the page's call: full manifest for a mission context
     GET  /api/gear/published                       the kit the planning agent last published, if any
+    DELETE /api/gear/published                     forget the published kit (memory and the saved file)
     GET  /api/gear/catalog | /archetypes | /rules  reference data for the page
 
 Mounting (two lines in app.py, placed BEFORE the static-files mount):
@@ -55,11 +56,24 @@ def kit(req: KitRequest):
     return _ok(tools.call_tool("recommend_gear", args))
 
 
+def _published_view():
+    p = tools.PUBLISHED
+    source = (p.get("source") or "memory") if p["manifest"] is not None else None
+    return {"manifest": p["manifest"], "published_at": p["published_at"], "note": p["note"], "source": source}
+
+
 @router.get("/published")
 def published():
-    """The kit the planning agent last published. manifest is null until it publishes one."""
-    p = tools.PUBLISHED
-    return {"manifest": p["manifest"], "published_at": p["published_at"], "note": p["note"]}
+    """The kit the planning agent last published. manifest is null until it publishes one.
+    source is "disk" when the kit was restored from the saved file after a restart, else "memory"."""
+    return _published_view()
+
+
+@router.delete("/published")
+def clear_published():
+    """Forget the published kit, in memory and on disk (handy between demo takes)."""
+    tools.clear_published()
+    return _published_view()
 
 
 @router.get("/catalog")
