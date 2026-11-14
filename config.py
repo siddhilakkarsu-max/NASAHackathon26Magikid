@@ -89,6 +89,16 @@ _JEZERO_TARGETS = [
 ]
 SCIENCE_TARGETS = {"jezero": _JEZERO_TARGETS, "jezero_hirise": _JEZERO_TARGETS}
 
+# Approximate places for the text target search ("valley with clay") when the cube has NO band for
+# that material yet. Each zone is a circle; "tags" are the search words that select it.
+# For pixel-level results, add a mineral map band named after the mineral (e.g. a CRISM clay map
+# as "clay" in SOURCES) - the search uses a band of that name first and ignores these zones.
+_JEZERO_ZONES = [
+    {"name": "Western fan delta", "tags": ["delta", "clay"], "lat": 18.50, "lon": 77.40, "radius_km": 5.0,
+     "source": "Fe/Mg smectite clays seen by CRISM in the delta (Ehlmann et al. 2008); outline approximate"},
+]
+SEARCH_ZONES = {"jezero": _JEZERO_ZONES, "jezero_hirise": _JEZERO_ZONES}
+
 # Vehicle / walker profiles. Weights are tunable during the demo.
 VEHICLES = {
     "astronaut": dict(label="Astronaut on foot (suited)", max_slope=18.0, base_speed_kmh=6.0,

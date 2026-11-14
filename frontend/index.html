@@ -19,7 +19,16 @@
   button.secondary { background: #4a3a33; }
   button.active { outline: 2px solid white; }
   .row { display: flex; gap: 6px; } .row > * { flex: 1; }
-  #info, #explain, #warn { white-space: pre-wrap; line-height: 1.4; }
+  #info, #explain, #warn, #findInfo { white-space: pre-wrap; line-height: 1.4; }
+  input[type=text] { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 7px 8px; border-radius: 6px;
+                     border: 1px solid #6b5449; background: #2a1f1a; color: var(--fg); font: inherit; }
+  input[type=text]:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .row > button.find { flex: 0 0 64px; }
+  #findInfo { margin-top: 4px; }
+  #matches { margin: 6px 0 0; padding-left: 20px; }
+  #matches li { margin: 6px 0; cursor: pointer; line-height: 1.35; }
+  #matches li.sel { color: var(--accent); }
+  #matches li .small { display: block; white-space: pre-wrap; }
   #warn { color: #ffb08a; }
   #legend { height: 10px; border-radius: 4px; margin-top: 4px; }
   .small { color: var(--muted); font-size: 11px; }
@@ -60,6 +69,13 @@
     <button id="setBase" class="secondary">Set base</button>
     <button id="setTarget" class="secondary">Set target</button>
   </div>
+  <label for="query">…or describe the target</label>
+  <div class="row">
+    <input id="query" type="text" placeholder="e.g. valley with clay" autocomplete="off" />
+    <button id="find" class="find">Find</button>
+  </div>
+  <div id="findInfo" class="small"></div>
+  <ol id="matches"></ol>
   <select id="targets"><option value="">…or pick a science target</option></select>
   <button id="plan">Plan route</button>
   <div id="warn"></div>
@@ -190,6 +206,59 @@ $("targets").onchange = () => {
   target = { lat: t.lat, lon: t.lon }; pin("target", target, Cesium.Color.ORANGE, t.name);
 };
 
+// ----------------------------------------------------------- text search ----
+let matches = [], lastQuery = "";
+function clearMatches() {
+  matches.forEach((_, i) => marks.removeById(`match${i}`));
+  matches = []; $("matches").innerHTML = "";
+}
+function viewCenter() {                     // where the user is looking; equal matches closer to it win
+  const c = viewer.scene.canvas;
+  return pickLatLon(new Cesium.Cartesian2(c.clientWidth / 2, c.clientHeight / 2));
+}
+function chooseMatch(i, fly = true) {
+  const m = matches[i]; if (!m) return;
+  target = { lat: m.lat, lon: m.lon };
+  pin("target", target, Cesium.Color.ORANGE, lastQuery.length > 28 ? lastQuery.slice(0, 27) + "…" : lastQuery);
+  [...$("matches").children].forEach((li, j) => li.classList.toggle("sel", j === i));
+  $("targets").value = "";
+  if (fly) viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(m.lon, m.lat, 30000, MARS) });
+}
+async function findTarget() {
+  const query = $("query").value.trim();
+  if (!query) { $("findInfo").textContent = "Type what you are looking for, e.g. valley with clay."; return; }
+  $("findInfo").textContent = "Searching…"; clearMatches();
+  try {
+    const res = await api("/api/find", { ...conditions(), query, base, focus: viewCenter() });
+    lastQuery = query;
+    $("layer").value = ""; $("legend").style.background = "none"; $("legendText").textContent = "";
+    await showImage(res.heatmap, res.rect);                       // bright = better match
+    const lines = [`Looking for: ${res.criteria.join(" + ")}` + (res.parser === "ai" ? ` (read by ${res.model})` : "")];
+    if (res.not_understood.length) lines.push(`Not understood: ${res.not_understood.join(", ")}`);
+    lines.push(...res.notes);
+    lines.push(res.matches.length ? "Bright areas match best. Click a result to make it the target, then Plan route."
+                                  : "No passable place matches. Try fewer words.");
+    $("findInfo").textContent = lines.join("\n");
+    matches = res.matches;
+    matches.forEach((m, i) => {
+      marks.add({ id: `match${i}`, position: Cesium.Cartesian3.fromDegrees(m.lon, m.lat, 0, MARS),
+        point: { pixelSize: 8, color: Cesium.Color.GOLD, outlineColor: Cesium.Color.BLACK, outlineWidth: 1,
+                 heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
+        label: { text: String(i + 1), font: "12px sans-serif", pixelOffset: new Cesium.Cartesian2(10, -10),
+                 disableDepthTestDistance: 1e9 } });
+      const li = document.createElement("li");
+      li.textContent = `${Math.round(m.score * 100)}% match · ${m.lat.toFixed(4)}°N ${m.lon.toFixed(4)}°E`;
+      const why = document.createElement("span");
+      why.className = "small"; why.textContent = m.why.join("\n");
+      li.appendChild(why); li.onclick = () => chooseMatch(i);
+      $("matches").appendChild(li);
+    });
+    chooseMatch(0);
+  } catch (e) { $("findInfo").textContent = e.message; }
+}
+$("find").onclick = findTarget;
+$("query").addEventListener("keydown", (e) => { if (e.key === "Enter") findTarget(); });
+
 // ------------------------------------------------------------------ plan ----
 $("plan").onclick = async () => {
   if (!base || !target) { $("warn").textContent = "Set a base and a target first."; return; }
@@ -220,6 +289,7 @@ function flyTo(r) {
 $("layer").onchange = refreshLayer;
 $("region").onchange = () => {
   current = regions.find((r) => r.region === $("region").value);
+  clearMatches(); $("findInfo").textContent = "";
   $("targets").innerHTML = '<option value="">…or pick a science target</option>' +
     current.targets.map((t, i) => `<option value="${i}">${t.name}</option>`).join("");
   flyTo(current.rect);

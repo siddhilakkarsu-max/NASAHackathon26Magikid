@@ -43,6 +43,25 @@ Good GeoTIFFs to download (USGS Astrogeology):
 Add an entry to `SOURCES` in `config.py`, rerun `build_cube.py`. It automatically appears in the
 pixel panel. To use it in the route cost, edit `cost_seconds_per_meter()` in `physics.py`.
 
+## 5. Find a target by description
+Type e.g. **valley with clay**, **flat firm ground near a cliff**, **sunny ridge close to base** or
+**shelter without sand** into "describe the target" and press Enter. `search.py` scores every pixel for
+each word (valley, ridge, flat, steep, firm, sand, sunny, shadow, shelter, clay, …), combines them, sets the
+best passable spot as the target and lists the runners-up. With a base set, places you can reach and return
+from within the EVA budget rank first.
+- New word? Add it to a feature's `words` in `search.FEATURES`.
+- **Clay** has no band yet, so it uses the approximate zone in `config.SEARCH_ZONES` (Jezero delta). Add a
+  CRISM clay map as a band named `clay` and the search uses it per pixel instead (same for `carbonate`, `olivine`, …).
+- Words the built-in parser doesn't know go to a **free AI model on OpenRouter** if `OPENROUTER_API_KEY` is set
+  (free key at openrouter.ai, `export OPENROUTER_API_KEY=...` before starting uvicorn). It picks the current
+  `:free` models automatically, falling back from one to the next; set `OPENROUTER_MODELS=a:free,b:free` to choose.
+  Free models are limited to 20 requests/min and 50/day per account (1000/day after buying $10 of credits);
+  there is no unlimited $0 text model. Known-word queries ("valley with clay") never use the AI, and answers are
+  cached. Without a key, the search runs on the known words and lists the rest.
+- Offline or over the free limit? Any OpenAI-compatible server works, e.g. Ollama:
+  `OPENROUTER_BASE_URL=http://<host>:11434/v1 OPENROUTER_API_KEY=local OPENROUTER_MODELS=gemma4:26b-a4b`.
+  Tested on a laptop with a 4 GB T1200 GPU: `gemma4:26b-a4b` ~9 s per query, `gemma4:e4b` ~4 s.
+
 ## Who owns what
 | File / function | Owner | What to improve |
 |---|---|---|
@@ -60,6 +79,7 @@ pixel panel. To use it in the route cost, edit `cost_seconds_per_meter()` in `ph
 | `GET /api/pixel?lat=&lon=&region=` | every value stored in that pixel + ground type + confidence |
 | `POST /api/layer/{slope|firmness|cost|illumination|temperature|shelter|elevation}` | PNG overlay + bounds + legend |
 | `POST /api/plan` | route (lat/lon list), stats, warnings, explanation, walk-back zone PNG |
+| `POST /api/find` | best target spots for a text description (`"query": "valley with clay"`), why each matched, match heatmap PNG |
 
 Body for POST calls: `{"region":"jezero","vehicle":"astronaut","local_hour":11,"ls":90,"budget_hours":4}`
 (+ `"base":{"lat":..,"lon":..}, "target":{...}` for `/api/plan`).

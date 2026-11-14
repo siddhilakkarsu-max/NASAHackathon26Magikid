@@ -20,7 +20,8 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 import physics
-from config import MARS_RADIUS_M, SCIENCE_TARGETS, VEHICLES
+import search
+from config import MARS_RADIUS_M, SCIENCE_TARGETS, SEARCH_ZONES, VEHICLES
 
 ROOT = Path(__file__).parent
 app = FastAPI(title="Mars Marswalk Planner")
@@ -105,6 +106,13 @@ class Conditions(BaseModel):
 class PlanRequest(Conditions):
     base: Point
     target: Point
+
+
+class FindRequest(Conditions):
+    query: str = Field(..., min_length=1, max_length=300, description='e.g. "valley with clay"')
+    base: Point | None = None
+    focus: Point | None = Field(None, description="centre of the user's view; breaks ties between equal matches")
+    count: int = Field(5, ge=1, le=10)
 
 
 def conditions_layers(cube, cond):
@@ -252,6 +260,33 @@ def plan(req: PlanRequest):
         "explanation": explanation,
     })
     return result
+
+
+@app.post("/api/find")
+def find(req: FindRequest):
+    """Turn a text description ("valley with clay") into the best matching target pixels."""
+    c = get_cube(req.region)
+    v, sun_e, sun_az, illum, temp, cost = conditions_layers(c, req)
+    t_base, notes = None, []
+    focus = (req.focus.lat, req.focus.lon) if req.focus else ((c.s + c.n) / 2, (c.w + c.e) / 2)
+    usable_s = req.budget_hours * 3600 * (1 - req.reserve)
+    if req.base:
+        try:
+            t_base = physics.travel_time_from(cost, [c.rc(req.base.lat, req.base.lon)], c.pixel_m)
+            focus = (req.base.lat, req.base.lon)
+        except HTTPException:
+            notes.append("The base is outside this region, so distance from base was ignored.")
+    ctx = search.Ctx(c, v, sun_e, illum, temp, cost, t_base=t_base, usable_s=usable_s,
+                     zones=SEARCH_ZONES.get(c.region, []))
+    ctx.notes.extend(notes)
+    try:
+        res = search.find(ctx, req.query, count=req.count, focus=focus)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    score = res.pop("score")
+    res.update(rect=c.rect, heatmap=to_png(score, "plasma", 0, 1, alpha=0.55),
+               sun={"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)})
+    return res
 
 
 # ------------------------------------------------- NASA Trek tile proxy ----
