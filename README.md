@@ -19,7 +19,7 @@ pip install -r requirements.txt
 python make_demo_cube.py          # FAKE Jezero-shaped terrain so everyone can start building
 uvicorn app:app --reload --port 8000
 ```
-Open http://localhost:8000 → the globe flies to Jezero. Pick a layer, set a base and a target, press **Plan route**.
+Open http://localhost:8000 → the globe starts on the global temperature layer. Use **Zoom to region** for Jezero. Open **Manual planning** to set a base and a target, then press **Plan route**.
 
 ## 3. Swap in real NASA data
 ```bash
@@ -179,13 +179,15 @@ at the top of the `<script>` in `frontend/index.html`.
   from the uncalibrated THEMIS night-IR picture.
 - CRISM band depths show where a mineral's spectral signature is, not how much of it there is; the targeted
   observations (18 m) and the map tile (180 m) have different noise, so seams can appear at their edges.
-- Surface temperature is a simple approximation, not a full thermal model.
-- Walk-back assumes the return trip costs the same as the way out, and so does the consumables total.
-- O₂ is a flat rate: uphill work is charged in **time** by the cost map, not by a separate metabolic term.
-- Cabin O₂ for a crewed rover is not modelled — only the astronaut's suit supply is tracked.
-- Pressurized-rover loads are estimates, and are labelled as such everywhere they appear.
-- "Shelter" = within a few pixels of steep walls; real overhangs/lava tubes need HiRISE inspection.
-- At ~110 m/px slopes are smoothed; HiRISE DEMs (1 m) give the real meter-scale hazards.
+- **Simulated surface temperature** uses TES broadband albedo and apparent thermal inertia. The overview uses 0.5° cells, with finer 0.125° TES inputs when zoomed in on the global layer. Unavailable thermal inertia is transparent.
+- The model uses the selected Mars local solar hour and solar longitude (`Ls`) to compute diurnal solar heating. It approximates thermal emission and subsurface conduction, including heat retained after sunset. It uses spatially and seasonally varying OpenMARS visible column dust opacity. The calculation assumes level terrain, emissivity 0.95, and fixed downwelling longwave flux of 25 W/m². It has no seasonal frost model, and its absolute temperature has not been calibrated to Jezero observations.
+- Primary grid sources are [NASA PDS TES albedo](https://pds-geosciences.wustl.edu/missions/mgs/tesspecial.html) and [NASA PDS TES apparent thermal inertia](https://pds-geosciences.wustl.edu/missions/mgs/tes-timap.html). The thermal grid uses observation-backed TES nighttime values where available, with observation-backed TES daytime values filling remaining supported cells.
+- Walk-back and consumables estimates assume the return trip costs the same as the way out.
+- O₂ is modeled at a flat rate. Uphill terrain increases time and therefore oxygen use.
+- The oxygen budget applies to the astronaut’s suit supply. The crew rover’s cabin oxygen is outside the model.
+- Pressurized-rover loads are engineering estimates.
+- Shelter denotes terrain near steep slopes. Confirm that a site can provide actual cover with higher-resolution imagery.
+- At roughly 110 m per pixel, the regional slope map smooths out meter-scale hazards.
 - Rover track colors are a proxy: green = Perseverance drove there; yellow = the rover recorded ≥12° tilt or the
   ground is steep/loose. JPL publishes no per-drive slip, and places rovers avoided aren't in the data; red is
   terrain beyond the chosen vehicle's limits. At Jezero most goals sit 8–20 km from the traverse, so routes rarely
@@ -194,6 +196,24 @@ at the top of the `<script>` in `frontend/index.html`.
   Special Regions are known at Jezero, so that mask is empty there.
 - Routes use Dijkstra (skimage MCP) on the cost grid: the same lowest-cost route A* finds, without its heuristic speed-up.
 - Vehicle, suit, tool and energy numbers are first-order assumptions (see config.py).
+
+## Weather layers and data
+
+The **Global weather** group includes simulated ground temperature, an OpenMARS ground-temperature reference, near-surface air temperature, surface pressure, wind speed, animated wind arrows, and seasonal infrared dust opacity. Arrowheads follow the horizontal wind field, with motion sped up for display. The background shows speed and the animation can be paused. Hover for native-cell coordinates and values, or click to keep a reading in the panel. The **Overlay opacity** slider exposes the NASA Viking imagery underneath. The hour control applies the same local solar hour at each longitude. These layers represent historical or climatological scenarios.
+
+**Weather timeline** accepts start and end sols (days within a Martian year), with a scrubber for individual sols. Playback skips frames on long ranges. The seasonal sol-to-`Ls` conversion comes from the LMD climatology file's daily coordinates.
+
+The globe uses a bundled, downsampled [NASA/JPL Mars Trek Viking MDIM 2.1 mosaic](https://trek.nasa.gov/tiles/apidoc/trekAPI.html?body=mars) plus higher-resolution network tiles at closer zoom. CesiumJS 1.147.0 is bundled under its included Apache License. Global ground temperatures start with a 0.5° overview. When the view is close enough, the app computes only the visible region plus a small margin using 0.125° TES inputs (about 7.4 km north–south) and displays the range for that view. Missing thermal inertia is transparent at both scales. The OpenMARS atmosphere and ground-temperature reference stay at their 5° source resolution. Wind glyph density rises with zoom while following the same 5° wind field. Interface references include [NASA Worldview](https://worldview.earthdata.nasa.gov/), [NASA GIBS](https://nasa-gibs.github.io/gibs-api-docs/access-advanced-topics/), and [earth/nullschool](https://earth.nullschool.net/).
+
+- **Air, pressure, wind and visible dust:** [Holmes, Lewis and Patel, OpenMARS](https://doi.org/10.21954/ou.rd.c.4278950), retrieved from [Bhattacharya's ARCO-OpenMARS conversion](https://doi.org/10.57967/hf/8741), CC BY 4.0. The app uses twelve approximately ten-sol windows from Mars Year 29, a 5° grid, and twelve two-hour samples per sol. Air temperature and winds are from the lowest available model level (sigma ≈ 0.9995). The app averages within each window, interpolates cyclically between windows and hours, and computes wind speed and direction from the interpolated components.
+- **Displayed dust opacity:** [LMD climatology scenario](https://www-mars.lmd.jussieu.fr/mars/dust_scenarios/), derived from the [Montabone et al. dust climatology](https://www-mars.lmd.jussieu.fr/mars/dust_climatology/) (CC BY-SA 3.0). It is 9.3 μm absorption opacity normalized to 610 Pa, so its map depends on season alone. The ground model uses the OpenMARS visible-band field for sunlight attenuation.
+- **Reference ground temperature:** The `tsurf` field from the same twelve OpenMARS Mars Year 29 windows provides an independently modeled ground-temperature comparison at 5°. The finer TES-driven simulation uses observed surface-property inputs and the same coarse dust forcing, and still assumes 25 W/m² of downwelling longwave radiation.
+- `thermal_data/weather.npz` contains the processed grids for offline computation. To rebuild it with Internet access, install `blosc2` and `zstandard` in addition to the normal requirements and run `python build_weather.py`. The builder uses curl and downloads only the twelve required reanalysis windows.
+- The app's **Weather data and source inventory** link provides the reviewed catalog. Its role column indicates which numerical archives and imagery were used and which sources are references or validation candidates.
+
+### Independent check at Jezero
+
+NASA PDS Mars 2020 MEDA Sol 30 derived TIRS data were evaluated in thirteen local true solar time windows around `Ls` 20.35°. Upward IR4 longwave flux was converted to brightness temperature with the instrument team's convention, `T = (flux / σ)^(1/4)`. The TES-driven model's kinetic temperature was converted to emitted brightness using its assumed emissivity of 0.95. Against these windows the mean absolute differences were 16.57 K at 0.5° and 16.92 K at 0.125°. The OpenMARS reference had a 4.45 K mean absolute difference in this check. That comparison uses a different weather year (MY29 versus MY36) and compares its modeled surface temperature with IR4 brightness. Rover spot-scale readings and modeled grid cells also represent different areas. The Jezero check is a local diagnostic and does not establish global accuracy. [NASA PDS MEDA archive](https://pds-atmospheres.nmsu.edu/data_and_services/atmospheres_data/PERSEVERANCE/meda.html) · [Instrument-team flux method](https://doi.org/10.1029/2022JE007537)
 
 ## HiRISE / CTX close-ups of Jezero (official Mars 2020 landing products, USGS)
 Two map levels are set up in `config.py`:

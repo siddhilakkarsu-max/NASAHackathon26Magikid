@@ -299,9 +299,11 @@ class ToolContract(unittest.TestCase):
         self.assertTrue(0 <= r["terrain"]["loose_fraction"] <= 1)
 
     def test_route_flows_into_the_kit(self):
-        m = tools.call_tool("recommend_gear", {"context": {"archetype": "traverse", "route_request": {
-            "region": "jezero", "vehicle": "astronaut", "base": BASE, "target": TARGET, "budget_hours": 8}}})
-        self.assertEqual(m["context"]["route"]["distance_km"], 4.61)
+        request = {"region": "jezero", "vehicle": "astronaut", "base": BASE, "target": TARGET, "budget_hours": 8}
+        planned = tools.call_tool("get_route_context", request)
+        m = tools.call_tool("recommend_gear", {"context": {"archetype": "traverse", "route_request": request}})
+        self.assertTrue(planned["route_found"], planned)
+        self.assertEqual(m["context"]["route"]["distance_km"], planned["route"]["distance_km"])
         ids = {r["id"] for r in m["triggered_rules"]}
         self.assertTrue({"S1", "S2", "S3"} <= ids, ids)
 

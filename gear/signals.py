@@ -6,6 +6,8 @@ starting the web app, and so there is no import cycle when app.py later includes
 """
 import numpy as np
 
+import physics
+
 from .context import RouteRequest, RouteStats, TerrainSignals
 
 LOOSE_FIRMNESS = 0.3  # same cut-off app.py uses for "loose sand/dust - slip risk"
@@ -35,7 +37,8 @@ def terrain_along(req: RouteRequest, route_points):
     cube = planner.get_cube(req.region)
     cond = planner.Conditions(region=req.region, vehicle=req.vehicle, local_hour=req.local_hour, ls=req.ls,
                               budget_hours=req.budget_hours, reserve=req.reserve)
-    _v, sun_e, _az, _illum, temp, _cost = planner.conditions_layers(cube, cond)
+    _v, sun_e, _az, illum, _cost = planner.conditions_layers(cube, cond)
+    temp = physics.surface_temp_k(illum, cube.bands.get("firmness"), sun_e)
 
     rr, cc = [], []
     for p in route_points:
