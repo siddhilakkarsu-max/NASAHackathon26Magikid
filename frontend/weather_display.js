@@ -7,8 +7,9 @@ const weatherDisplay = (() => {
     air_temperature: "Air at the lowest OpenMARS model level. Historical estimate for the selected hour and season.",
     surface_pressure: "Atmospheric pressure at ground level. Historical estimate for the selected hour and season.",
     wind_speed: "Near-surface wind speed. Historical estimate for the selected hour and season.",
-    wind_direction: "Arrows point where the wind is blowing. Longer arrows and the background color indicate faster winds.",
+    wind_direction: "Arrowheads point toward modeled wind flow. Motion is sped up for display. The background shows wind speed.",
     dust_opacity: "Higher values mean more atmospheric dust opacity. Seasonal average at 9.3 µm, normalized to 610 Pa. This layer varies with season.",
+    storm_dust: "Reconstructed infrared dust opacity at 9.3 µm, normalized to 610 Pa. Cyan outlines mark high opacity. The color scale tops out at 3 τ.",
     illumination: "0 means no direct light. 1 means sunlight hits the surface head-on.",
     slope: "Steeper slopes have higher values.",
     firmness: "Relative ground firmness inferred from nighttime infrared imagery. Higher values indicate firmer ground.",
@@ -46,6 +47,11 @@ const weatherDisplay = (() => {
     detail.className = "legend-note";
     detail.textContent = layerNotes[name] ?? "";
     text.append(ticks, title, detail);
+    if ("storm_threshold" in response) {
+      const event = document.createElement("div");
+      event.textContent = `Sol ${response.archive_sol} · ${response.archive_ls.toFixed(1)}° Ls. Cyan: τ ≥ ${response.storm_threshold}, covering ${response.storm_area_pct}% of Mars.`;
+      text.append(event);
+    }
     if ("temperature_range" in response || "data_range" in response) {
       const range = response.temperature_range ?? response.data_range;
       const values = document.createElement("div");
@@ -56,11 +62,13 @@ const weatherDisplay = (() => {
       const source = document.createElement("a");
       const thermal = "temperature_range" in response;
       source.href = thermal ? "https://pds-geosciences.wustl.edu/missions/mgs/tes-timap.html"
+        : name === "storm_dust" ? "https://www-mars.lmd.jussieu.fr/mars/dust_climatology/index.html"
         : name === "dust_opacity" ? "https://www-mars.lmd.jussieu.fr/mars/dust_scenarios/index.html"
         : "https://doi.org/10.57967/hf/8741";
       source.target = "_blank";
       source.rel = "noopener";
       source.textContent = thermal ? "NASA PDS TES thermal inertia"
+        : name === "storm_dust" ? "LMD / NASA MRO Mars Climate Sounder"
         : name === "dust_opacity" ? "LMD dust climatology" : "OpenMARS · Mars Year 29";
       text.append(source);
     }
