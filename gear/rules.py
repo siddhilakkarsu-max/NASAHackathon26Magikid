@@ -212,7 +212,7 @@ def _c6(r):
       explain="Checks the planned round trip against the suit's capacity, both at the planner's own rate and at "
               "NASA's Mars design rate.")
 def _s1(r):
-    if not (on_foot(r) and r.route and r.route.round_trip_h):
+    if not (r.suited and r.route and r.route.round_trip_h):
         return None
     cap = None
     try:
@@ -319,7 +319,7 @@ def _t1(r):
       evidence=["pressurized_rover_slope_deg"], srcs=("nasa_moonbase",))
 def _t2(r):
     s = max_slope(r)
-    if not r.crewed_rover or s is None or s <= THRESHOLDS["pressurized_rover_slope_deg"][0]:
+    if r.vehicle != "pressurized_rover" or s is None or s <= THRESHOLDS["pressurized_rover_slope_deg"][0]:
         return None
     return Hit(f"Route reaches {n(s)} degrees; NASA's lunar pages list 15 for a pressurized rover", [],
                warnings=[f"Max slope {n(s)} degrees is above the 15 degree limit NASA lists for a pressurized rover "
@@ -582,9 +582,9 @@ def _p1(r):
       evidence=["SEV concept 10 km/h, 125 km, 14 days", "Perseverance top speed about 152 m/h"],
       srcs=("wiki_sev", "nasa_rover_page"))
 def _v1(r):
-    key = {"pressurized_rover": "v_pressurized_rover", "small_rover": "v_small_rover",
-           "perseverance": "v_perseverance"}.get(r.vehicle)
-    if not key:
+    from . import catalog
+    key = next((i.id for i in catalog.ITEMS.values() if i.planner_vehicle == r.vehicle), None)
+    if not key or r.vehicle == "astronaut":
         return None
     adds = [A(key, "The traveller chosen for this route", qty=1, priority="critical")]
     if r.crewed_rover:

@@ -352,6 +352,73 @@ class Http(unittest.TestCase):
         self.assertEqual(self.c.get("/api/regions").status_code, 200)   # planner still reachable through the wrapper
 
 
+class VehicleList(unittest.TestCase):
+    NEW = ("unpressurized_rover", "sojourner", "mer", "zhurong", "rosalind_franklin")
+
+    def test_every_vehicle_is_sourced_and_in_the_catalog(self):
+        from config import CONSUMABLE_SOURCES, VEHICLES
+        planner_keys = {i.planner_vehicle for i in catalog.ITEMS.values() if i.planner_vehicle}
+        for key in self.NEW:
+            self.assertIn(key, VEHICLES)
+        for key, v in VEHICLES.items():
+            self.assertIn(v["consumable_source"], CONSUMABLE_SOURCES, key)
+            self.assertGreater(v["base_speed_kmh"], 0, key)
+            self.assertTrue(0 < v["max_slope"] <= 45, key)
+            if key != "astronaut":
+                self.assertIn(key, planner_keys, f"{key} has no catalog item")
+            c = v.get("consumables") or {}
+            if "energy_capacity_kwh" in c:   # an energy model needs all three numbers
+                self.assertTrue({"energy_idle_kw", "energy_per_km_kwh"} <= set(c), key)
+
+    def test_every_vehicle_plans_a_route(self):
+        import app as planner
+        client = TestClient(planner.app)
+        vehicles = client.get("/api/regions").json()["vehicles"]
+        self.assertGreaterEqual(len(vehicles), 9)
+        for key in vehicles:
+            r = client.post("/api/plan", json={"region": "jezero", "vehicle": key, "budget_hours": 4,
+                                               "base": BASE, "target": {"lat": 18.452, "lon": 77.444}})
+            self.assertEqual(r.status_code, 200, key)
+            self.assertIsNotNone(r.json()["route"], key)
+
+    def test_open_rover_crew_breathe_suit_oxygen(self):
+        import app as planner
+        client = TestClient(planner.app)
+        s = client.post("/api/plan", json={"region": "jezero", "vehicle": "unpressurized_rover", "budget_hours": 8,
+                                           "base": BASE, "target": TARGET}).json()["stats"]
+        self.assertIsNotNone(s["o2_used_kg"])
+        self.assertIsNotNone(s["energy_used_kwh"])
+
+    def test_rovers_without_a_published_load_have_no_energy_figures(self):
+        import app as planner
+        client = TestClient(planner.app)
+        for key in ("sojourner", "zhurong", "rosalind_franklin"):
+            s = client.post("/api/plan", json={"region": "jezero", "vehicle": key, "budget_hours": 4,
+                                               "base": BASE, "target": {"lat": 18.452, "lon": 77.444}}).json()["stats"]
+            self.assertIsNone(s["energy_used_kwh"], key)
+            self.assertIsNone(s["o2_used_kg"], key)
+
+    def test_gear_treats_the_open_rover_as_crewed_and_suited(self):
+        route = RouteStats(distance_km=20, one_way_h=2.0, round_trip_h=7.0, o2_pct=88.0, max_slope_deg=18.0)
+        m = engine.build_manifest(ctx(archetype="traverse", vehicle="unpressurized_rover", route=route,
+                                      terrain=TerrainSignals(max_slope_deg=18.0, loose_fraction=0.0)))
+        by_id = {e["id"]: e for e in m["items"]}
+        self.assertIn("v_unpressurized_rover", by_id)
+        self.assertEqual(by_id["g_hammer"]["carried_by"], "rover")
+        fired = {r["id"] for r in m["rules"]}
+        self.assertIn("S1", fired)                   # 7 h at NASA's design rate is more than the suit carries
+        self.assertNotIn("T2", fired)                # the 15 degree figure is for pressurized rovers only
+
+    def test_tool_lists_every_vehicle(self):
+        from config import VEHICLES
+        out = tools.call_tool("list_mission_archetypes")
+        self.assertEqual(out["vehicles"], list(VEHICLES))
+        kinds = {d["id"]: d["kind"] for d in out["vehicle_details"]}
+        self.assertEqual(kinds["unpressurized_rover"], "crewed")
+        self.assertEqual(kinds["zhurong"], "robotic")
+        self.assertEqual(kinds["astronaut"], "on foot")
+
+
 class PerseveranceVehicle(unittest.TestCase):
     def test_in_the_vehicle_list_and_plans_a_route(self):
         import app as planner

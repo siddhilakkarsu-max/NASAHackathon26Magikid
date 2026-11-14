@@ -154,11 +154,35 @@ _i("v_pressurized_rover", "Pressurized crew rover", "mobility",
    note="Concept stage only. The SEV concept lists cabin 3,000 kg, chassis 1,000 kg, payload 1,000 kg. NASA's lunar "
         "pages list a 15 degree slope limit for a pressurized rover. No battery size, idle power or energy per km "
         "has been published.")
-_i("v_unpressurized_rover", "Unpressurized rover (Apollo type)", "mobility",
+_i("v_unpressurized_rover", "Open crew rover (Apollo LRV-class)", "mobility",
    "Open vehicle for two suited crew and a tool load over short distances.",
-   carried_by="rover", per="mission", conf="E", sources=("costes_lrv",),
-   mass_kg=210.0, mass_basis="analog", rate="payload 490 kg; comfortable 6 to 7 km/h",
-   note="Apollo figures. Tested on 18 to 23 degree slopes, specified to 25.")
+   carried_by="rover", per="mission", planner_vehicle="unpressurized_rover", conf="P",
+   sources=("wiki_lrv", "costes_lrv", "dra5"),
+   mass_kg=210.0, mass_basis="analog", rate="about 8.7 kWh of batteries, 92 km range, design top speed 10 km/h",
+   note="Apollo figures; the crew still breathe from their suits. DRA 5.0 proposes open rovers roughly like the "
+        "Apollo LRV for Mars. Tested on 18 to 23 degree slopes, specified to 25.")
+_i("v_sojourner", "Sojourner-class micro-rover", "mobility",
+   "An 11.5 kg scout that stays close to its lander.",
+   carried_by="rover", per="mission", planner_vehicle="sojourner", conf="P", sources=("wiki_sojourner",),
+   mass_kg=11.5, mass_basis="published", rate="top speed 1 cm/s; 13 to 15 W solar plus a 150 Wh battery",
+   note="Mars Pathfinder, 1997. It kept within about 500 m of the lander for radio contact.")
+_i("v_mer", "Spirit / Opportunity-class rover", "mobility",
+   "A solar rover; Opportunity drove 45 km over 14 years.",
+   carried_by="rover", per="mission", planner_vehicle="mer", conf="P", sources=("wiki_mer", "wiki_opportunity"),
+   mass_kg=185.0, mass_basis="published", rate="top speed 5 cm/s; about 900 Wh per sol early, about 100 W to drive",
+   note="Both rovers were stopped by terrain or dust: Spirit in soft sand at Troy in 2009, Opportunity by the 2018 "
+        "global dust storm.")
+_i("v_zhurong", "Zhurong-class rover", "mobility",
+   "A solar rover with active suspension that can inch out of sand.",
+   carried_by="rover", per="mission", planner_vehicle="zhurong", conf="P", sources=("zhurong_xinhua", "wiki_zhurong"),
+   mass_kg=240.0, mass_basis="published", rate="about 200 m/h top speed; slopes up to 20 degrees",
+   note="Tianwen-1, 2021, Utopia Planitia. Drove 1,921 m before dust stopped it. Its energy budget is not published.")
+_i("v_rosalind_franklin", "Rosalind Franklin (ExoMars)", "mobility",
+   "Solar rover with a 2 m drill, planned to launch in 2028.",
+   carried_by="rover", per="mission", planner_vehicle="rosalind_franklin", conf="P",
+   sources=("esa_rfm_faq", "wiki_rfm", "leonardo_drill"),
+   mass_kg=310.0, mass_basis="published", rate="100 m/h straight-line; about 1,200 Wh per sol",
+   note="Not yet flown. Can wheel-walk out of loose soil. ESA lists 15 degrees on bedrock and about 20 as the worst case.")
 _i("v_perseverance", "Perseverance-class robotic rover", "mobility",
    "A robotic scout or precursor that surveys a site before people walk it.",
    carried_by="rover", per="mission", planner_vehicle="perseverance", conf="P", sources=("nasa_rover_page", "cospar_pp"),
