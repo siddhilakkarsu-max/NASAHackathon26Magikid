@@ -22,7 +22,7 @@ from pydantic import BaseModel, Field
 
 import physics
 from config import MARS_RADIUS_M, SCIENCE_TARGETS, VEHICLES
-from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer
+from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
 from surface_temperature import temperature_overlay
 
 ROOT = Path(__file__).parent
@@ -85,14 +85,38 @@ def to_png(arr, cmap="viridis", vmin=None, vmax=None, alpha=0.65, max_px=1600):
     step = max(1, int(np.ceil(max(a.shape) / max_px)))   # keep overlays light for the browser
     a = a[::step, ::step]
     bad = ~np.isfinite(a)
-    lo = np.nanpercentile(a[~bad], 2) if vmin is None else vmin
-    hi = np.nanpercentile(a[~bad], 98) if vmax is None else vmax
+    valid = a[~bad]
+    lo = (np.percentile(valid, 2) if valid.size else 0.0) if vmin is None else vmin
+    hi = (np.percentile(valid, 98) if valid.size else 1.0) if vmax is None else vmax
     norm = np.clip((np.where(bad, lo, a) - lo) / max(hi - lo, 1e-9), 0, 1)
     rgba = (layer_palette(cmap)(norm) * 255).astype("uint8")
     rgba[..., 3] = np.where(bad, 0, int(alpha * 255))
     buf = io.BytesIO()
     Image.fromarray(rgba).save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def interpolate_display(arr, factor, wrap_longitude=False):
+    """Densify only the display, keeping each missing source cell transparent."""
+    height, width = arr.shape
+    valid = np.isfinite(arr)
+    values = np.where(valid, arr, 0)
+    weights = valid.astype("float32")
+    if wrap_longitude:
+        values = np.pad(values, ((0, 0), (1, 1)), mode="wrap")
+        weights = np.pad(weights, ((0, 0), (1, 1)), mode="wrap")
+    size = (values.shape[1] * factor, height * factor)
+
+    def resize(data):
+        raster = Image.fromarray(data.astype("float32")).resize(size, Image.Resampling.BILINEAR)
+        if wrap_longitude:
+            raster = raster.crop((factor, 0, (width + 1) * factor, height * factor))
+        return np.asarray(raster)
+
+    weight = resize(weights)
+    display = resize(values) / np.maximum(weight, np.finfo("float32").eps)
+    mask = valid.repeat(factor, axis=0).repeat(factor, axis=1)
+    return np.where(mask, display, np.nan)
 
 
 def legend(name, unit, lo, hi, cmap):
@@ -163,11 +187,24 @@ def layer(name: str, cond: Conditions):
     """Coloured overlay of one band or one computed layer, for the current conditions."""
     if name in WEATHER_LAYERS:
         title, unit, lo, hi, cmap = WEATHER_LAYERS[name]
-        arr = weather_layer(name, cond.local_hour, cond.ls)
+        wind = None
+        if name == "wind_direction":
+            east, north = wind_components(cond.local_hour, cond.ls)
+            arr = np.hypot(east, north)
+            # Space glyphs on a regular 10° display grid and omit calm samples.
+            wind = [{"lat": 87.5 - r * 5, "lon": -177.5 + c * 5,
+                     "east_ms": round(float(east[r, c]), 3),
+                     "north_ms": round(float(north[r, c]), 3)}
+                    for r in range(1, 36, 2) for c in range(0, 72, 2)
+                    if np.isfinite(arr[r, c]) and arr[r, c] >= 0.1]
+        else:
+            arr = weather_layer(name, cond.local_hour, cond.ls)
         finite = arr[np.isfinite(arr)]
-        return {"image": to_png(arr, cmap, lo, hi, alpha=0.75), "rect": GLOBAL_RECT,
+        display = interpolate_display(arr, factor=4, wrap_longitude=True)
+        return {"image": to_png(display, cmap, lo, hi, alpha=0.75), "rect": GLOBAL_RECT,
                 "legend": legend(title, unit, lo, hi, cmap),
                 "weather": True,
+                "wind_vectors": wind,
                 "data_range": [round(float(finite.min()), 2), round(float(finite.max()), 2)] if finite.size else None}
     c = None if name == "global_temperature" else get_cube(cond.region)
     if name in ("temperature", "global_temperature"):
@@ -177,7 +214,8 @@ def layer(name: str, cond: Conditions):
         sun_e, sun_az = physics.sun_position((rect["south"] + rect["north"]) / 2, cond.local_hour, cond.ls)
         valid = arr[np.isfinite(arr)]
         observed_range = [round(float(valid.min()), 1), round(float(valid.max()), 1)] if valid.size else None
-        return {"image": to_png(arr, cmap, lo, hi, alpha=0.88), "rect": rect,
+        display = interpolate_display(arr, factor=2, wrap_longitude=True) if c is None else arr
+        return {"image": to_png(display, cmap, lo, hi, alpha=0.88), "rect": rect,
                 "legend": legend("Simulated surface temperature", "K", lo, hi, cmap),
                 "temperature_range": observed_range,
                 "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}

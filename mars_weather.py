@@ -10,7 +10,7 @@ WEATHER_LAYERS = {
     "air_temperature": ("Near-surface air temperature", "K", 140, 290, "coolwarm"),
     "surface_pressure": ("Surface pressure", "Pa", 200, 1400, "viridis"),
     "wind_speed": ("Near-surface wind speed", "m/s", 0, 30, "plasma"),
-    "wind_direction": ("Near-surface wind from", "°", 0, 360, "twilight_shifted"),
+    "wind_direction": ("Near-surface wind", "m/s", 0, 30, "plasma"),
     "dust_opacity": ("Atmospheric dust optical depth (9.3 µm, 610 Pa)", "τ", 0, 0.7, "YlOrBr"),
 }
 GLOBAL_RECT = {"west": -180, "south": -90, "east": 180, "north": 90}
@@ -52,23 +52,29 @@ def _local_hour(values, local_hour):
     return values[lo, :, col].T * (1 - weight) + values[(lo + 1) % 12, :, col].T * weight
 
 
-def weather_layer(name, local_hour, ls):
-    """Return a north-first 5° global map at the same local hour everywhere."""
+def _centered(field):
     # Register source centers (-180, -175, ...) to the display centers
     # (-177.5, -172.5, ...), including the periodic longitude seam.
-    def centered(field):
-        return (field + np.roll(field, -1, axis=1)) / 2
+    return (field + np.roll(field, -1, axis=1)) / 2
 
-    if name == "dust_opacity":
-        return centered(dust_map(ls))
+
+def _weather_at_hour(field, local_hour, ls):
     data = weather_data()
+    return _centered(_local_hour(_season(data[field], data["ls"], ls), local_hour))
 
-    def at_hour(field):
-        return centered(_local_hour(_season(data[field], data["ls"], ls), local_hour))
 
+def wind_components(local_hour, ls):
+    return (_weather_at_hour("east_wind", local_hour, ls),
+            _weather_at_hour("north_wind", local_hour, ls))
+
+
+def weather_layer(name, local_hour, ls):
+    """Return a north-first 5° global map at the same local hour everywhere."""
+    if name == "dust_opacity":
+        return _centered(dust_map(ls))
     if name in ("wind_speed", "wind_direction"):
-        east, north = at_hour("east_wind"), at_hour("north_wind")
+        east, north = wind_components(local_hour, ls)
         speed = np.hypot(east, north)
         return speed if name == "wind_speed" else np.where(
             speed >= 0.1, np.degrees(np.arctan2(-east, -north)) % 360, np.nan)
-    return at_hour(name)
+    return _weather_at_hour(name, local_hour, ls)
