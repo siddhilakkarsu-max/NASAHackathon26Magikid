@@ -498,7 +498,7 @@ def _template(res):
     w, s = cands[0], res["settings"]
     r, R = w["route"], w["resources"]
     bind = next(i for i in R["items"] if i["name"] == R["binding"])
-    txt = (f"Route #1 wins with {w['total']:.0f}/100: its destination has {w['card']['target'][0]}, "
+    txt = (f"Route #1 wins with {w['total']}/100: its destination has {w['card']['target'][0]}, "
            f"{r['distance_km']:.1f} km by route from its {'NASA-candidate' if w['A']['kind'] == 'NASA candidate' else 'tool-found'} "
            f"landing spot; it ")
     if res["tracks"] and r["green_km"] > 0:
