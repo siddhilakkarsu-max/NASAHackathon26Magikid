@@ -51,6 +51,25 @@
     #map { grid-area: 1 / 1; }
     #panel { grid-area: 2 / 1; }
   }
+
+  /* Consumables readout — one block reused by every traveller */
+  .cons { margin-top: 8px; }
+  .cons-spec { color: var(--muted); font-size: 11px; line-height: 1.4; }
+  .crow { margin-top: 9px; }
+  .crow .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+  .crow .nm { color: var(--fg); }
+  .crow .val { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .crow .val b { color: var(--fg); }
+  .bar { height: 7px; border-radius: 4px; background: #3a2c25; overflow: hidden; margin-top: 5px; }
+  .bar > i { display: block; height: 100%; border-radius: 4px; width: 0;
+             background: linear-gradient(90deg, #8f4526, var(--accent)); transition: width .3s ease; }
+  .crow.over .nm, .crow.over .val { color: #ff8f78; }
+  .crow.over .bar > i { background: linear-gradient(90deg, #b03a2e, #ff6b52); }
+  .cons-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+               margin-top: 10px; color: var(--muted); font-size: 11px; }
+  .chip { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #4a3a33;
+          color: var(--fg); font-size: 11px; white-space: nowrap; }
+  .chip.over { background: #6d2b22; color: #ffd9cf; }
 </style>
 </head>
 <body>
@@ -67,7 +86,7 @@
   <label>Season (Ls): <b id="lsVal"></b></label>
   <input type="range" id="ls" min="0" max="360" step="0.1" value="90" />
   <label>EVA budget (hours): <b id="budgetVal"></b></label>
-  <input type="range" id="budget" min="1" max="8" step="0.5" value="4" />
+  <input type="range" id="budget" min="1" max="12" step="0.5" value="4" />
 
   <h2>Map layer</h2>
   <div class="row">
@@ -123,6 +142,10 @@
   <select id="targets"><option value="">…or pick a science target</option></select>
   <button id="plan">Plan route</button>
   <div id="warn"></div>
+
+  <h2>Consumables</h2>
+  <div id="consumes" class="cons small"></div>
+
   <div id="explain"></div>
 
   <h2>Clicked point</h2>
@@ -219,6 +242,10 @@ $("mapOpacity").oninput = () => {
   const wind = $("map").querySelector(".wind-motion");
   if (wind) wind.style.opacity = opacity;
 };
+const SPECS = {};        // vehicle -> limits, filled from /api/regions
+let lastPlan = null;     // stats from the last plan; null = nothing current to show
+let replanHint = "";
+let planRequest = 0, planBusy = false;
 
 function conditions() {
   return { region: $("region").value || "jezero", vehicle: $("vehicle").value || "astronaut", local_hour: +$("hour").value,
@@ -243,11 +270,11 @@ async function api(path, body, signal) {
 }
 
 // -------------------------------------------------------------- overlays ----
-async function showImage(dataUrl, rect, request = layerRequest) {
+async function showImage(dataUrl, rect, request = layerRequest, isCurrent = () => true) {
   const provider = await Cesium.SingleTileImageryProvider.fromUrl(dataUrl, {
     ellipsoid: MARS,
     rectangle: Cesium.Rectangle.fromDegrees(rect.west, rect.south, rect.east, rect.north) });
-  if (request !== layerRequest) return false;
+  if (request !== layerRequest || !isCurrent()) return false;
   clearOverlay();
   const layer = new Cesium.ImageryLayer(provider);
   layer.alpha = mapOpacity();
@@ -464,8 +491,8 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
     }
     return;
   }
-  if (mode === "base")   { base = p;   pin("base", p, Cesium.Color.DODGERBLUE, "Base"); }
-  if (mode === "target") { target = p; pin("target", p, Cesium.Color.ORANGE, "Target"); }
+  if (mode === "base")   { base = p;   pin("base", p, Cesium.Color.DODGERBLUE, "Base"); invalidatePlan(); }
+  if (mode === "target") { target = p; pin("target", p, Cesium.Color.ORANGE, "Target"); invalidatePlan(); }
   mode = null; $("setBase").classList.remove("active"); $("setTarget").classList.remove("active");
   try {
     const px = await api(`/api/pixel?lat=${p.lat}&lon=${p.lon}&region=${$("region").value}`);
@@ -481,15 +508,97 @@ $("setTarget").onclick = () => { mode = "target"; $("setTarget").classList.add("
 $("targets").onchange = () => {
   const t = current.targets[+$("targets").value]; if (!t) return;
   target = { lat: t.lat, lon: t.lon }; pin("target", target, Cesium.Color.ORANGE, t.name);
+  invalidatePlan();
 };
+
+// -------------------------------------------------------- consumables ----
+const BINDING = { oxygen: "O2 capacity", energy: "on-board energy", rated: "rated endurance" };
+
+function specLine(spec) {
+  if (!spec) return "";
+  const bits = [];
+  if (spec.o2_rate_kg_per_h) bits.push(`O2 ${spec.o2_rate_kg_per_h} kg/h`);
+  if (spec.o2_capacity_kg) bits.push(`${spec.o2_capacity_kg} kg carried`);
+  if (spec.energy_capacity_kwh) bits.push(`${spec.energy_capacity_kwh} kWh carried`);
+  if (spec.energy_idle_kw) bits.push(`${spec.energy_idle_kw} kW idle`);
+  if (spec.rated_hours) bits.push(`${spec.rated_hours} h rated`);
+  return bits.join(" · ");
+}
+
+function pctLabel(pct) { return pct >= 999 ? "999+%" : `${Math.round(pct)}%`; }
+
+function barRow(name, used, max, unit, pct) {
+  const over = pct > 100;
+  const width = Math.min(100, Math.max(1.5, pct));
+  return `<div class="crow${over ? " over" : ""}">
+      <div class="top"><span class="nm">${name}</span>
+        <span class="val">${used.toFixed(2)} / ${max.toFixed(2)} ${unit} <b>${pctLabel(pct)}</b></span></div>
+      <div class="bar" role="progressbar" aria-label="${name} used" aria-valuemin="0" aria-valuemax="100"
+           aria-valuenow="${Math.min(100, Math.round(pct))}"><i style="width:${width}%"></i></div>
+    </div>`;
+}
+
+function renderConsumables() {
+  const box = $("consumes");
+  const head = `<div class="cons-spec">${specLine(SPECS[$("vehicle").value])}</div>`;
+  if (!lastPlan) {                       // nothing planned yet, or the inputs moved
+    box.innerHTML = head + (replanHint ? `<div class="cons-spec">${replanHint}</div>` : "");
+    return;
+  }
+  const s = lastPlan.stats;
+  if (!s) {                              // planned, but no route exists
+    box.innerHTML = head + '<div class="cons-spec">No route under these limits - nothing to consume.</div>';
+    return;
+  }
+  let rows = "";
+  if (s.o2_used_kg != null) rows += barRow("O2", s.o2_used_kg, s.o2_max_kg, "kg", s.o2_pct);
+  if (s.energy_used_kwh != null) rows += barRow("Energy", s.energy_used_kwh, s.energy_max_kwh, "kWh", s.energy_pct);
+  const overCap = (s.o2_pct || 0) > 100 || (s.energy_pct || 0) > 100;
+  const overTime = s.within_budget === false;
+  const range = s.max_range_km != null ? `max ${s.max_range_km.toFixed(1)} km out and back` : "";
+  const chip = overCap ? "over capacity"
+    : overTime ? "over time budget"
+    : `${BINDING[s.limiting_factor] || s.limiting_factor || "limit"} binds`;
+  box.innerHTML = head + rows +
+    `<div class="cons-foot"><span>${range}</span>` +
+    `<span class="chip${overCap || overTime ? " over" : ""}">${chip}</span></div>` +
+    '<div class="cons-spec">Amounts are the round trip.</div>';
+}
+
+function applyVehicleLimits() {
+  const spec = SPECS[$("vehicle").value] || {};
+  const el = $("budget");
+  el.max = Math.min(12, Math.max(1, spec.rated_hours || 8));   // you cannot plan past the vehicle's rating
+  if (+el.value > +el.max) el.value = el.max;
+  labels();
+}
+
+function invalidatePlan() {
+  ++planRequest;
+  if (!lastPlan && !planBusy) return;
+  planBusy = false;
+  lastPlan = null;
+  replanHint = "Conditions changed - plan again.";
+  marks.removeById("route");
+  if (displayedLayer === "walkback") {
+    clearOverlay();
+    weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText") });
+  }
+  $("warn").textContent = "";
+  $("explain").textContent = replanHint;
+  renderConsumables();
+}
 
 // ------------------------------------------------------------------ plan ----
 $("plan").onclick = async () => {
   if (!base || !target) { $("warn").textContent = "Set a base and a target first."; return; }
   $("explain").textContent = "Planning…"; $("warn").textContent = "";
+  const planId = ++planRequest;
+  planBusy = true;
   const requestAtStart = layerRequest;
   try {
     const res = await api("/api/plan", { ...conditions(), base, target });
+    if (planId !== planRequest) return;
     if (requestAtStart === layerRequest) {
       const request = ++layerRequest;
       layerLoad?.abort();
@@ -502,10 +611,12 @@ $("plan").onclick = async () => {
       $("layerStatus").textContent = "";
       $("retryLayer").hidden = true;
       weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText") });
-      if (await showImage(res.walkback_image, res.rect, request)) {
+      if (await showImage(res.walkback_image, res.rect, request, () => planId === planRequest)) {
+        displayedLayer = "walkback";
         $("legendText").textContent = "Shaded terrain marks the round-trip walk-back zone.";
       }
     }
+    if (planId !== planRequest) return;
     marks.removeById("route");
     if (res.route) {
       marks.add({ id: "route", polyline: {
@@ -516,7 +627,17 @@ $("plan").onclick = async () => {
     $("explain").textContent = res.explanation +
       (res.stats ? `\n\nMax slope ${res.stats.max_slope_deg}°, mean ${res.stats.mean_slope_deg}°` : "") +
       "\nGreen area = places you can reach and still return within the budget.";
-  } catch (e) { $("explain").textContent = e.message; }
+    lastPlan = { stats: res.stats || null };
+    replanHint = "";
+    renderConsumables();
+  } catch (e) {
+    if (planId !== planRequest) return;
+    $("explain").textContent = e.message;
+    lastPlan = null;
+    renderConsumables();
+  } finally {
+    if (planId === planRequest) planBusy = false;
+  }
 };
 
 // ------------------------------------------------------------------ boot ----
@@ -548,6 +669,9 @@ $("wholeMars").onclick = () => {
 $("zoomRegion").onclick = () => { if (current) flyTo(current.rect); };
 ["hour", "ls", "budget"].forEach((id) => $(id).addEventListener("input", labels));
 ["hour", "ls", "vehicle"].forEach((id) => $(id).addEventListener("change", () => {
+  if (id === "vehicle") applyVehicleLimits();
+  invalidatePlan();
+  if (id === "vehicle") renderConsumables();
   timeline?.stop();
   timeline?.sync();
   refreshLayer();
@@ -560,6 +684,7 @@ $("layer").onchange = () => {
   timeline?.setEnabled(isGlobal);
   refreshLayer();
 };
+["budget", "region"].forEach((id) => $(id).addEventListener("change", invalidatePlan));
 $("region").onchange = () => {
   current = regions.find((r) => r.region === $("region").value);
   $("targets").innerHTML = '<option value="">…or pick a science target</option>' +
@@ -577,7 +702,7 @@ api("/api/weather/calendar").then(calendar => {
       position: $("timelinePosition"), play: $("playTimeline"), message: $("timelineMessage"),
       readout: $("timelineReadout"), note: $("timelineNote") },
     readSeason: () => +$("ls").value,
-    showSol: ls => { $("ls").value = ls; labels(); return refreshLayer(); },
+    showSol: ls => { $("ls").value = ls; labels(); invalidatePlan(); return refreshLayer(); },
   });
   timeline.setEnabled(globalLayerSelected());
 }).catch(error => {
@@ -589,8 +714,11 @@ api("/api/weather/calendar").then(calendar => {
   try {
     const meta = await api("/api/regions");
     regions = meta.regions;
+    Object.assign(SPECS, meta.vehicle_specs || {});
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
     $("region").innerHTML = regions.map((r) => `<option>${r.region}</option>`).join("");
+    applyVehicleLimits();
+    renderConsumables();
     if (regions.length) $("region").onchange();
     else {
       $("status").textContent = "Global view available. Load a region cube for route planning.";

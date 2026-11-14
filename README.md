@@ -50,19 +50,60 @@ pixel panel. To use it in the route cost, edit `cost_seconds_per_meter()` in `ph
 | `physics.py` → `sun_position`, `illumination`, `surface_temp_k` | Jason | Replace the approximate temperature with the thermal model |
 | `physics.py` → `shelter_seeds`, walk-back in `app.py` | Gia, Siddhi | Real shelter locations, O₂ budget instead of hours |
 | `config.py` → `SOURCES`, `SCIENCE_TARGETS`, `VEHICLES` | Siddhi, Darren | Real data paths, CRISM targets, vehicle limits |
+| `physics.py` → `endurance`, `config.py` → `consumables`, `CONSUMABLE_SOURCES` | Gk | Real EVA and cabin O₂ loads, rover power curves |
 | `app.py` → `explanation` text | Darren, Jason | Hook an LLM in here for richer route reasoning |
 | `frontend/index.html` | Gia, Victoria, Olivia | All styling and layout |
 
 ## API (for the front end team)
 | Call | Returns |
 |---|---|
-| `GET /api/regions` | regions, bounds, bands, vehicles, science targets |
+| `GET /api/regions` | regions, bounds, bands, vehicles, science targets, `vehicle_specs` (rated hours + consumable limits) |
 | `GET /api/pixel?lat=&lon=&region=` | every value stored in that pixel + ground type + confidence |
 | `POST /api/layer/{slope|firmness|cost|illumination|temperature|shelter|elevation}` | PNG overlay + bounds + legend |
-| `POST /api/plan` | route (lat/lon list), stats, warnings, explanation, walk-back zone PNG |
+| `POST /api/plan` | route (lat/lon list), stats (distance, time, slope, **O₂/energy vs capacity**, max range), warnings, explanation, walk-back zone PNG |
 
 Body for POST calls: `{"region":"jezero","vehicle":"astronaut","local_hour":11,"ls":90,"budget_hours":4}`
 (+ `"base":{"lat":..,"lon":..}, "target":{...}` for `/api/plan`).
+
+## Consumables: O₂ and energy against what the traveller actually carries
+
+Every plan is costed as a **round trip** and compared with the vehicle's own capacity. `stats` reports
+`o2_used_kg` / `o2_max_kg` / `o2_pct`, `energy_used_kwh` / `energy_max_kwh` / `energy_pct`, `max_range_km`,
+and `limiting_factor` — whichever ceiling is closest to being hit.
+
+| Traveller | Quantity | Rate | Carried | Basis |
+|---|---|---|---|---|
+| Astronaut on foot | O₂ | 0.085 kg/h | 0.68 kg | NASA figures, see below |
+| Pressurized crew rover | Energy | 1.5 kW idle + 0.12 kWh/km | 20 kWh | **estimate**, see below |
+| Curiosity-class rover | Energy | 0.15 kW idle + 3.33 kWh/km | 2.5 kWh | MMRTG figures, see below |
+
+Both quantities scale with **time as well as distance**, which is why a rocky detour costs more without a
+second terrain term: `cost_seconds_per_meter()` has already made that ground slower, so it simply takes longer.
+
+**Where the numbers come from** (also returned per vehicle as `vehicle_specs[k].source`):
+
+- **O₂, astronaut** — the ALS Baseline Values and Assumptions Document (NASA/JSC-47804) gives 0.076 kg/h for a
+  closed-loop PLSS; the X-Hab PLSS model uses a 350 W baseline metabolic rate at ~20 kJ per litre of O₂, i.e.
+  ~0.084 kg/h. 0.68 kg is the xEMU's 8 h design endurance at that rate, and the planner holds back the 1 h
+  contingency the Artemis surface-suit requirement asks for (that is the `reserve` slider).
+- **Endurance, astronaut** — xEMU is specified for 8 h of autonomous EVA; Artemis surface EVAs are planned at
+  4–8 h, ~2 km radius at 2 km/h over level terrain.
+- **Energy, Curiosity-class** — MSL's MMRTG produces ~110 W electrical, 2.5–2.7 kWh per sol (NASA/JPL). Loads:
+  at least 150 W whenever awake, up to 500 W while driving (JPL), which at this profile's 0.15 km/h works out
+  at ~3.3 kWh/km. So a sol of MMRTG output is genuinely about 0.3 km out-and-back — the rover is meant to
+  look limited next to the crew rover, not broken.
+- **Energy, pressurized crew rover** — a **labelled engineering estimate**; no published NASA figure was found
+  for these loads. It is the "estimate" entry in `CONSUMABLE_SOURCES` in `config.py` and should be tuned.
+
+Rules the planner applies:
+
+- `rated_hours` is a hard per-vehicle ceiling, separate from the EVA budget. The budget slider's maximum
+  follows the selected vehicle, so you cannot plan past its rating.
+- `reserve` still applies: only `budget_hours × (1 − reserve)` counts as usable time.
+- `max_range_km` is the furthest one-way distance you can reach **and** return from, on a full load, at the
+  pace of the route you just planned.
+- Routing itself is still time-based only. An over-capacity trip is drawn and flagged rather than refused —
+  state-space pathfinding on remaining energy would be the next step, not something this pretends to do.
 
 ## Optional: Cesium Mars 3D terrain
 The globe works without an account (NASA Mars Trek imagery). For 3D terrain, create a free
@@ -71,9 +112,15 @@ at the top of the `<script>` in `frontend/index.html`.
 
 ## Honest limits (say these if judges ask)
 - THEMIS night IR is used as a **proxy** for thermal inertia (warm at night = rock, cold = loose sand).
-- **Simulated surface temperature** uses the bundled half-degree grid of TES broadband albedo and apparent thermal inertia. The grid covers all longitudes, with unavailable thermal inertia shown as transparent. This global grid sets the spatial resolution of the model even over higher-resolution Jezero terrain.
+- **Simulated surface temperature** uses TES broadband albedo and apparent thermal inertia. The overview uses 0.5° cells, with finer 0.125° TES inputs when zoomed in on the global layer. Unavailable thermal inertia is transparent.
 - The model uses the selected Mars local solar hour and solar longitude (`Ls`) to compute diurnal solar heating. It approximates thermal emission and subsurface conduction, including heat retained after sunset. It uses spatially and seasonally varying OpenMARS visible column dust opacity. The calculation assumes level terrain, emissivity 0.95, and fixed downwelling longwave flux of 25 W/m². It has no seasonal frost model, and its absolute temperature has not been calibrated to Jezero observations.
 - Primary grid sources are [NASA PDS TES albedo](https://pds-geosciences.wustl.edu/missions/mgs/tesspecial.html) and [NASA PDS TES apparent thermal inertia](https://pds-geosciences.wustl.edu/missions/mgs/tes-timap.html). The thermal grid uses observation-backed TES nighttime values where available, with observation-backed TES daytime values filling remaining supported cells.
+- Walk-back and consumables estimates assume the return trip costs the same as the way out.
+- O₂ is modeled at a flat rate. Uphill terrain increases time and therefore oxygen use.
+- The oxygen budget applies to the astronaut’s suit supply. The crew rover’s cabin oxygen is outside the model.
+- Pressurized-rover loads are engineering estimates.
+- Shelter denotes terrain near steep slopes. Confirm that a site can provide actual cover with higher-resolution imagery.
+- At roughly 230 m per pixel, the slope map smooths out meter-scale hazards.
 
 ## Weather layers and data
 
@@ -92,9 +139,6 @@ The globe uses a bundled, downsampled [NASA/JPL Mars Trek Viking MDIM 2.1 mosaic
 ### Independent check at Jezero
 
 NASA PDS Mars 2020 MEDA Sol 30 derived TIRS data were evaluated in thirteen local true solar time windows around `Ls` 20.35°. Upward IR4 longwave flux was converted to brightness temperature with the instrument team's convention, `T = (flux / σ)^(1/4)`. The TES-driven model's kinetic temperature was converted to emitted brightness using its assumed emissivity of 0.95. Against these windows the mean absolute differences were 16.57 K at 0.5° and 16.92 K at 0.125°. The OpenMARS reference had a 4.45 K mean absolute difference in this check. That comparison uses a different weather year (MY29 versus MY36) and compares its modeled surface temperature with IR4 brightness. Rover spot-scale readings and modeled grid cells also represent different areas. The Jezero check is a local diagnostic and does not establish global accuracy. [NASA PDS MEDA archive](https://pds-atmospheres.nmsu.edu/data_and_services/atmospheres_data/PERSEVERANCE/meda.html) · [Instrument-team flux method](https://doi.org/10.1029/2022JE007537)
-- Walk-back assumes the return trip costs the same as the way out.
-- "Shelter" = within a few pixels of steep walls; real overhangs/lava tubes need HiRISE inspection.
-- At ~230 m/px slopes are smoothed; HiRISE DEMs (1 m) give the real meter-scale hazards.
 
 ## HiRISE / CTX close-ups of Jezero (official Mars 2020 landing products, USGS)
 Two map levels are set up in `config.py`:
