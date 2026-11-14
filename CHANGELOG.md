@@ -3,7 +3,37 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
-## [Unreleased] - 2026-11-14
+## [Unreleased] - 2026-11-14, gear system
+
+Branch `feat/Gk`. Builds on `MISSION_EQUIPMENT_RESEARCH.md`.
+
+### Added
+
+- **`gear/` package: the tool system for the planning agent.** A catalog of 99 items, 37 rules, a consumables
+  and dose budget, and eight typed tools (`recommend_gear`, `get_route_context`, `size_consumables`,
+  `search_gear_catalog`, `get_gear_item`, `list_gear_rules`, `check_carry_load`, `list_mission_archetypes`).
+  Tool definitions come out in Anthropic or OpenAI shape from `GET /api/gear/tools`, and `call_tool()` never
+  raises. See `gear/README.md`.
+- Every item and rule carries a source and an evidence tag (verified, published, excerpt, inferred, none).
+  Items with no published mass leave it blank, and totals say they are lower bounds.
+- Rules read what the planner already computes (round-trip hours, oxygen, slope, loose-ground share, roughness,
+  temperature, sun) and add gear for it. A rule fires from a route's real terrain, not from guesses.
+- An agent can add or drop items with a stated reason, and publish the result to the page.
+- `frontend/kit.html`, `kit.css`, `kit.js`: the gear manifest page. Rules table with the value that tripped each,
+  filterable manifest grouped by category, expandable rows with reasons and source links, consumables with
+  formulas, an evidence summary, a "Planner's kit" tab that follows what the agent publishes, and a print view.
+  Deep links: `kit.html?rule=S2`, `kit.html?tab=published`.
+- `gear_server.py`: runs the planner with the gear routes without editing `app.py`.
+- **Perseverance** added to `VEHICLES` in `config.py` (top speed about 152 m/h, 30 degree tilt limit, same MMRTG
+  energy numbers as the Curiosity-class rover). It appears in the planner's vehicle list automatically.
+- `tests/test_gear.py`: 35 tests (`python -m unittest discover -s tests`).
+
+### Found while building
+
+- At NASA's Mars suit design rate (0.114 kg/h) the planner's 0.68 kg astronaut oxygen lasts 6.0 h, not 8 h. Rule
+  S1 flags round trips that fit at the planner's rate but not at NASA's. The planner's own numbers are unchanged.
+
+## [Unreleased] - 2026-11-14, consumables
 
 Branch `feat/Gk`, feature commit `7146cda`, PR #1 (+314 / -13 across 5 files; this changelog
 added afterwards on the same branch).
