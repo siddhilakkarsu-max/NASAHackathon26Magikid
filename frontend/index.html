@@ -9,7 +9,7 @@
   /* Designers: restyle freely. Everything visual lives in this file. */
   :root { --bg: rgba(18, 12, 10, 0.88); --fg: #f3e7dd; --accent: #e0703a; --muted: #b9a79a; }
   html, body, #map { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
-  #panel { position: absolute; top: 12px; left: 12px; width: 320px; max-height: calc(100% - 24px); overflow: auto;
+  #panel { position: absolute; top: 12px; left: 12px; width: 340px; max-height: calc(100% - 24px); overflow: auto;
            background: var(--bg); color: var(--fg); border-radius: 10px; padding: 14px; font-size: 13px; z-index: 10; }
   h1 { font-size: 17px; margin: 0 0 8px; color: var(--accent); }
   h2 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
@@ -19,7 +19,16 @@
   button.secondary { background: #4a3a33; }
   button.active { outline: 2px solid white; }
   .row { display: flex; gap: 6px; } .row > * { flex: 1; }
-  #info, #explain, #warn { white-space: pre-wrap; line-height: 1.4; }
+  #info, #explain, #warn, #findInfo { white-space: pre-wrap; line-height: 1.4; }
+  input[type=text] { width: 100%; box-sizing: border-box; margin-top: 6px; padding: 7px 8px; border-radius: 6px;
+                     border: 1px solid #6b5449; background: #2a1f1a; color: var(--fg); font: inherit; }
+  input[type=text]:focus { outline: 2px solid var(--accent); border-color: transparent; }
+  .row > button.find { flex: 0 0 64px; }
+  #findInfo { margin-top: 4px; }
+  #matches { margin: 6px 0 0; padding-left: 20px; }
+  #matches li { margin: 6px 0; cursor: pointer; line-height: 1.35; }
+  #matches li.sel { color: var(--accent); }
+  #matches li .small { display: block; white-space: pre-wrap; }
   #warn { color: #ffb08a; }
   #legend { height: 10px; border-radius: 4px; margin-top: 4px; }
   .small { color: var(--muted); font-size: 11px; }
@@ -42,6 +51,24 @@
   .chip { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #4a3a33;
           color: var(--fg); font-size: 11px; white-space: nowrap; }
   .chip.over { background: #6d2b22; color: #ffd9cf; }
+
+  /* Mission planner */
+  label.check { display: flex; gap: 6px; align-items: center; } label.check input { width: auto; margin: 0; }
+  details > summary { cursor: pointer; color: var(--muted); margin: 14px 0 6px; text-transform: uppercase;
+                      font-size: 13px; letter-spacing: .05em; }
+  #mResult h3 { font-size: 12px; margin: 12px 0 4px; color: var(--accent); }
+  #mResult ul { margin: 2px 0; padding-left: 16px; } #mResult li { margin: 2px 0; }
+  table.matrix { width: 100%; border-collapse: collapse; font-size: 11px; }
+  table.matrix th, table.matrix td { padding: 3px 4px; border-bottom: 1px solid #3d2f29; text-align: center; }
+  table.matrix td:first-child, table.matrix th:first-child { text-align: left; }
+  table.matrix th.cand { cursor: pointer; } table.matrix .win { background: rgba(224, 112, 58, .22); }
+  table.matrix .sel { outline: 1px solid var(--accent); outline-offset: -1px; }
+  table.matrix tr.total td { font-weight: bold; border-bottom: 0; }
+  .card { border: 1px solid #3d2f29; border-radius: 6px; padding: 6px 8px; margin: 6px 0; }
+  .card summary { cursor: pointer; } .card.sel { border-color: var(--accent); }
+  .chip.nasa { background: #2f5d8a; } .ok { color: #8fd18f; } .bad { color: #ff8a7a; }
+  #mExplain { line-height: 1.45; white-space: pre-wrap; } #mCompare { white-space: pre-wrap; }
+  .legendkey span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 8px; }
 </style>
 </head>
 <body>
@@ -50,8 +77,25 @@
   <h1>Marswalk Planner</h1>
   <div class="small" id="status">Connecting to back end…</div>
 
-  <h2>Conditions</h2>
   <label>Region <select id="region"></select></label>
+
+  <h2>Mission</h2>
+  <label for="goal">Goal</label>
+  <input id="goal" type="text" placeholder="e.g. sample clay where water once flowed" autocomplete="off" />
+  <div class="row">
+    <label>Vehicle <select id="mVehicle"></select></label>
+    <label>Priority <select id="mPriority"></select></label>
+  </div>
+  <label>Season <select id="mSeason"></select></label>
+  <label class="check"><input type="checkbox" id="greenOnly" /> Stick to green rover-verified tracks</label>
+  <button id="runMission">Plan mission</button>
+  <div id="mStatus" class="small"></div>
+  <div id="mResult"></div>
+  <label class="check"><input type="checkbox" id="showTracks" /> Show rover tracks</label>
+  <div id="trackInfo" class="small"></div>
+
+  <details id="manual"><summary>Manual planning (one route)</summary>
+  <h2>Conditions</h2>
   <label>Who is travelling <select id="vehicle"></select></label>
   <label>Local solar time: <b id="hourVal"></b></label>
   <input type="range" id="hour" min="5" max="19" step="0.25" value="11" />
@@ -60,25 +104,19 @@
   <label>EVA budget (hours): <b id="budgetVal"></b></label>
   <input type="range" id="budget" min="1" max="12" step="0.5" value="4" />
 
-  <h2>Map layer</h2>
-  <select id="layer">
-    <option value="">(none)</option>
-    <option value="imagery">CTX image (6 m, sharp)</option>
-    <option value="slope">Slope</option>
-    <option value="firmness">Ground firmness (THEMIS night)</option>
-    <option value="cost">Travel cost</option>
-    <option value="illumination">Sunlight on slopes</option>
-    <option value="temperature">Surface temperature (approx.)</option>
-    <option value="shelter">Minutes to shelter</option>
-    <option value="elevation">Elevation</option>
-  </select>
-  <div id="legend"></div><div class="small" id="legendText"></div>
 
   <h2>Plan a walk</h2>
   <div class="row">
     <button id="setBase" class="secondary">Set base</button>
     <button id="setTarget" class="secondary">Set target</button>
   </div>
+  <label for="query">…or describe the target</label>
+  <div class="row">
+    <input id="query" type="text" placeholder="e.g. valley with clay" autocomplete="off" />
+    <button id="find" class="find">Find</button>
+  </div>
+  <div id="findInfo" class="small"></div>
+  <ol id="matches"></ol>
   <select id="targets"><option value="">…or pick a science target</option></select>
   <button id="plan">Plan route</button>
   <div id="warn"></div>
@@ -87,6 +125,23 @@
   <div id="consumes" class="cons small"></div>
 
   <div id="explain"></div>
+  </details>
+
+  <h2>Map layer</h2>
+  <select id="layer">
+    <option value="">(none)</option>
+    <option value="imagery">CTX image (6 m, sharp)</option>
+    <option value="slope">Slope</option>
+    <option value="firmness">Ground firmness</option>
+    <option value="thermal_inertia">Thermal inertia (THEMIS)</option>
+    <option value="cost">Travel cost</option>
+    <option value="illumination">Sunlight on slopes</option>
+    <option value="temperature">Surface temperature (approx.)</option>
+    <option value="shelter">Minutes to shelter</option>
+    <option value="elevation">Elevation</option>
+    <optgroup id="mineralLayers" label="Minerals (CRISM)"></optgroup>
+  </select>
+  <div id="legend"></div><div class="small" id="legendText"></div>
 
   <h2>Clicked point</h2>
   <div id="info" class="small">Click the map to see every value stored in that pixel.</div>
@@ -204,8 +259,9 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
   try {
     const px = await api(`/api/pixel?lat=${p.lat}&lon=${p.lon}&region=${$("region").value}`);
     const lines = Object.entries(px.values).map(([k, v]) => `${k.padEnd(13)} ${v ?? "no data"}`);
+    const minerals = px.minerals && px.minerals.length ? `minerals: ${px.minerals.join("; ")}\n` : "";
     $("info").textContent = `${p.lat.toFixed(4)}°N  ${p.lon.toFixed(4)}°E\n` +
-      (px.ground ? `ground: ${px.ground}\n` : "") + `confidence: ${px.confidence}\n\n` + lines.join("\n");
+      (px.ground ? `ground: ${px.ground}\n` : "") + minerals + `confidence: ${px.confidence}\n\n` + lines.join("\n");
   } catch (err) { $("info").textContent = `${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}: ${err.message}`; }
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
@@ -216,6 +272,59 @@ $("targets").onchange = () => {
   target = { lat: t.lat, lon: t.lon }; pin("target", target, Cesium.Color.ORANGE, t.name);
   invalidatePlan();
 };
+
+// ----------------------------------------------------------- text search ----
+let matches = [], lastQuery = "";
+function clearMatches() {
+  matches.forEach((_, i) => marks.removeById(`match${i}`));
+  matches = []; $("matches").innerHTML = "";
+}
+function viewCenter() {                     // where the user is looking; equal matches closer to it win
+  const c = viewer.scene.canvas;
+  return pickLatLon(new Cesium.Cartesian2(c.clientWidth / 2, c.clientHeight / 2));
+}
+function chooseMatch(i, fly = true) {
+  const m = matches[i]; if (!m) return;
+  target = { lat: m.lat, lon: m.lon };
+  pin("target", target, Cesium.Color.ORANGE, lastQuery.length > 28 ? lastQuery.slice(0, 27) + "…" : lastQuery);
+  [...$("matches").children].forEach((li, j) => li.classList.toggle("sel", j === i));
+  $("targets").value = "";
+  if (fly) viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(m.lon, m.lat, 30000, MARS) });
+}
+async function findTarget() {
+  const query = $("query").value.trim();
+  if (!query) { $("findInfo").textContent = "Type what you are looking for, e.g. valley with clay."; return; }
+  $("findInfo").textContent = "Searching…"; clearMatches();
+  try {
+    const res = await api("/api/find", { ...conditions(), query, base, focus: viewCenter() });
+    lastQuery = query;
+    $("layer").value = ""; $("legend").style.background = "none"; $("legendText").textContent = "";
+    await showImage(res.heatmap, res.rect);                       // bright = better match
+    const lines = [`Looking for: ${res.criteria.join(" + ")}` + (res.parser === "ai" ? ` (read by ${res.model})` : "")];
+    if (res.not_understood.length) lines.push(`Not understood: ${res.not_understood.join(", ")}`);
+    lines.push(...res.notes);
+    lines.push(res.matches.length ? "Bright areas match best. Click a result to make it the target, then Plan route."
+                                  : "No passable place matches. Try fewer words.");
+    $("findInfo").textContent = lines.join("\n");
+    matches = res.matches;
+    matches.forEach((m, i) => {
+      marks.add({ id: `match${i}`, position: Cesium.Cartesian3.fromDegrees(m.lon, m.lat, 0, MARS),
+        point: { pixelSize: 8, color: Cesium.Color.GOLD, outlineColor: Cesium.Color.BLACK, outlineWidth: 1,
+                 heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
+        label: { text: String(i + 1), font: "12px sans-serif", pixelOffset: new Cesium.Cartesian2(10, -10),
+                 disableDepthTestDistance: 1e9 } });
+      const li = document.createElement("li");
+      li.textContent = `${Math.round(m.score * 100)}% match · ${m.lat.toFixed(4)}°N ${m.lon.toFixed(4)}°E`;
+      const why = document.createElement("span");
+      why.className = "small"; why.textContent = m.why.join("\n");
+      li.appendChild(why); li.onclick = () => chooseMatch(i);
+      $("matches").appendChild(li);
+    });
+    chooseMatch(0);
+  } catch (e) { $("findInfo").textContent = e.message; }
+}
+$("find").onclick = findTarget;
+$("query").addEventListener("keydown", (e) => { if (e.key === "Enter") findTarget(); });
 
 // -------------------------------------------------------- consumables ----
 const BINDING = { oxygen: "O2 capacity", energy: "on-board energy", rated: "rated endurance" };
@@ -314,6 +423,217 @@ $("plan").onclick = async () => {
   }
 };
 
+// ---------------------------------------------------------------- mission ----
+const missionLayer = new Cesium.CustomDataSource("mission"), trackLayer = new Cesium.CustomDataSource("tracks");
+viewer.dataSources.add(trackLayer); viewer.dataSources.add(missionLayer);
+let mission = null, prevMission = null, selected = 0, tracksData = null, offlimitsLayer = null;
+const C = (css) => Cesium.Color.fromCssColorString(css);
+const RISK = [C("#4cd964"), C("#ffcc00"), C("#ff3b30")];          // route risk: low / moderate / high
+const TRACK = { green: C("#4cd964"), yellow: C("#ffcc00") };
+const el = (tag, props = {}, ...kids) => { const e = document.createElement(tag); Object.assign(e, props); e.append(...kids); return e; };
+const deg = (p) => `${p.lat.toFixed(4)}°N ${p.lon.toFixed(4)}°E`;
+const leftPct = (c) => Math.min(...c.resources.items.map((i) => i.left_pct));
+
+function line(ds, pts, color, width) {
+  if (pts.length < 2) return;
+  ds.entities.add({ polyline: { positions: Cesium.Cartesian3.fromDegreesArray(pts.flatMap((p) => [p.lon, p.lat]), MARS),
+                                width, material: color, clampToGround: true } });
+}
+function marker(ds, p, color, text, size = 11) {
+  ds.entities.add({ position: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS),
+    point: { pixelSize: size, color, outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
+             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
+    label: { text, font: "12px sans-serif", pixelOffset: new Cesium.Cartesian2(0, -18), disableDepthTestDistance: 1e9 } });
+}
+
+async function runMission() {
+  const goal = $("goal").value.trim();
+  if (!goal) { $("mStatus").textContent = "Type a goal, e.g. sample clay where water once flowed."; return; }
+  $("mStatus").textContent = "Planning… reading the goal, scoring every pixel, finding landing spots, routing 3 candidates";
+  $("runMission").disabled = true;
+  try {
+    const res = await api("/api/mission", { region: $("region").value, goal, vehicle: $("mVehicle").value,
+      season: $("mSeason").value, priority: $("mPriority").value, green_only: $("greenOnly").checked });
+    if (mission) prevMission = mission;
+    mission = res; selected = 0; $("mStatus").textContent = "";
+    $("layer").value = ""; $("legend").style.background = "none"; $("legendText").textContent = "";
+    await showImage(res.science_image, res.rect);                 // bright = better match for the goal
+    renderMission(); drawMission(true);
+    if ($("showTracks").checked) await showTracks(true);
+    if (res.candidates.length) {                                   // the AI wording arrives a few seconds later
+      $("mStatus").textContent = "AI model is writing the explanation…";
+      api(`/api/mission/${res.id}/explain`, {}).then((ex) => {
+        if (mission !== res) return;
+        res.explanation = ex.explanation; res.explanation_source = ex.source;
+        $("mStatus").textContent = ""; renderMission();
+      }).catch(() => { if (mission === res) $("mStatus").textContent = ""; });
+    }
+  } catch (e) { $("mStatus").textContent = e.message; }
+  $("runMission").disabled = false;
+}
+
+function selectRoute(i) { selected = i; renderMission(); drawMission(true); }
+
+function renderMission() {
+  const r = mission, s = r.settings, out = $("mResult"), h3 = (t) => out.append(el("h3", { textContent: t }));
+  out.innerHTML = "";
+  h3("Mission settings");
+  const set = el("ul"), li = (ul, t, cls = "") => ul.append(el("li", { textContent: t, className: cls }));
+  li(set, `Target: ${s.targets.join(" + ")}` + (s.parser === "ai" ? ` (goal read by ${s.model})` : ""));
+  if (s.not_understood.length) li(set, `Not understood: ${s.not_understood.join(", ")}`);
+  li(set, `${s.vehicle.label}: max slope ${s.vehicle.max_slope}°, range ${s.vehicle.range_km} km`);
+  li(set, `${s.season.label}; walk planned for ${s.local_hour}:00 local (sun ${s.sun_elevation}° up)`);
+  li(set, `Priority ${s.priority.label}: route cost weighs time ${s.priority.cost.time}, energy ${s.priority.cost.energy}, ` +
+          `risk ${s.priority.cost.risk}` + (s.green_only ? "; sticking to green tracks" : ""));
+  out.append(set);
+  for (const n of r.notes) out.append(el("div", { className: "small", textContent: n }));
+
+  h3(`Tools: ${r.tools.kg} kg, ${r.tools.w} W if all run at once`);
+  const tl = el("ul");
+  for (const t of r.tools.items) li(tl, `${t.name}: ${t.kg} kg${t.w ? `, ${t.w} W` : ""} (${t.why})`);
+  out.append(tl);
+
+  if (r.candidates.length) {
+    h3("Decision matrix (each criterion scored 1-5)");
+    const tb = el("table", { className: "matrix" }), head = el("tr");
+    head.append(el("th", { textContent: "Criterion" }), el("th", { textContent: "Weight" }));
+    r.candidates.forEach((c, i) => head.append(el("th", { className: `cand${i === 0 ? " win" : ""}${i === selected ? " sel" : ""}`,
+      textContent: `#${c.rank}`, title: "Show this route", onclick: () => selectRoute(i) })));
+    tb.append(head);
+    for (const [k, label] of Object.entries(s.criteria)) {
+      const tr = el("tr");
+      tr.append(el("td", { textContent: label }), el("td", { textContent: `${s.weights[k]}%` }));
+      r.candidates.forEach((c, i) => tr.append(el("td", { className: i === 0 ? "win" : "", textContent: c.scores[k] })));
+      tb.append(tr);
+    }
+    const tot = el("tr", { className: "total" });
+    tot.append(el("td", { textContent: "Total (out of 100)" }), el("td"));
+    r.candidates.forEach((c, i) => tot.append(el("td", { className: i === 0 ? "win" : "", textContent: c.total })));
+    tb.append(tot); out.append(tb);
+  }
+
+  h3("Why");
+  out.append(el("div", { id: "mExplain", textContent: r.explanation }));
+  out.append(el("div", { className: "small", textContent: r.explanation_source === "ai"
+    ? "Written by the AI model from the numbers above." : "Summary from the numbers above (no AI model configured)." }));
+  if (selected > 0) {
+    const a = r.candidates[0], b = r.candidates[selected];
+    out.append(el("div", { className: "small", textContent: `Showing #${b.rank}: ${(a.total - b.total).toFixed(1)} points ` +
+      `behind #1 · ${b.route.round_trip_h} h vs ${a.route.round_trip_h} h round trip · ${leftPct(b)}% vs ${leftPct(a)}% ` +
+      `reserve left · ${b.route.green_pct}% vs ${a.route.green_pct}% on green track` }));
+  }
+
+  if (prevMission && prevMission.candidates.length && r.candidates.length) {
+    const a = prevMission.candidates[0], b = r.candidates[0], ps = prevMission.settings;
+    const same = Math.abs(a.B.lat - b.B.lat) < 1e-4 && Math.abs(a.B.lon - b.B.lon) < 1e-4;
+    h3("Compared with the previous plan");
+    out.append(el("div", { id: "mCompare", className: "small", textContent:
+      `Before: ${ps.goal} · ${ps.vehicle.label} · ${ps.priority.label} · ${ps.season.label.split(" (")[0]}\n` +
+      `${same ? "Same destination" : `New destination (${deg(a.B)} → ${deg(b.B)})`}\n` +
+      `Score ${a.total} → ${b.total} · round trip ${a.route.round_trip_h} → ${b.route.round_trip_h} h · ` +
+      `${a.route.distance_km} → ${b.route.distance_km} km\nReserve left ${leftPct(a)}% → ${leftPct(b)}% · ` +
+      `green track ${a.route.green_pct}% → ${b.route.green_pct}% · max slope ${a.route.max_slope}° → ${b.route.max_slope}°` }));
+  }
+
+  h3(r.candidates.length ? "Candidates (click to open)" : "Candidates");
+  r.candidates.forEach((c, i) => out.append(candidateCard(c, i)));
+  for (const d of r.dropped) out.append(el("div", { className: "small bad", textContent: `Dropped B${d.id} (${deg(d.B)}): ${d.reason}` }));
+}
+
+function candidateCard(c, i) {
+  const d = el("details", { className: "card" + (i === selected ? " sel" : ""), open: i === selected });
+  const chip = el("span", { className: "chip" + (c.A.kind === "NASA candidate" ? " nasa" : ""), textContent: c.A.kind });
+  d.append(el("summary", {}, `#${c.rank} · ${c.total}/100 · B ${deg(c.B)} `, chip));
+  const ul = el("ul"), add = (t, cls = "") => ul.append(el("li", { textContent: t, className: cls }));
+  const k = c.card, rt = c.route, R = c.resources, ta = R.turnaround;
+  add(`Target: ${k.target.join("; ")}`);
+  add(`Data confidence: ${k.confidence}`);
+  add(`Terrain: ${k.terrain.join("; ")}`);
+  add(`Conditions: ${k.conditions.join("; ")}`);
+  add(`Nearby: ${k.nearby.join("; ")}`);
+  add(`Sampling spots: ${k.sampling.map((p) => `${deg(p)} (${p.what})`).join("; ")}`);
+  add(`Protection: ${k.protection.join("; ")}`);
+  add(`Landing spot A ${deg(c.A)}: ${k.from_A}`);
+  add(`Route: ${rt.distance_km} km, ${rt.one_way_h} h one way, ${rt.round_trip_h} h round trip incl. sampling; ` +
+      `max slope ${rt.max_slope}°, loose ground ${rt.loose_pct}%, green track ${rt.green_pct}% (${rt.green_km} km), yellow ${rt.yellow_pct}%`);
+  for (const it of R.items) {
+    add(`${it.name}: ${it.used} of ${it.capacity} ${it.unit} used, ${it.left_pct}% left (reserve ${R.reserve_pct}%)`, it.ok ? "ok" : "bad");
+    if (it.source) ul.lastChild.title = it.source;                // hover: where the number comes from
+  }
+  add(`Turn back no later than ${ta.h} h after leaving A` + (ta.at_B ? " (B is reached before then)" : ` (at ${deg(ta)})`));
+  d.append(ul, el("button", { className: "secondary", textContent: i === selected ? "Showing this route" : "Show this route",
+                              onclick: () => selectRoute(i) }));
+  return d;
+}
+
+function drawMission(fly) {
+  missionLayer.entities.removeAll();
+  if (!mission || !mission.candidates.length) return;
+  mission.candidates.forEach((c, i) => {
+    const pts = c.route.points;
+    if (i !== selected) line(missionLayer, pts, Cesium.Color.WHITE.withAlpha(0.35), 3);   // backups, faded
+    else {
+      if ($("showTracks").checked) {                               // highlight the parts on green rover track
+        let run = [];
+        for (const p of pts) { if (p.green) run.push(p); else { line(missionLayer, run, TRACK.green.withAlpha(0.45), 13); run = []; } }
+        line(missionLayer, run, TRACK.green.withAlpha(0.45), 13);
+      }
+      for (let a = 0, b = 1; b <= pts.length; b++) {               // colour the route by risk
+        if (b === pts.length || pts[b].risk !== pts[a].risk) {
+          line(missionLayer, pts.slice(a, Math.min(b + 1, pts.length)), RISK[pts[a].risk], 5); a = b;
+        }
+      }
+      if (!c.resources.turnaround.at_B) marker(missionLayer, c.resources.turnaround, Cesium.Color.RED, "turn back", 8);
+    }
+    const sel = i === selected;
+    marker(missionLayer, c.A, sel ? C("#2f8fff") : C("#2f8fff").withAlpha(0.5), `A${c.rank}${c.A.kind === "NASA candidate" ? " NASA" : ""}`);
+    marker(missionLayer, c.B, sel ? Cesium.Color.ORANGE : Cesium.Color.ORANGE.withAlpha(0.5), `B${c.rank}`);
+  });
+  if (fly) {
+    const pts = mission.candidates[selected].route.points, lat = pts.map((p) => p.lat), lon = pts.map((p) => p.lon);
+    const pad = 0.02;
+    viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(Math.min(...lon) - pad, Math.min(...lat) - pad,
+                                                                    Math.max(...lon) + pad, Math.max(...lat) + pad) });
+  }
+}
+
+async function showTracks(on) {
+  trackLayer.entities.removeAll();
+  if (offlimitsLayer) { (tileset ? tileset.imageryLayers : viewer.imageryLayers).remove(offlimitsLayer, true); offlimitsLayer = null; }
+  $("trackInfo").textContent = "";
+  if (on) {
+    try {
+      const key = `${$("region").value}|${$("mVehicle").value}`;
+      if (!tracksData || tracksData.key !== key)
+        tracksData = { key, ...(await api(`/api/tracks?region=${$("region").value}&vehicle=${$("mVehicle").value}`)) };
+      for (const sg of tracksData.segments)
+        line(trackLayer, sg.coords.map(([lon, lat]) => ({ lon, lat })), TRACK[sg.class], 3);
+      const provider = await Cesium.SingleTileImageryProvider.fromUrl(tracksData.offlimits_image, {
+        rectangle: Cesium.Rectangle.fromDegrees(tracksData.rect.west, tracksData.rect.south, tracksData.rect.east, tracksData.rect.north) });
+      offlimitsLayer = (tileset ? tileset.imageryLayers : viewer.imageryLayers).addImageryProvider(provider);
+      const info = $("trackInfo"), key2 = el("div", { className: "legendkey" });
+      for (const [col, txt] of [["#4cd964", "green: drove without warning signs"], ["#ffcc00", "yellow: high strain"], ["#ff3b30", "red: off-limits"]])
+        key2.append(el("span", { style: `background:${col}` }), txt);
+      info.append(key2, el("div", { textContent: tracksData.rover
+        ? `${tracksData.rover}'s real drives: ${tracksData.km.green} km green, ${tracksData.km.yellow} km yellow (rover tilted ≥12°, ` +
+          `slope ≥12° or loose ground; JPL publishes no per-drive slip). Red = beyond the vehicle's limits ` +
+          `(${tracksData.offlimits_pct}% of the region).` : "No rover tracks for this region." }));
+      if (mission && mission.candidates.length) {
+        const rt = mission.candidates[selected].route;
+        info.append(el("div", { className: rt.green_pct ? "ok" : "", textContent: rt.green_pct
+          ? `${rt.green_pct}% of this route follows green rover-verified track (${rt.green_km} km, highlighted).`
+          : "This route doesn't use rover-verified track; the green network shows other ways through." }));
+      }
+    } catch (e) { $("trackInfo").textContent = e.message; }
+  }
+  drawMission(false);
+}
+
+$("runMission").onclick = runMission;
+$("goal").addEventListener("keydown", (e) => { if (e.key === "Enter") runMission(); });
+$("showTracks").onchange = () => showTracks($("showTracks").checked);
+$("mVehicle").addEventListener("change", () => { if ($("showTracks").checked) showTracks(true); });
+
 // ------------------------------------------------------------------ boot ----
 function flyTo(r) {
   viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
@@ -325,6 +645,15 @@ $("vehicle").addEventListener("change", () => { applyVehicleLimits(); renderCons
 $("layer").onchange = refreshLayer;
 $("region").onchange = () => {
   current = regions.find((r) => r.region === $("region").value);
+  clearMatches(); $("findInfo").textContent = "";
+  mission = prevMission = null; tracksData = null; missionLayer.entities.removeAll(); $("mResult").innerHTML = "";
+  if ($("showTracks").checked) showTracks(true);
+  const mineralLayers = $("mineralLayers");
+  mineralLayers.innerHTML = "";
+  for (const [key, label] of Object.entries(current.minerals || {})) {
+    const o = document.createElement("option"); o.value = key; o.textContent = label; mineralLayers.appendChild(o);
+  }
+  mineralLayers.hidden = !mineralLayers.children.length;
   $("targets").innerHTML = '<option value="">…or pick a science target</option>' +
     current.targets.map((t, i) => `<option value="${i}">${t.name}</option>`).join("");
   flyTo(current.rect);
@@ -334,6 +663,11 @@ $("region").onchange = () => {
 labels();
 (async () => {
   try {
+    const opts = await api("/api/mission/options");
+    const fill = (id, obj, val) => { $(id).innerHTML = Object.entries(obj).map(([k, v]) =>
+      `<option value="${k}">${typeof v === "string" ? v : v.label}</option>`).join(""); $(id).value = val; };
+    fill("mVehicle", opts.vehicles, "on_foot"); fill("mSeason", opts.seasons, "northern_summer");
+    fill("mPriority", opts.priorities, "safety");
     const meta = await api("/api/regions");
     regions = meta.regions;
     Object.assign(SPECS, meta.vehicle_specs || {});

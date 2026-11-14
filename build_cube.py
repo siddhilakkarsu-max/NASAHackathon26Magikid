@@ -7,15 +7,21 @@ every source is resampled onto ONE lat/lon grid, then derived bands are computed
 
 Usage:
     python build_cube.py jezero          # small high-res box (do this first)
+    python build_cube.py jezero --px-per-deg 512   # same box, coarser grid (smaller file, faster app)
     python build_cube.py global          # whole planet, low res
 Output:
     cubes/<region>.npz   (used by the back end)
     cubes/<region>.tif   (multi-band GeoTIFF: open in QGIS to check)
 """
+import hashlib
 import io
+import json
 import math
+import re
 import sys
 import time
+import warnings
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 import numpy as np
@@ -26,15 +32,20 @@ from rasterio.transform import from_bounds
 from rasterio.vrt import WarpedVRT
 from rasterio.windows import from_bounds as window_from_bounds
 
-from config import MARS_LONLAT_CRS, MARS_RADIUS_M, REGION_SOURCES, REGIONS, SOURCES
+from config import MARS_LONLAT_CRS, MARS_RADIUS_M, MINERALS, REGION_SOURCES, REGIONS, SOURCES
 
-OUT_DIR = Path(__file__).parent / "cubes"
+ROOT = Path(__file__).parent
+OUT_DIR = ROOT / "cubes"
+CACHE = ROOT / "data" / "cache"         # downloaded pieces, so rebuilding doesn't download again
+UA = {"User-Agent": "Mozilla/5.0 (compatible; mars-cube-builder)"}
 WMS_MAX_PX = 2048  # request big areas in blocks so the server doesn't refuse
 
 
 # ----------------------------------------------------------------- grid ----
-def make_grid(region):
-    r = REGIONS[region]
+def make_grid(region, px_per_deg=None):
+    r = dict(REGIONS[region])
+    if px_per_deg:
+        r["px_per_deg"] = px_per_deg
     width = int(round((r["east"] - r["west"]) * r["px_per_deg"]))
     height = int(round((r["north"] - r["south"]) * r["px_per_deg"]))
     transform = from_bounds(r["west"], r["south"], r["east"], r["north"], width, height)
@@ -143,6 +154,8 @@ def load_band(name, grid, specs):
                 arr = read_raster_into_grid(str(Path(__file__).parent / spec["path"]), grid)
             elif spec["kind"] == "cog":
                 arr = read_raster_into_grid(spec["url"], grid)
+            elif spec["kind"] == "download":
+                arr = read_raster_into_grid(str(download(spec["url"], spec["path"])), grid)
             elif spec["kind"] == "wms":
                 arr = fetch_wms(spec, grid)
             else:
@@ -155,6 +168,146 @@ def load_band(name, grid, specs):
             errors.append(f"{spec['kind']}: {ex}")
     print(f"  [--] {name:<13} skipped. Tried: " + " | ".join(errors))
     return None, None
+
+
+def _get(url, timeout=120):
+    import urllib.request
+    req = urllib.request.Request(url, headers=UA)
+    with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx()) as resp:
+        return resp.read()
+
+
+def download(url, rel_path):
+    """Fetch a file into data/ once; later builds reuse it."""
+    path = ROOT / rel_path
+    if not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".part")
+        tmp.write_bytes(_get(url, timeout=600))
+        tmp.rename(path)
+    return path
+
+
+# ---------------------------------------------------------------- CRISM ----
+ODE = "https://oderest.rsl.wustl.edu/live2/"
+
+
+def crism_labels(bounds):
+    """PDS3 labels of every CRISM summary-parameter product over the region, best first:
+    targeted full resolution (FRT, ~18 m), other targeted (HRL/HRS, ~36 m), multispectral tiles (MRDR, ~180 m)."""
+    w, s, e, n = bounds
+    if (e - w) * (n - s) > 25:
+        raise RuntimeError("region is too large for CRISM (thousands of products); use a smaller region")
+    CACHE.mkdir(parents=True, exist_ok=True)
+    cache = CACHE / f"crism_labels_{w}_{s}_{e}_{n}.json"
+    if cache.exists():
+        return json.loads(cache.read_text())
+    urls = []
+    for pt in ("MTRDR", "MRDR4"):
+        q = (f"{ODE}?query=product&results=fp&output=JSON&target=mars&ihid=MRO&iid=CRISM&pt={pt}"
+             f"&westlon={w % 360}&eastlon={e % 360 or 360}&minlat={s}&maxlat={n}&limit=1000")
+        res = json.loads(_get(q))["ODEResults"]
+        prods = (res.get("Products") or {}).get("Product") or []
+        for prod in [prods] if isinstance(prods, dict) else prods:
+            files = prod["Product_files"]["Product_file"]
+            for f in [files] if isinstance(files, dict) else files:
+                if re.search(r"(_su\d|mrrsu)[^/]*\.lbl$", f["URL"].lower()):
+                    urls.append(f["URL"])
+    urls = sorted(set(urls), key=lambda u: (0 if "/frt" in u else 1 if "/mtrdr/" in u else 2, u))
+    cache.write_text(json.dumps(urls))
+    return urls
+
+
+def crism_read(label_url, params, grid):
+    """Read some summary parameters of one CRISM product onto the grid (NaN outside its footprint).
+    Only the needed bytes are fetched (HTTP range requests); the result is cached in data/cache."""
+    key = hashlib.sha1(f"{label_url}|{params}|{grid['bounds']}|{grid['width']}x{grid['height']}".encode())
+    cache = CACHE / f"crism_{key.hexdigest()[:16]}.npz"
+    if cache.exists():
+        return cache
+    label = _get(label_url).decode("latin-1")
+    names = re.findall(r'"([^"]+)"', re.search(r"BAND_NAME\s*=\s*\((.*?)\)", label, re.S).group(1))
+    idx = [names.index(p) + 1 for p in params]
+    with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
+        with rasterio.open("/vsicurl/" + label_url) as src:
+            with WarpedVRT(src, crs=MARS_LONLAT_CRS, transform=grid["transform"], width=grid["width"],
+                           height=grid["height"], src_nodata=65535, nodata=np.nan,
+                           resampling=Resampling.average) as vrt:
+                data = vrt.read(idx).astype("float32")
+    data[~np.isfinite(data) | (np.abs(data) > 10)] = np.nan
+    tmp = cache.with_name(cache.stem + ".part.npz")         # write then rename: no half-written cache
+    np.savez_compressed(tmp, **{p: data[i] for i, p in enumerate(params)})
+    tmp.rename(cache)
+    return cache
+
+
+def _km_corr(a, b, k):
+    """Correlation of two maps after averaging over k x k pixels (ignores NaNs)."""
+    from scipy.ndimage import uniform_filter
+
+    def smooth(x):
+        ok = np.isfinite(x)
+        num, den = uniform_filter(np.where(ok, x, 0.0), k), uniform_filter(ok.astype(float), k)
+        return np.where(den > 0.8, num / np.maximum(den, 1e-9), np.nan)
+    sa, sb = smooth(a), smooth(b)
+    ok = np.isfinite(sa) & np.isfinite(sb)
+    return float(np.corrcoef(sa[ok], sb[ok])[0, 1]) if ok.sum() > 100 else 0.0
+
+
+def build_minerals(grid):
+    """One band per MINERALS entry: CRISM products mosaicked best-first, then the strongest of each
+    mineral's parameters. Returns ({band: array}, [products used])."""
+    params = sorted({p for m in MINERALS.values() for p in m["params"]})
+    labels = crism_labels(grid["bounds"])
+    print(f"  CRISM: {len(labels)} products over the region, reading {len(params)} parameters from each")
+    done = {}
+    with ThreadPoolExecutor(6) as pool:
+        jobs = {pool.submit(crism_read, u, params, grid): u for u in labels}
+        for job in as_completed(jobs):
+            name = jobs[job].rsplit("/", 1)[-1]
+            try:
+                done[jobs[job]] = job.result()
+                print(f"    [ok] {name}")
+            except Exception as ex:
+                print(f"    [--] {name}: {ex}")
+    mosaic = {p: np.full((grid["height"], grid["width"]), np.nan, "float32") for p in params}
+    used = []
+    targeted = [u for u in labels if "/mtrdr/" in u and u in done]
+    tiles = [u for u in labels if "/mtrdr/" not in u and u in done]
+    for u in targeted:                                 # best first: only fill pixels that are still empty
+        z = np.load(done[u])
+        for p in params:
+            hole = np.isnan(mosaic[p])
+            mosaic[p][hole] = z[p][hole]
+        used.append(u.rsplit("/", 1)[-1].split(".")[0])
+    from_targeted = np.isfinite(np.stack([mosaic[p] for p in params])).any(axis=0)
+    # The multispectral map tile is noisier and offset from the targeted data (e.g. OLINDEX3 ~+0.1 at Jezero).
+    # It fills gaps only for parameters where it agrees with the targeted data at ~1 km, offset removed.
+    dx, dy = pixel_size_m(grid)
+    k = max(3, int(round(1000 / math.sqrt(float(np.mean(dx)) * dy))) | 1)
+    for u in tiles:
+        z = np.load(done[u])
+        for p in params:
+            t, a = mosaic[p], z[p].copy()
+            overlap = np.isfinite(t) & np.isfinite(a)
+            if overlap.sum() >= 2000:
+                r = _km_corr(a, t, k)
+                if r < 0.5:
+                    print(f"    tile not used for {p}: agrees poorly with the targeted data (r={r:.2f} at ~1 km)")
+                    continue
+                a -= np.median(a[overlap] - t[overlap])
+            hole = np.isnan(t) & np.isfinite(a)
+            t[hole] = a[hole]
+        used.append(u.rsplit("/", 1)[-1].split(".")[0])
+    out = {}
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)   # all-NaN pixels outside CRISM coverage
+        for name, m in MINERALS.items():
+            out[name] = np.nanmax(np.stack([mosaic[p] for p in m["params"]]), axis=0).astype("float32")
+    # where each pixel's minerals come from: 1 = targeted observation (18-36 m), 2 = map tile (~180 m)
+    any_data = np.isfinite(np.stack([mosaic[p] for p in params])).any(axis=0)
+    out["crism_source"] = np.where(from_targeted, 1.0, np.where(any_data, 2.0, np.nan)).astype("float32")
+    return out, used
 
 
 # -------------------------------------------------------- derived bands ----
@@ -186,18 +339,45 @@ def derive_terrain(elev, grid):
     return slope.astype("float32"), aspect.astype("float32"), rough.astype("float32")
 
 
+def firmness_from_ti(ti, night, grid):
+    """Ground firmness 0..1 from THEMIS thermal inertia on a log scale matching the classes
+    <150 fine dust (0) | 150-300 sand (0-0.5) | 300-600 coarse/crusted (0.5-1) | >600 bedrock (1).
+    The TI map is 1 km, so sub-km contrast is borrowed from the 100 m night-IR picture."""
+    from scipy.ndimage import uniform_filter
+    firm = (np.log(np.maximum(ti, 1)) - np.log(150)) / (np.log(600) - np.log(150))
+    if night is not None:
+        n = normalize01(night)
+        dx, dy = pixel_size_m(grid)
+        k = max(3, int(round(1000 / math.sqrt(float(np.mean(dx)) * dy))) | 1)
+        filled = np.where(np.isnan(n), np.nanmean(n), n)
+        firm = firm + (filled - uniform_filter(filled, k))      # local night-IR anomaly
+        firm = np.where(np.isnan(firm), n, firm)                 # TI gaps: night IR alone
+    return np.clip(firm, 0, 1).astype("float32")
+
+
 def normalize01(a):
     lo, hi = np.nanpercentile(a, 2), np.nanpercentile(a, 98)
     return np.clip((a - lo) / max(hi - lo, 1e-6), 0, 1).astype("float32")
 
 
 # ----------------------------------------------------------------- main ----
-def build(region, bands=None):
-    grid = make_grid(region)
+def build(region, bands=None, px_per_deg=None):
+    grid = make_grid(region, px_per_deg)
     print(f"Region '{region}': {grid['width']} x {grid['height']} px, bounds {grid['bounds']}")
     cube, provenance = {}, {}
     srcs = sources_for(region)
     for name in (bands or srcs.keys()):
+        if any(spec["kind"] == "crism" for spec in srcs[name]):
+            try:
+                t0 = time.time()
+                minerals, used = build_minerals(grid)
+                cube.update(minerals)
+                provenance[name] = (f"CRISM summary parameters (Viviano-Beck et al. 2014) from {len(used)} "
+                                    f"products via PDS Geosciences ODE: {', '.join(used)}")
+                print(f"  [ok] {name:<13} {', '.join(minerals)} ({time.time() - t0:.1f}s)")
+            except Exception as ex:
+                print(f"  [--] {name:<13} skipped: {ex}")
+            continue
         arr, spec = load_band(name, grid, srcs[name])
         if arr is not None:
             cube[name] = arr
@@ -205,7 +385,9 @@ def build(region, bands=None):
     if "elevation" not in cube:
         sys.exit("Elevation is required. Download a DEM GeoTIFF and set a 'file' source in config.py.")
     cube["slope"], cube["aspect"], cube["roughness"] = derive_terrain(cube["elevation"], grid)
-    if "themis_night" in cube:
+    if "thermal_inertia" in cube:
+        cube["firmness"] = firmness_from_ti(cube["thermal_inertia"], cube.get("themis_night"), grid)
+    elif "themis_night" in cube:
         # 0 = coldest at night (loose sand/dust), 1 = warmest (bedrock)
         cube["firmness"] = normalize01(cube["themis_night"])
     save(region, grid, cube, provenance)
@@ -234,4 +416,9 @@ def save(region, grid, cube, provenance):
 
 
 if __name__ == "__main__":
-    build(sys.argv[1] if len(sys.argv) > 1 else "jezero")
+    import argparse
+    ap = argparse.ArgumentParser(description="Build the Mars data cube for one region.")
+    ap.add_argument("region", nargs="?", default="jezero", choices=list(REGIONS))
+    ap.add_argument("--px-per-deg", type=int, help="grid density (default: the region's value in config.py)")
+    args = ap.parse_args()
+    build(args.region, px_per_deg=args.px_per_deg)
