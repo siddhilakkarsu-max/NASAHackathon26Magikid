@@ -16,9 +16,10 @@ from pathlib import Path
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from matplotlib import colormaps
+from matplotlib.colors import LinearSegmentedColormap, to_hex
 from PIL import Image
 from pydantic import BaseModel, Field
 
@@ -27,11 +28,25 @@ import physics
 import search
 from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
                     PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, VEHICLES)
+from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
+from surface_temperature import temperature_overlay
+from thermal_detail import DETAIL_STEP, detail_overlay, detail_sample
 
 ROOT = Path(__file__).parent
 app = FastAPI(title="Mars Marswalk Planner")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
+# Violet shadows, icy blues, cream, and copper inspired by false-color imagery.
+THERMAL_PALETTE = LinearSegmentedColormap.from_list("mars_thermal", [
+    (0.00, "#291444"), (0.18, "#4d3690"), (0.32, "#6b9dcc"),
+    (0.43, "#aed3df"), (0.51, "#f4e6db"), (0.65, "#eaba99"),
+    (0.78, "#c26d52"), (1.00, "#641a34"),
+])
+THERMAL_SCALE = (145, 315, "mars_thermal")
+
+
+def layer_palette(name):
+    return THERMAL_PALETTE if name == "mars_thermal" else colormaps[name]
 
 # ------------------------------------------------------------- cube I/O ----
 class Cube:
@@ -78,18 +93,43 @@ def to_png(arr, cmap="viridis", vmin=None, vmax=None, alpha=0.65, max_px=1600):
     step = max(1, int(np.ceil(max(a.shape) / max_px)))   # keep overlays light for the browser
     a = a[::step, ::step]
     bad = ~np.isfinite(a)
-    lo = np.nanpercentile(a[~bad], 2) if vmin is None else vmin
-    hi = np.nanpercentile(a[~bad], 98) if vmax is None else vmax
+    valid = a[~bad]
+    lo = (np.percentile(valid, 2) if valid.size else 0.0) if vmin is None else vmin
+    hi = (np.percentile(valid, 98) if valid.size else 1.0) if vmax is None else vmax
     norm = np.clip((np.where(bad, lo, a) - lo) / max(hi - lo, 1e-9), 0, 1)
-    rgba = (colormaps[cmap](norm) * 255).astype("uint8")
+    rgba = (layer_palette(cmap)(norm) * 255).astype("uint8")
     rgba[..., 3] = np.where(bad, 0, int(alpha * 255))
     buf = io.BytesIO()
     Image.fromarray(rgba).save(buf, format="PNG")
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+def interpolate_display(arr, factor, wrap_longitude=False):
+    """Densify only the display, keeping each missing source cell transparent."""
+    height, width = arr.shape
+    valid = np.isfinite(arr)
+    values = np.where(valid, arr, 0)
+    weights = valid.astype("float32")
+    if wrap_longitude:
+        values = np.pad(values, ((0, 0), (1, 1)), mode="wrap")
+        weights = np.pad(weights, ((0, 0), (1, 1)), mode="wrap")
+    size = (values.shape[1] * factor, height * factor)
+
+    def resize(data):
+        raster = Image.fromarray(data.astype("float32")).resize(size, Image.Resampling.BILINEAR)
+        if wrap_longitude:
+            raster = raster.crop((factor, 0, (width + 1) * factor, height * factor))
+        return np.asarray(raster)
+
+    weight = resize(weights)
+    display = resize(values) / np.maximum(weight, np.finfo("float32").eps)
+    mask = valid.repeat(factor, axis=0).repeat(factor, axis=1)
+    return np.where(mask, display, np.nan)
+
+
 def legend(name, unit, lo, hi, cmap):
-    return {"name": name, "unit": unit, "min": float(f"{lo:.3g}"), "max": float(f"{hi:.3g}"), "cmap": cmap}
+    return {"name": name, "unit": unit, "min": float(f"{lo:.3g}"), "max": float(f"{hi:.3g}"), "cmap": cmap,
+            "colors": [to_hex(layer_palette(cmap)(fraction)) for fraction in np.linspace(0, 1, 17)]}
 
 
 class Point(BaseModel):
@@ -102,7 +142,7 @@ class Conditions(BaseModel):
     vehicle: str = "astronaut"
     local_hour: float = Field(11.0, ge=0, le=24, description="Mars local solar time")
     ls: float = Field(90.0, ge=0, le=360, description="Season, solar longitude")
-    budget_hours: float = Field(4.0, gt=0, description="EVA time budget (stands in for O2 budget)")
+    budget_hours: float = Field(4.0, gt=0, description="Requested trip time budget in hours before reserve")
     reserve: float = Field(0.25, ge=0, lt=1, description="Fraction of budget held back for emergencies")
     min_sun_elev: float = 10.0
     weights: dict = {}
@@ -111,6 +151,30 @@ class Conditions(BaseModel):
 class PlanRequest(Conditions):
     base: Point
     target: Point
+
+
+class LayerSample(Conditions):
+    lat: float = Field(ge=-90, le=90)
+    lon: float = Field(ge=-180, le=180)
+    detail: bool = False
+
+
+class ThermalView(Conditions):
+    west: float = Field(ge=-180, le=180)
+    south: float = Field(ge=-90, le=90)
+    east: float = Field(ge=-180, le=180)
+    north: float = Field(ge=-90, le=90)
+
+
+@lru_cache(maxsize=1)
+def season_calendar():
+    return json.loads((ROOT / "thermal_data" / "season_calendar.json").read_text(encoding="utf-8"))
+
+
+def global_cell(lat, lon, shape):
+    height, width = shape
+    return (min(int((90 - lat) * height / 180), height - 1),
+            int(((lon + 180) % 360) * width / 360))
 
 
 class MissionRequest(BaseModel):
@@ -137,9 +201,8 @@ def conditions_layers(cube, cond):
     lat_c = (cube.s + cube.n) / 2
     sun_e, sun_az = physics.sun_position(lat_c, cond.local_hour, cond.ls)
     illum = physics.illumination(b["slope"], b["aspect"], sun_e, sun_az)
-    temp = physics.surface_temp_k(illum, b.get("firmness"), sun_e)
     cost = physics.cost_seconds_per_meter(b, v, cond.weights)
-    return v, sun_e, sun_az, illum, temp, cost
+    return v, sun_e, sun_az, illum, cost
 
 
 # ---------------------------------------------------------- consumables ----
@@ -237,11 +300,121 @@ def pixel(lat: float, lon: float, region: str = "jezero"):
             "confidence": round(float(c.coverage[r, col]), 2)}
 
 
+@app.get("/api/weather/calendar")
+def weather_calendar():
+    return {"sols": list(range(1, len(season_calendar()) + 1)), "ls": season_calendar()}
+
+
+@app.get("/api/weather/sources", response_class=FileResponse)
+def weather_sources():
+    return FileResponse(ROOT / "weather_sources.csv", media_type="text/csv",
+                        filename="mars_weather_sources.csv")
+
+
+@lru_cache(maxsize=8)
+def temperature_image(west, south, east, north, local_hour, ls):
+    arr, rect = detail_overlay(west, south, east, north, local_hour, ls)
+    lo, hi, cmap = THERMAL_SCALE
+    display = interpolate_display(arr, factor=2)
+    finite = arr[np.isfinite(arr)]
+    return {"image": to_png(display, cmap, lo, hi, alpha=0.88), "rect": rect,
+            "grid_step_deg": DETAIL_STEP, "source_cells": int(arr.size),
+            "temperature_range": [round(float(finite.min()), 1), round(float(finite.max()), 1)] if finite.size else None}
+
+
+@app.post("/api/weather/temperature-detail")
+def temperature_detail(view: ThermalView):
+    if view.west >= view.east or view.south >= view.north:
+        raise HTTPException(422, "Use an ordered viewport within one side of the longitude seam")
+    try:
+        return temperature_image(view.west, view.south, view.east, view.north, view.local_hour, view.ls)
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
+
+
+@app.post("/api/layer/{name}/sample")
+def sample_layer(name: str, cond: LayerSample):
+    """Read the native model cell under the mouse, independently of PNG colors."""
+    lat, lon = cond.lat, cond.lon
+    extra = {}
+    if name in ("temperature", "global_temperature"):
+        if name == "temperature":
+            cube = get_cube(cond.region)
+            if not (cube.s <= lat <= cube.n and cube.w <= lon <= cube.e):
+                return {"value": None, "unit": "K", "label": "Ground temperature"}
+        if name == "global_temperature" and cond.detail:
+            value = detail_sample(lat, lon, cond.local_hour, cond.ls)
+            extra["grid_step_deg"] = DETAIL_STEP
+        else:
+            row, col = global_cell(lat, lon, (360, 720))
+            north, west = 90 - row * 0.5, -180 + col * 0.5
+            cell = {"north": north, "south": north - 0.5, "west": west, "east": west + 0.5}
+            value = temperature_overlay(cell, (1, 1), cond.local_hour, cond.ls)[0, 0]
+            extra["grid_step_deg"] = 0.5
+        unit, label = "K", "Ground temperature"
+    elif name in WEATHER_LAYERS:
+        extra["grid_step_deg"] = 5
+        if name in ("wind_speed", "wind_direction"):
+            east, north = wind_components(cond.local_hour, cond.ls)
+            row, col = global_cell(lat, lon, east.shape)
+            u, v = east[row, col], north[row, col]
+            value = np.hypot(u, v)
+            if value >= 0.1:
+                extra["toward_deg"] = round(float(np.degrees(np.arctan2(u, v)) % 360)) % 360
+            unit, label = "m/s", "Wind speed"
+        else:
+            arr = weather_layer(name, cond.local_hour, cond.ls)
+            label, unit, *_ = WEATHER_LAYERS[name]
+            value = arr[global_cell(lat, lon, arr.shape)]
+    else:
+        raise HTTPException(404, "No hover values for this layer")
+    return {"value": round(float(value), 2) if np.isfinite(value) else None,
+            "unit": unit, "label": label, **extra}
+
+
 @app.post("/api/layer/{name}")
 def layer(name: str, cond: Conditions):
     """Coloured overlay of one band or one computed layer, for the current conditions."""
-    c = get_cube(cond.region)
-    v, sun_e, sun_az, illum, temp, cost = conditions_layers(c, cond)
+    if name in WEATHER_LAYERS:
+        title, unit, lo, hi, cmap = WEATHER_LAYERS[name]
+        wind = None
+        field = None
+        if name == "wind_direction":
+            east, north = wind_components(cond.local_hour, cond.ls)
+            arr = np.hypot(east, north)
+            field = {"east_ms": np.round(east, 3).tolist(), "north_ms": np.round(north, 3).tolist(), **GLOBAL_RECT}
+            # Space glyphs on a regular 10° display grid and omit calm samples.
+            wind = [{"lat": 87.5 - r * 5, "lon": -177.5 + c * 5,
+                     "east_ms": round(float(east[r, c]), 3),
+                     "north_ms": round(float(north[r, c]), 3)}
+                    for r in range(1, 36, 2) for c in range(0, 72, 2)
+                    if np.isfinite(arr[r, c]) and arr[r, c] >= 0.1]
+        else:
+            arr = weather_layer(name, cond.local_hour, cond.ls)
+        finite = arr[np.isfinite(arr)]
+        display = interpolate_display(arr, factor=4, wrap_longitude=True)
+        return {"image": to_png(display, cmap, lo, hi, alpha=0.75), "rect": GLOBAL_RECT,
+                "legend": legend(title, unit, lo, hi, cmap),
+                "weather": True,
+                "grid_step_deg": 5,
+                "wind_vectors": wind,
+                "wind_field": field,
+                "data_range": [round(float(finite.min()), 2), round(float(finite.max()), 2)] if finite.size else None}
+    c = None if name == "global_temperature" else get_cube(cond.region)
+    if name in ("temperature", "global_temperature"):
+        rect, shape = (GLOBAL_RECT, (360, 720)) if c is None else (c.rect, (c.H, c.W))
+        arr = temperature_overlay(rect, shape, cond.local_hour, cond.ls)
+        lo, hi, cmap = THERMAL_SCALE
+        sun_e, sun_az = physics.sun_position((rect["south"] + rect["north"]) / 2, cond.local_hour, cond.ls)
+        valid = arr[np.isfinite(arr)]
+        observed_range = [round(float(valid.min()), 1), round(float(valid.max()), 1)] if valid.size else None
+        display = interpolate_display(arr, factor=2, wrap_longitude=True) if c is None else arr
+        return {"image": to_png(display, cmap, lo, hi, alpha=0.88), "rect": rect,
+                "legend": legend("Simulated surface temperature", "K", lo, hi, cmap),
+                "grid_step_deg": 0.5,
+                "temperature_range": observed_range,
+                "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
+    v, sun_e, sun_az, illum, cost = conditions_layers(c, cond)
     if name in c.bands:
         arr, unit, cmap = c.bands[name], "", "viridis"
         if name == "slope":
@@ -264,8 +437,6 @@ def layer(name: str, cond: Conditions):
                     "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
     elif name == "illumination":
         arr, unit, cmap = np.clip(illum, 0, 1), "cos(i)", "inferno"
-    elif name == "temperature":
-        arr, unit, cmap = temp, "K (approx.)", "coolwarm"
     elif name == "cost":
         arr, unit, cmap = cost, "s/m", "RdYlGn_r"
     elif name == "shelter":
@@ -284,7 +455,7 @@ def layer(name: str, cond: Conditions):
 @app.post("/api/plan")
 def plan(req: PlanRequest):
     c = get_cube(req.region)
-    v, sun_e, sun_az, illum, temp, cost = conditions_layers(c, req)
+    v, sun_e, sun_az, illum, cost = conditions_layers(c, req)
     start, goal = c.rc(req.base.lat, req.base.lon), c.rc(req.target.lat, req.target.lon)
     warnings = []
     if sun_e < req.min_sun_elev:
@@ -297,7 +468,11 @@ def plan(req: PlanRequest):
 
     # Walk-back zone: places you can reach AND return from within the budget minus reserve
     t_from_base = physics.travel_time_from(cost, [start], c.pixel_m)
-    usable_s = req.budget_hours * 3600 * (1 - req.reserve)
+    rated_hours = v.get("rated_hours") or math.inf
+    budget_hours = min(req.budget_hours, rated_hours)
+    if req.budget_hours > rated_hours:
+        warnings.append(f"Time budget capped at the {v['label']} rating of {rated_hours:g} h.")
+    usable_s = budget_hours * 3600 * (1 - req.reserve)
     walkback = np.where(2 * t_from_base <= usable_s, 1.0, np.nan)
     walkback_t = np.where(np.isfinite(walkback), t_from_base / 60, np.nan)
 
@@ -335,10 +510,10 @@ def plan(req: PlanRequest):
         reasons.append(f"average slope {np.nanmean(route_slope):.1f} deg instead of "
                        f"{np.nanmean(c.bands['slope'][lr, lc]):.1f} deg")
     round_trip_h = 2 * seconds / 3600
-    within = round_trip_h <= req.budget_hours * (1 - req.reserve)
+    within = 2 * seconds <= usable_s
     if not within:
         warnings.append(f"Round trip needs {round_trip_h:.1f} h but only "
-                        f"{req.budget_hours * (1 - req.reserve):.1f} h is usable after the reserve.")
+                        f"{usable_s / 3600:.1f} h is usable after the reserve.")
 
     # O2 / energy for the round trip, against what this vehicle actually carries
     cons = consumables_block(v, seconds, dist_m, req.vehicle)
@@ -373,10 +548,11 @@ def plan(req: PlanRequest):
 def find(req: FindRequest):
     """Turn a text description ("valley with clay") into the best matching target pixels."""
     c = get_cube(req.region)
-    v, sun_e, sun_az, illum, temp, cost = conditions_layers(c, req)
+    v, sun_e, sun_az, illum, cost = conditions_layers(c, req)
+    temp = physics.surface_temp_k(illum, c.bands.get("firmness"), sun_e)
     t_base, notes = None, []
     focus = (req.focus.lat, req.focus.lon) if req.focus else ((c.s + c.n) / 2, (c.w + c.e) / 2)
-    usable_s = req.budget_hours * 3600 * (1 - req.reserve)
+    usable_s = min(req.budget_hours, v.get("rated_hours") or math.inf) * 3600 * (1 - req.reserve)
     if req.base:
         try:
             t_base = physics.travel_time_from(cost, [c.rc(req.base.lat, req.base.lon)], c.pixel_m)
