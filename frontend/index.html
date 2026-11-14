@@ -2,15 +2,23 @@
 <html lang="en">
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Marswalk Planner</title>
-<script src="https://cesium.com/downloads/cesiumjs/releases/1.147/Build/Cesium/Cesium.js"></script>
-<link href="https://cesium.com/downloads/cesiumjs/releases/1.147/Build/Cesium/Widgets/widgets.css" rel="stylesheet" />
+<script>window.CESIUM_BASE_URL = "/vendor/Cesium/";</script>
+<script src="/vendor/Cesium/Cesium.js"></script>
+<script src="/weather_display.js"></script>
+<script src="/weather_timeline.js"></script>
+<script src="/wind_motion.js"></script>
+<script src="/temperature_view.js"></script>
+<link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
 <style>
   /* Designers: restyle freely. Everything visual lives in this file. */
   :root { --bg: rgba(18, 12, 10, 0.88); --fg: #f3e7dd; --accent: #e0703a; --muted: #b9a79a; }
-  html, body, #map { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; }
-  #panel { position: absolute; top: 12px; left: 12px; width: 340px; max-height: calc(100% - 24px); overflow: auto;
-           background: var(--bg); color: var(--fg); border-radius: 10px; padding: 14px; font-size: 13px; z-index: 10; }
+  html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; font-family: system-ui, sans-serif; background: #000; }
+  body { display: grid; grid-template-columns: min(340px, 35vw) minmax(0, 1fr); }
+  #map { grid-area: 1 / 2; min-width: 0; min-height: 0; overflow: hidden; position: relative; }
+  #panel { grid-area: 1 / 1; min-height: 0; overflow: auto;
+           background: var(--bg); color: var(--fg); padding: 14px; font-size: 13px; z-index: 10; }
   h1 { font-size: 17px; margin: 0 0 8px; color: var(--accent); }
   h2 { font-size: 13px; margin: 14px 0 6px; color: var(--muted); text-transform: uppercase; letter-spacing: .05em; }
   label { display: block; margin: 6px 0 2px; }
@@ -31,7 +39,27 @@
   #matches li .small { display: block; white-space: pre-wrap; }
   #warn { color: #ffb08a; }
   #legend { height: 10px; border-radius: 4px; margin-top: 4px; }
+  .legend-ticks { display: flex; justify-content: space-between; margin: 3px 0 6px; color: var(--fg); }
+  .legend-note, #legendText a { display: block; margin: 3px 0; }
+  #legendText a { color: #b9daf0; }
+  #layerStatus { color: #ffcaac; margin: 4px 0; }
+  #layerStatus:empty, #mapDetail:empty { display: none; }
+  #mapDetail { margin: 4px 0; }
+  #mapOpacity:disabled { opacity: 0.45; }
+  #timeline { margin-top: 12px; }
+  #timeline input[type=number] { box-sizing: border-box; width: 100%; }
+  #timelineReadout { display: block; margin-top: 8px; color: var(--fg); }
+  #timelineMessage { margin: 4px 0; }
+  #panel a { color: #b9daf0; }
+  #weatherHover { position: absolute; z-index: 5; pointer-events: none; max-width: 210px;
+                  padding: 7px 9px; background: #131520ed; color: #fff; font-size: 12px;
+                  line-height: 1.45; border: 1px solid #ffffff48; border-radius: 5px; }
   .small { color: var(--muted); font-size: 11px; }
+  @media (max-width: 600px) {
+    body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 55% minmax(0, 1fr); }
+    #map { grid-area: 1 / 1; }
+    #panel { grid-area: 2 / 1; }
+  }
 
   /* Consumables readout — one block reused by every traveller */
   .cons { margin-top: 8px; }
@@ -72,7 +100,7 @@
 </style>
 </head>
 <body>
-<div id="map"></div>
+<div id="map"><div id="weatherHover" aria-hidden="true" hidden></div></div>
 <div id="panel">
   <h1>Marswalk Planner</h1>
   <div class="small" id="status">Connecting to back end…</div>
@@ -94,16 +122,63 @@
   <label class="check"><input type="checkbox" id="showTracks" /> Show rover tracks</label>
   <div id="trackInfo" class="small"></div>
 
+  <h2>Map layer</h2>
+  <div class="row">
+    <button id="wholeMars" class="secondary" type="button">Whole Mars</button>
+    <button id="zoomRegion" class="secondary" type="button">Zoom to region</button>
+  </div>
+  <label>Local solar time: <b id="hourVal"></b></label>
+  <input type="range" id="hour" min="0" max="24" step="0.25" value="11" />
+  <label>Season (Ls): <b id="lsVal"></b></label>
+  <input type="range" id="ls" min="0" max="360" step="0.1" value="90" />
+  <select id="layer">
+    <option value="">(none)</option>
+    <option value="imagery">CTX image (6 m, sharp)</option>
+    <option value="slope">Slope</option>
+    <option value="firmness">Ground firmness (THEMIS night)</option>
+    <option value="thermal_inertia">Thermal inertia (THEMIS)</option>
+    <option value="cost">Travel cost</option>
+    <option value="illumination">Sunlight on slopes</option>
+    <option value="temperature">Regional simulated surface temperature</option>
+    <optgroup id="globalWeather" label="Global weather">
+      <option value="global_temperature" selected>Global simulated surface temperature</option>
+      <option value="openmars_surface_temperature">OpenMARS ground temperature reference</option>
+      <option value="air_temperature">Near-surface air temperature</option>
+      <option value="surface_pressure">Surface pressure</option>
+      <option value="wind_speed">Near-surface wind speed</option>
+      <option value="wind_direction">Near-surface wind arrows</option>
+      <option value="dust_opacity">Atmospheric dust optical depth</option>
+    </optgroup>
+    <option value="shelter">Minutes to shelter</option>
+    <option value="elevation">Elevation</option>
+    <optgroup id="mineralLayers" label="Minerals (CRISM)"></optgroup>
+  </select>
+  <div id="legend" hidden></div><div class="small" id="legendText"></div>
+  <div id="mapDetail" class="small" role="status"></div>
+  <label for="mapOpacity">Overlay opacity <output id="opacityValue" for="mapOpacity">100%</output></label>
+  <input id="mapOpacity" type="range" min="0" max="100" value="100" step="5" disabled>
+  <div class="small" id="layerStatus" role="status"></div>
+  <button id="retryLayer" class="secondary" type="button" hidden>Retry layer</button>
+  <button id="pauseWind" class="secondary" type="button" hidden>Pause wind motion</button>
+  <section id="timeline" hidden aria-label="Weather timeline">
+    <h2>Weather timeline</h2>
+    <div class="small" id="timelineNote"></div>
+    <div class="row">
+      <label>Start sol <input id="startSol" type="number" step="1" required></label>
+      <label>End sol <input id="endSol" type="number" step="1" required></label>
+    </div>
+    <button id="playTimeline" class="secondary" type="button">Play timeline</button>
+    <label id="timelineReadout" for="timelinePosition">Timeline position</label>
+    <input id="timelinePosition" type="range" step="1">
+    <div class="small" id="timelineMessage" role="status"></div>
+  </section>
+  <p class="small"><a href="/api/weather/sources" target="_blank" rel="noopener">Weather data and source inventory</a></p>
+
   <details id="manual"><summary>Manual planning (one route)</summary>
   <h2>Conditions</h2>
   <label>Who is travelling <select id="vehicle"></select></label>
-  <label>Local solar time: <b id="hourVal"></b></label>
-  <input type="range" id="hour" min="5" max="19" step="0.25" value="11" />
-  <label>Season (Ls): <b id="lsVal"></b></label>
-  <input type="range" id="ls" min="0" max="355" step="5" value="90" />
   <label>EVA budget (hours): <b id="budgetVal"></b></label>
   <input type="range" id="budget" min="1" max="12" step="0.5" value="4" />
-
 
   <h2>Plan a walk</h2>
   <div class="row">
@@ -127,22 +202,6 @@
   <div id="explain"></div>
   </details>
 
-  <h2>Map layer</h2>
-  <select id="layer">
-    <option value="">(none)</option>
-    <option value="imagery">CTX image (6 m, sharp)</option>
-    <option value="slope">Slope</option>
-    <option value="firmness">Ground firmness</option>
-    <option value="thermal_inertia">Thermal inertia (THEMIS)</option>
-    <option value="cost">Travel cost</option>
-    <option value="illumination">Sunlight on slopes</option>
-    <option value="temperature">Surface temperature (approx.)</option>
-    <option value="shelter">Minutes to shelter</option>
-    <option value="elevation">Elevation</option>
-    <optgroup id="mineralLayers" label="Minerals (CRISM)"></optgroup>
-  </select>
-  <div id="legend"></div><div class="small" id="legendText"></div>
-
   <h2>Clicked point</h2>
   <div id="info" class="small">Click the map to see every value stored in that pixel.</div>
 </div>
@@ -155,22 +214,38 @@ const CESIUM_MARS_ASSET_ID = null;    // optional: asset id of "Cesium Mars" fro
 // NASA Trek tiles are fetched through our back end (Trek does not allow direct browser access)
 const TREK = API + "/tiles/Mars_Viking_MDIM21_ClrMosaic_global_232m";
 
+if (!window.Cesium) {
+  document.getElementById("status").textContent = "The globe renderer could not load. Refresh this page.";
+  throw new Error("CesiumJS did not load");
+}
 const MARS = Cesium.Ellipsoid.MARS;
 Cesium.Ellipsoid.default = MARS;
 const $ = (id) => document.getElementById(id);
 
+const marsTiles = new Cesium.UrlTemplateImageryProvider({
+  url: TREK + "/{z}/{y}/{x}.jpg",
+  tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
+  maximumLevel: 7, credit: "NASA/JPL Mars Trek, Viking MDIM 2.1",
+});
+marsTiles.errorEvent.addEventListener(error => { error.retry = false; });
+const baseMap = Cesium.ImageryLayer.fromProviderAsync(
+  Cesium.SingleTileImageryProvider.fromUrl("/viking-mdim.jpg", {
+    ellipsoid: MARS, credit: "NASA/JPL Mars Trek, Viking MDIM 2.1",
+  })
+);
 const viewer = new Cesium.Viewer("map", {
   globe: new Cesium.Globe(MARS),
-  baseLayer: new Cesium.ImageryLayer(new Cesium.UrlTemplateImageryProvider({
-    url: TREK + "/{z}/{y}/{x}.jpg",
-    tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
-    maximumLevel: 7, credit: "NASA/JPL Mars Trek, Viking MDIM 2.1",
-  })),
+  baseLayer: baseMap,
   baseLayerPicker: false, geocoder: false, timeline: false, animation: false,
   sceneModePicker: false, homeButton: false, navigationHelpButton: false, infoBox: false, selectionIndicator: false,
 });
+viewer.imageryLayers.addImageryProvider(marsTiles);
 if (viewer.scene.skyAtmosphere) viewer.scene.skyAtmosphere.show = false;
 if (viewer.scene.globe) viewer.scene.globe.showGroundAtmosphere = false;
+if (viewer.scene.skyBox) viewer.scene.skyBox.show = false;
+if (viewer.scene.sun) viewer.scene.sun.show = false;
+if (viewer.scene.moon) viewer.scene.moon.show = false;
+viewer.scene.backgroundColor = Cesium.Color.BLACK;
 
 let tileset = null;
 (async () => {
@@ -184,55 +259,186 @@ let tileset = null;
 
 // ---------------------------------------------------------------- state ----
 let regions = [], current = null, overlay = [], mode = null;
-let base = null, target = null;
+let base = null, target = null, layerRequest = 0;
+let layerLoad = null, displayedLayer = "";
+let timeline = null, shownConditions = null, shownResponse = null;
+let hoverPoint = null, hoverTimer, hoverLoad, hoverVersion = 0;
+let windPaused = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let pointRequest = 0;
 const marks = viewer.entities;
+const imageLayers = () => tileset ? tileset.imageryLayers : viewer.imageryLayers;
+const mapOpacity = () => +$("mapOpacity").value / 100;
+const temperatureView = createTemperatureView({
+  viewer, ellipsoid: MARS, api, opacity: mapOpacity,
+  current: () => displayedLayer === "global_temperature" && overlay.length
+    ? { overview: overlay[0], conditions: shownConditions, collection: imageLayers() } : null,
+  onChange: (state, step, range) => {
+    if (displayedLayer !== "global_temperature") return;
+    $("mapDetail").textContent = {
+      overview: "0.5° overview · Zoom in for finer TES inputs",
+      loading: "Loading finer TES inputs for this view…",
+      detail: `${step}° TES detail · This view only`,
+      unavailable: "Finer view unavailable · Showing the 0.5° overview",
+    }[state];
+    if (state !== "loading") {
+      const response = state === "detail" ? { ...shownResponse, temperature_range: range, viewport: true } : shownResponse;
+      weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText"), name: displayedLayer, response });
+      refreshHover();
+    }
+  },
+});
+
+$("mapOpacity").oninput = () => {
+  const opacity = mapOpacity();
+  $("opacityValue").textContent = $("mapOpacity").value + "%";
+  for (const layer of overlay) layer.alpha = opacity;
+  temperatureView.setOpacity(opacity);
+  const wind = $("map").querySelector(".wind-motion");
+  if (wind) wind.style.opacity = opacity;
+};
 const SPECS = {};        // vehicle -> limits, filled from /api/regions
 let lastPlan = null;     // stats from the last plan; null = nothing current to show
 let replanHint = "";
+let planRequest = 0, planBusy = false;
 
 function conditions() {
-  return { region: $("region").value, vehicle: $("vehicle").value, local_hour: +$("hour").value,
+  return { region: $("region").value || "jezero", vehicle: $("vehicle").value || "astronaut", local_hour: +$("hour").value,
            ls: +$("ls").value, budget_hours: +$("budget").value };
 }
 function labels() {
   const h = +$("hour").value;
   $("hourVal").textContent = `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, "0")}`;
-  $("lsVal").textContent = `${$("ls").value}°`;
+  $("lsVal").textContent = `${+$("ls").value}°`;
   $("budgetVal").textContent = $("budget").value;
 }
 
-async function api(path, body) {
-  const r = await fetch(API + path, body ? { method: "POST", headers: { "Content-Type": "application/json" },
-                                              body: JSON.stringify(body) } : {});
-  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+async function api(path, body, signal) {
+  const options = body ? { method: "POST", headers: { "Content-Type": "application/json" },
+                           body: JSON.stringify(body), signal } : { signal };
+  const r = await fetch(API + path, options);
+  if (!r.ok) {
+    const error = await r.json().catch(() => ({}));
+    throw new Error(typeof error.detail === "string" ? error.detail : `Request failed (${r.status}).`);
+  }
   return r.json();
 }
 
 // -------------------------------------------------------------- overlays ----
-async function showImage(dataUrl, rect, keep = false) {
-  if (!keep) clearOverlay();
+async function showImage(dataUrl, rect, request = layerRequest, isCurrent = () => true) {
   const provider = await Cesium.SingleTileImageryProvider.fromUrl(dataUrl, {
+    ellipsoid: MARS,
     rectangle: Cesium.Rectangle.fromDegrees(rect.west, rect.south, rect.east, rect.north) });
+  if (request !== layerRequest || !isCurrent()) return false;
+  clearOverlay();
   const layer = new Cesium.ImageryLayer(provider);
-  (tileset ? tileset.imageryLayers : viewer.imageryLayers).add(layer);
+  layer.alpha = mapOpacity();
+  imageLayers().add(layer);
   overlay.push(layer);
+  $("mapOpacity").disabled = false;
+  return true;
 }
 function clearOverlay() {
-  for (const l of overlay) (tileset ? tileset.imageryLayers : viewer.imageryLayers).remove(l, true);
+  temperatureView.clear();
+  for (const l of overlay) imageLayers().remove(l, true);
   overlay = [];
+  displayedLayer = "";
+  shownConditions = null;
+  shownResponse = null;
+  $("mapOpacity").disabled = true;
+  $("mapDetail").textContent = "";
+}
+
+async function showAnalysisOverlay({ image, rect, name, label, requestAtStart, isCurrent }) {
+  if (requestAtStart !== layerRequest || !isCurrent()) return false;
+  const request = ++layerRequest;
+  layerLoad?.abort();
+  $("layer").value = "";
+  wasGlobal = false;
+  timeline?.setEnabled(false);
+  clearOverlay();
+  windMotion.stop();
+  updateWindControl();
+  hideHover();
+  $("layerStatus").textContent = "";
+  $("retryLayer").hidden = true;
+  weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText") });
+  if (!await showImage(image, rect, request, isCurrent)) return false;
+  displayedLayer = name;
+  $("legendText").textContent = label;
+  return true;
 }
 
 async function refreshLayer() {
+  const request = ++layerRequest;
   const name = $("layer").value;
-  if (!name) { clearOverlay(); $("legend").style.background = "none"; $("legendText").textContent = ""; return; }
+  layerLoad?.abort();
+  $("layerStatus").textContent = "";
+  $("retryLayer").hidden = true;
+  const guide = { bar: $("legend"), text: $("legendText"), name };
+  if (name !== displayedLayer || !name) {
+    clearOverlay();
+    windMotion.stop();
+    updateWindControl();
+    refreshHover();
+    weatherDisplay.renderLegend(guide);
+  }
+  if (!name) return false;
+  const load = new AbortController();
+  layerLoad = load;
+  $("layerStatus").textContent = "Loading layer…";
   try {
-    const res = await api(`/api/layer/${name}`, conditions());
-    await showImage(res.image, res.rect);
-    const lg = res.legend;
-    $("legend").style.background = "linear-gradient(90deg, #222, #ddd)";
-    $("legendText").textContent = `${lg.min} → ${lg.max} ${lg.unit}   ·   sun ${res.sun.elevation}° up`;
-  } catch (e) { $("status").textContent = e.message; }
+    const snapshot = conditions();
+    const response = await api(`/api/layer/${name}`, snapshot, load.signal);
+    if (request !== layerRequest || !await showImage(response.image, response.rect, request)) return false;
+    let animated = false;
+    if (response.wind_field) {
+      animated = windMotion.start({ viewer, container: $("map"), vectors: response.wind_field });
+      if (animated) {
+        windMotion.setPaused(windPaused);
+        $("map").querySelector(".wind-motion").style.opacity = mapOpacity();
+      }
+    }
+    if (!animated && response.wind_vectors) {
+      const fallback = await weatherDisplay.renderWind(response);
+      if (request !== layerRequest || !await showImage(fallback, response.rect, request)) return false;
+    }
+    displayedLayer = name;
+    shownConditions = snapshot;
+    shownResponse = response;
+    updateWindControl(animated);
+    weatherDisplay.renderLegend({ ...guide, response });
+    if (name === "global_temperature") {
+      $("mapDetail").textContent = "0.5° overview · Zoom in for finer TES inputs";
+      temperatureView.refresh();
+    } else if (response.grid_step_deg) {
+      $("mapDetail").textContent = `${response.grid_step_deg}° data grid` +
+        (response.weather ? " · Zoom magnifies this grid" : "");
+    }
+    $("layerStatus").textContent = "";
+    refreshHover();
+    return true;
+  } catch (error) {
+    if (request !== layerRequest || error.name === "AbortError") return false;
+    clearOverlay();
+    windMotion.stop();
+    updateWindControl();
+    refreshHover();
+    weatherDisplay.renderLegend(guide);
+    $("layerStatus").textContent = `Layer could not load. ${error.message}`;
+    $("retryLayer").hidden = false;
+    return false;
+  }
 }
+$("retryLayer").onclick = refreshLayer;
+function updateWindControl(available = false) {
+  $("pauseWind").hidden = !available;
+  $("pauseWind").textContent = windPaused ? "Resume wind motion" : "Pause wind motion";
+}
+$("pauseWind").onclick = () => {
+  windPaused = !windPaused;
+  windMotion.setPaused(windPaused);
+  updateWindControl(true);
+};
 
 // --------------------------------------------------------------- picking ----
 function pickLatLon(pos) {
@@ -242,6 +448,99 @@ function pickLatLon(pos) {
   const c = Cesium.Cartographic.fromCartesian(cart, MARS);
   return { lat: Cesium.Math.toDegrees(c.latitude), lon: Cesium.Math.toDegrees(c.longitude) };
 }
+
+function pointLabel({lat, lon}) {
+  return `${Math.abs(lat).toFixed(2)}° ${lat < 0 ? "S" : "N"}, ${Math.abs(lon).toFixed(2)}° ${lon < 0 ? "W" : "E"}`;
+}
+const hoverLayers = new Set(["temperature", "global_temperature", "openmars_surface_temperature", "air_temperature", "surface_pressure",
+                              "wind_speed", "wind_direction", "dust_opacity"]);
+function paintHover(point, detail = "") {
+  const tip = $("weatherHover");
+  tip.replaceChildren(document.createTextNode(pointLabel(point)));
+  if (detail) {
+    const value = document.createElement("div");
+    value.textContent = detail;
+    tip.append(value);
+  }
+  tip.hidden = false;
+  const map = $("map");
+  tip.style.left = Math.max(0, Math.min(point.x + 13, map.clientWidth - tip.offsetWidth - 5)) + "px";
+  tip.style.top = Math.max(0, Math.min(point.y + 14, map.clientHeight - tip.offsetHeight - 5)) + "px";
+}
+function refreshHover() {
+  ++hoverVersion;
+  clearTimeout(hoverTimer);
+  hoverTimer = undefined;
+  hoverLoad?.abort();
+  hoverLoad = null;
+  if (hoverPoint) {
+    hoverPoint.detail = undefined;
+    paintHover(hoverPoint);
+    queueHover();
+  }
+}
+function hoverCell(point, layer) {
+  const step = layer === "global_temperature" ? temperatureView.stepAt(point) ?? 0.5
+    : layer === "temperature" ? 0.5 : 5;
+  return `${step}:${Math.floor((90 - point.lat) / step)}:${Math.floor(((point.lon + 180) % 360) / step)}`;
+}
+function samplePoint(layer, snapshot, point, signal) {
+  return api(`/api/layer/${layer}/sample`, {
+    ...snapshot, lat: point.lat, lon: point.lon, detail: layer === "global_temperature" && !!temperatureView.stepAt(point),
+  }, signal);
+}
+function sampleLabel(sample) {
+  const value = sample.value === null ? "unavailable" : `${sample.value} ${sample.unit}`;
+  const direction = sample.toward_deg === undefined ? "" : ` · toward ${sample.toward_deg}°`;
+  return `${sample.label} ${value}${direction}`;
+}
+function queueHover() {
+  if (hoverTimer || hoverLoad || !hoverPoint || !shownConditions || !hoverLayers.has(displayedLayer)) return;
+  hoverTimer = setTimeout(async () => {
+    hoverTimer = undefined;
+    if (!hoverPoint) return;
+    const point = hoverPoint, snapshot = shownConditions, layer = displayedLayer, version = hoverVersion;
+    const pending = new AbortController();
+    hoverLoad = pending;
+    try {
+      const sample = await samplePoint(layer, snapshot, point, pending.signal);
+      if (!hoverPoint || version !== hoverVersion || layer !== displayedLayer || snapshot !== shownConditions) return;
+      if (hoverCell(point, layer) !== hoverCell(hoverPoint, layer)) {
+        hoverLoad = null;
+        queueHover();
+        return;
+      }
+      hoverPoint.detail = sampleLabel(sample);
+      paintHover(hoverPoint, hoverPoint.detail);
+    } catch (error) {
+      if (error.name !== "AbortError" && version === hoverVersion && hoverPoint) {
+        paintHover(hoverPoint, "Value could not load");
+      }
+    } finally {
+      if (hoverLoad === pending) hoverLoad = null;
+    }
+  }, 115);
+}
+function hideHover() {
+  hoverPoint = null;
+  $("weatherHover").hidden = true;
+  refreshHover();
+}
+$("map").addEventListener("pointerleave", hideHover);
+viewer.scene.canvas.addEventListener("pointermove", event => {
+  if (event.pointerType === "touch" || event.buttons) { hideHover(); return; }
+  const bounds = viewer.scene.canvas.getBoundingClientRect();
+  const x = event.clientX - bounds.left, y = event.clientY - bounds.top;
+  const location = pickLatLon(new Cesium.Cartesian2(x, y));
+  if (!location) { hideHover(); return; }
+  const previous = hoverPoint;
+  hoverPoint = { ...location, x, y };
+  if (previous && hoverCell(previous, displayedLayer) === hoverCell(hoverPoint, displayedLayer)) {
+    hoverPoint.detail = previous.detail;
+  }
+  paintHover(hoverPoint, hoverPoint.detail);
+  if (!hoverPoint.detail) queueHover();
+});
 function pin(id, p, color, text) {
   marks.removeById(id);
   marks.add({ id, position: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS),
@@ -253,16 +552,30 @@ function pin(id, p, color, text) {
 
 new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e) => {
   const p = pickLatLon(e.position); if (!p) return;
+  const request = ++pointRequest;
+  if (!mode && shownConditions && hoverLayers.has(displayedLayer)) {
+    const layer = displayedLayer, snapshot = shownConditions;
+    $("info").textContent = pointLabel(p);
+    try {
+      const sample = await samplePoint(layer, snapshot, p);
+      if (request !== pointRequest || snapshot !== shownConditions) return;
+      $("info").textContent = `${pointLabel(p)}\n${sampleLabel(sample)}\nData grid ${sample.grid_step_deg}° · ${snapshot.local_hour} h local solar time · ${snapshot.ls}° Ls`;
+    } catch (err) {
+      if (request === pointRequest) $("info").textContent = `${pointLabel(p)}\n${err.message}`;
+    }
+    return;
+  }
   if (mode === "base")   { base = p;   pin("base", p, Cesium.Color.DODGERBLUE, "Base"); invalidatePlan(); }
   if (mode === "target") { target = p; pin("target", p, Cesium.Color.ORANGE, "Target"); invalidatePlan(); }
   mode = null; $("setBase").classList.remove("active"); $("setTarget").classList.remove("active");
   try {
     const px = await api(`/api/pixel?lat=${p.lat}&lon=${p.lon}&region=${$("region").value}`);
+    if (request !== pointRequest) return;
     const lines = Object.entries(px.values).map(([k, v]) => `${k.padEnd(13)} ${v ?? "no data"}`);
     const minerals = px.minerals && px.minerals.length ? `minerals: ${px.minerals.join("; ")}\n` : "";
-    $("info").textContent = `${p.lat.toFixed(4)}°N  ${p.lon.toFixed(4)}°E\n` +
+    $("info").textContent = `${pointLabel(p)}\n` +
       (px.ground ? `ground: ${px.ground}\n` : "") + minerals + `confidence: ${px.confidence}\n\n` + lines.join("\n");
-  } catch (err) { $("info").textContent = `${p.lat.toFixed(3)}, ${p.lon.toFixed(3)}: ${err.message}`; }
+  } catch (err) { if (request === pointRequest) $("info").textContent = `${pointLabel(p)}: ${err.message}`; }
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
 $("setBase").onclick = () => { mode = "base"; $("setBase").classList.add("active"); };
@@ -274,7 +587,7 @@ $("targets").onchange = () => {
 };
 
 // ----------------------------------------------------------- text search ----
-let matches = [], lastQuery = "";
+let matches = [], lastQuery = "", findRequest = 0;
 function clearMatches() {
   matches.forEach((_, i) => marks.removeById(`match${i}`));
   matches = []; $("matches").innerHTML = "";
@@ -286,6 +599,7 @@ function viewCenter() {                     // where the user is looking; equal 
 function chooseMatch(i, fly = true) {
   const m = matches[i]; if (!m) return;
   target = { lat: m.lat, lon: m.lon };
+  invalidatePlan();
   pin("target", target, Cesium.Color.ORANGE, lastQuery.length > 28 ? lastQuery.slice(0, 27) + "…" : lastQuery);
   [...$("matches").children].forEach((li, j) => li.classList.toggle("sel", j === i));
   $("targets").value = "";
@@ -294,16 +608,23 @@ function chooseMatch(i, fly = true) {
 async function findTarget() {
   const query = $("query").value.trim();
   if (!query) { $("findInfo").textContent = "Type what you are looking for, e.g. valley with clay."; return; }
+  const id = ++findRequest;
+  const requestAtStart = layerRequest;
+  const isCurrent = () => id === findRequest;
   $("findInfo").textContent = "Searching…"; clearMatches();
   try {
     const res = await api("/api/find", { ...conditions(), query, base, focus: viewCenter() });
+    if (!isCurrent()) return;
+    const heatmapShown = await showAnalysisOverlay({
+      image: res.heatmap, rect: res.rect, name: "search",
+      label: "Brighter areas match the target description more closely.", requestAtStart, isCurrent
+    });
+    if (!isCurrent()) return;
     lastQuery = query;
-    $("layer").value = ""; $("legend").style.background = "none"; $("legendText").textContent = "";
-    await showImage(res.heatmap, res.rect);                       // bright = better match
     const lines = [`Looking for: ${res.criteria.join(" + ")}` + (res.parser === "ai" ? ` (read by ${res.model})` : "")];
     if (res.not_understood.length) lines.push(`Not understood: ${res.not_understood.join(", ")}`);
     lines.push(...res.notes);
-    lines.push(res.matches.length ? "Bright areas match best. Click a result to make it the target, then Plan route."
+    lines.push(res.matches.length ? "Click a result to make it the target, then Plan route."
                                   : "No passable place matches. Try fewer words.");
     $("findInfo").textContent = lines.join("\n");
     matches = res.matches;
@@ -320,8 +641,8 @@ async function findTarget() {
       li.appendChild(why); li.onclick = () => chooseMatch(i);
       $("matches").appendChild(li);
     });
-    chooseMatch(0);
-  } catch (e) { $("findInfo").textContent = e.message; }
+    chooseMatch(0, heatmapShown);
+  } catch (e) { if (isCurrent()) $("findInfo").textContent = e.message; }
 }
 $("find").onclick = findTarget;
 $("query").addEventListener("keydown", (e) => { if (e.key === "Enter") findTarget(); });
@@ -389,9 +710,18 @@ function applyVehicleLimits() {
 }
 
 function invalidatePlan() {
-  if (!lastPlan) return;
+  ++planRequest;
+  if (!lastPlan && !planBusy) return;
+  planBusy = false;
   lastPlan = null;
   replanHint = "Conditions changed - plan again.";
+  marks.removeById("route");
+  if (displayedLayer === "walkback") {
+    clearOverlay();
+    weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText") });
+  }
+  $("warn").textContent = "";
+  $("explain").textContent = replanHint;
   renderConsumables();
 }
 
@@ -399,10 +729,18 @@ function invalidatePlan() {
 $("plan").onclick = async () => {
   if (!base || !target) { $("warn").textContent = "Set a base and a target first."; return; }
   $("explain").textContent = "Planning…"; $("warn").textContent = "";
+  const planId = ++planRequest;
+  planBusy = true;
+  const requestAtStart = layerRequest;
   try {
     const res = await api("/api/plan", { ...conditions(), base, target });
-    $("layer").value = ""; clearOverlay();
-    await showImage(res.walkback_image, res.rect, true);         // green = can go AND come back
+    if (planId !== planRequest) return;
+    await showAnalysisOverlay({
+      image: res.walkback_image, rect: res.rect, name: "walkback",
+      label: "Shaded terrain marks the round-trip walk-back zone.",
+      requestAtStart, isCurrent: () => planId === planRequest
+    });
+    if (planId !== planRequest) return;
     marks.removeById("route");
     if (res.route) {
       marks.add({ id: "route", polyline: {
@@ -417,9 +755,12 @@ $("plan").onclick = async () => {
     replanHint = "";
     renderConsumables();
   } catch (e) {
+    if (planId !== planRequest) return;
     $("explain").textContent = e.message;
     lastPlan = null;
     renderConsumables();
+  } finally {
+    if (planId === planRequest) planBusy = false;
   }
 };
 
@@ -427,6 +768,7 @@ $("plan").onclick = async () => {
 const missionLayer = new Cesium.CustomDataSource("mission"), trackLayer = new Cesium.CustomDataSource("tracks");
 viewer.dataSources.add(trackLayer); viewer.dataSources.add(missionLayer);
 let mission = null, prevMission = null, selected = 0, tracksData = null, offlimitsLayer = null;
+let missionRequest = 0, trackRequest = 0;
 const C = (css) => Cesium.Color.fromCssColorString(css);
 const RISK = [C("#4cd964"), C("#ffcc00"), C("#ff3b30")];          // route risk: low / moderate / high
 const TRACK = { green: C("#4cd964"), yellow: C("#ffcc00") };
@@ -447,19 +789,28 @@ function marker(ds, p, color, text, size = 11) {
 }
 
 async function runMission() {
+  if ($("runMission").disabled) return;
   const goal = $("goal").value.trim();
   if (!goal) { $("mStatus").textContent = "Type a goal, e.g. sample clay where water once flowed."; return; }
+  const id = ++missionRequest;
+  const requestAtStart = layerRequest;
+  const isCurrent = () => id === missionRequest;
   $("mStatus").textContent = "Planning… reading the goal, scoring every pixel, finding landing spots, routing 3 candidates";
   $("runMission").disabled = true;
   try {
     const res = await api("/api/mission", { region: $("region").value, goal, vehicle: $("mVehicle").value,
       season: $("mSeason").value, priority: $("mPriority").value, green_only: $("greenOnly").checked });
+    if (!isCurrent()) return;
+    const scienceShown = await showAnalysisOverlay({
+      image: res.science_image, rect: res.rect, name: "mission",
+      label: "Brighter areas match the mission goal more closely.", requestAtStart, isCurrent
+    });
+    if (!isCurrent()) return;
     if (mission) prevMission = mission;
     mission = res; selected = 0; $("mStatus").textContent = "";
-    $("layer").value = ""; $("legend").style.background = "none"; $("legendText").textContent = "";
-    await showImage(res.science_image, res.rect);                 // bright = better match for the goal
-    renderMission(); drawMission(true);
+    renderMission(); drawMission(scienceShown);
     if ($("showTracks").checked) await showTracks(true);
+    if (!isCurrent()) return;
     if (res.candidates.length) {                                   // the AI wording arrives a few seconds later
       $("mStatus").textContent = "AI model is writing the explanation…";
       api(`/api/mission/${res.id}/explain`, {}).then((ex) => {
@@ -468,8 +819,11 @@ async function runMission() {
         $("mStatus").textContent = ""; renderMission();
       }).catch(() => { if (mission === res) $("mStatus").textContent = ""; });
     }
-  } catch (e) { $("mStatus").textContent = e.message; }
-  $("runMission").disabled = false;
+  } catch (e) {
+    if (isCurrent()) $("mStatus").textContent = e.message;
+  } finally {
+    if (isCurrent()) $("runMission").disabled = false;
+  }
 }
 
 function selectRoute(i) { selected = i; renderMission(); drawMission(true); }
@@ -598,19 +952,25 @@ function drawMission(fly) {
 }
 
 async function showTracks(on) {
+  const id = ++trackRequest;
   trackLayer.entities.removeAll();
-  if (offlimitsLayer) { (tileset ? tileset.imageryLayers : viewer.imageryLayers).remove(offlimitsLayer, true); offlimitsLayer = null; }
+  if (offlimitsLayer) { imageLayers().remove(offlimitsLayer, true); offlimitsLayer = null; }
   $("trackInfo").textContent = "";
   if (on) {
     try {
-      const key = `${$("region").value}|${$("mVehicle").value}`;
-      if (!tracksData || tracksData.key !== key)
-        tracksData = { key, ...(await api(`/api/tracks?region=${$("region").value}&vehicle=${$("mVehicle").value}`)) };
-      for (const sg of tracksData.segments)
+      const region = $("region").value, vehicle = $("mVehicle").value;
+      const key = `${region}|${vehicle}`;
+      const data = tracksData?.key === key ? tracksData
+        : { key, ...(await api(`/api/tracks?${new URLSearchParams({ region, vehicle })}`)) };
+      if (id !== trackRequest) return;
+      const { west, south, east, north } = data.rect;
+      const provider = await Cesium.SingleTileImageryProvider.fromUrl(data.offlimits_image, {
+        ellipsoid: MARS, rectangle: Cesium.Rectangle.fromDegrees(west, south, east, north) });
+      if (id !== trackRequest) return;
+      tracksData = data;
+      for (const sg of data.segments)
         line(trackLayer, sg.coords.map(([lon, lat]) => ({ lon, lat })), TRACK[sg.class], 3);
-      const provider = await Cesium.SingleTileImageryProvider.fromUrl(tracksData.offlimits_image, {
-        rectangle: Cesium.Rectangle.fromDegrees(tracksData.rect.west, tracksData.rect.south, tracksData.rect.east, tracksData.rect.north) });
-      offlimitsLayer = (tileset ? tileset.imageryLayers : viewer.imageryLayers).addImageryProvider(provider);
+      offlimitsLayer = imageLayers().addImageryProvider(provider);
       const info = $("trackInfo"), key2 = el("div", { className: "legendkey" });
       for (const [col, txt] of [["#4cd964", "green: drove without warning signs"], ["#ffcc00", "yellow: high strain"], ["#ff3b30", "red: off-limits"]])
         key2.append(el("span", { style: `background:${col}` }), txt);
@@ -624,7 +984,7 @@ async function showTracks(on) {
           ? `${rt.green_pct}% of this route follows green rover-verified track (${rt.green_km} km, highlighted).`
           : "This route doesn't use rover-verified track; the green network shows other ways through." }));
       }
-    } catch (e) { $("trackInfo").textContent = e.message; }
+    } catch (e) { if (id === trackRequest) $("trackInfo").textContent = e.message; }
   }
   drawMission(false);
 }
@@ -638,13 +998,51 @@ $("mVehicle").addEventListener("change", () => { if ($("showTracks").checked) sh
 function flyTo(r) {
   viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
 }
+function showWholeMars() {
+  const canvas = viewer.scene.canvas;
+  const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+  const halfAngle = Math.atan(Math.tan(viewer.camera.frustum.fov / 2) * Math.min(aspect, 1 / aspect) * 0.91);
+  const distance = MARS.maximumRadius * (1 / Math.sin(halfAngle) - 1);
+  viewer.camera.setView({
+    destination: Cesium.Cartesian3.fromDegrees(15, 4, distance, MARS),
+    orientation: { heading: 0, pitch: -Math.PI / 2, roll: 0 },
+  });
+}
+function globalLayerSelected() {
+  return $("layer").selectedOptions[0]?.parentElement.id === "globalWeather";
+}
+let wasGlobal = globalLayerSelected();
+showWholeMars();
+$("wholeMars").onclick = () => {
+  $("layer").value = "global_temperature";
+  wasGlobal = true;
+  showWholeMars();
+  timeline?.setEnabled(true);
+  refreshLayer();
+};
+$("zoomRegion").onclick = () => { if (current) flyTo(current.rect); };
 ["hour", "ls", "budget"].forEach((id) => $(id).addEventListener("input", labels));
-["hour", "ls", "vehicle"].forEach((id) => $(id).addEventListener("change", refreshLayer));
-["hour", "ls", "vehicle", "budget", "region"].forEach((id) => $(id).addEventListener("change", invalidatePlan));
-$("vehicle").addEventListener("change", () => { applyVehicleLimits(); renderConsumables(); });
-$("layer").onchange = refreshLayer;
+["hour", "ls", "vehicle"].forEach((id) => $(id).addEventListener("change", () => {
+  if (id === "vehicle") applyVehicleLimits();
+  invalidatePlan();
+  if (id === "vehicle") renderConsumables();
+  timeline?.stop();
+  timeline?.sync();
+  refreshLayer();
+}));
+$("layer").onchange = () => {
+  const isGlobal = globalLayerSelected();
+  if (isGlobal && !wasGlobal) showWholeMars();
+  else if (!isGlobal && $("layer").value && current) flyTo(current.rect);
+  wasGlobal = isGlobal;
+  timeline?.setEnabled(isGlobal);
+  refreshLayer();
+};
+["budget", "region"].forEach((id) => $(id).addEventListener("change", invalidatePlan));
 $("region").onchange = () => {
   current = regions.find((r) => r.region === $("region").value);
+  findRequest++; missionRequest++;
+  $("mStatus").textContent = ""; $("runMission").disabled = false;
   clearMatches(); $("findInfo").textContent = "";
   mission = prevMission = null; tracksData = null; missionLayer.entities.removeAll(); $("mResult").innerHTML = "";
   if ($("showTracks").checked) showTracks(true);
@@ -656,11 +1054,27 @@ $("region").onchange = () => {
   mineralLayers.hidden = !mineralLayers.children.length;
   $("targets").innerHTML = '<option value="">…or pick a science target</option>' +
     current.targets.map((t, i) => `<option value="${i}">${t.name}</option>`).join("");
-  flyTo(current.rect);
+  if (!globalLayerSelected()) flyTo(current.rect);
   $("status").textContent = `${current.size[0]}×${current.size[1]} px · ~${current.pixel_m[1]} m/px · ` +
     `bands: ${current.bands.join(", ")}`;
+  refreshLayer();
 };
 labels();
+api("/api/weather/calendar").then(calendar => {
+  timeline = createWeatherTimeline({
+    calendar,
+    controls: { group: $("timeline"), start: $("startSol"), end: $("endSol"),
+      position: $("timelinePosition"), play: $("playTimeline"), message: $("timelineMessage"),
+      readout: $("timelineReadout"), note: $("timelineNote") },
+    readSeason: () => +$("ls").value,
+    showSol: ls => { $("ls").value = ls; labels(); invalidatePlan(); return refreshLayer(); },
+  });
+  timeline.setEnabled(globalLayerSelected());
+}).catch(error => {
+  $("timeline").hidden = false;
+  for (const id of ["startSol", "endSol", "timelinePosition", "playTimeline"]) $(id).disabled = true;
+  $("timelineMessage").textContent = "Timeline could not load. " + error.message;
+});
 (async () => {
   try {
     const opts = await api("/api/mission/options");
@@ -676,8 +1090,14 @@ labels();
     applyVehicleLimits();
     renderConsumables();
     if (regions.length) $("region").onchange();
-    else $("status").textContent = "No cubes yet. Run: python make_demo_cube.py";
-  } catch (e) { $("status").textContent = "Back end not reachable: " + e.message; }
+    else {
+      $("status").textContent = "Global view available. Load a region cube for route planning.";
+      refreshLayer();
+    }
+  } catch (e) {
+    $("status").textContent = "Regional layers could not load: " + e.message;
+    if (globalLayerSelected()) refreshLayer();
+  }
 })();
 </script>
 </body>

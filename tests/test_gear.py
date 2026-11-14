@@ -299,9 +299,13 @@ class ToolContract(unittest.TestCase):
         self.assertTrue(0 <= r["terrain"]["loose_fraction"] <= 1)
 
     def test_route_flows_into_the_kit(self):
-        m = tools.call_tool("recommend_gear", {"context": {"archetype": "traverse", "route_request": {
-            "region": "jezero", "vehicle": "astronaut", "base": BASE, "target": TARGET, "budget_hours": 8}}})
-        # exact distance depends on the cube's resolution, which changes whenever the data is rebuilt
+        request = {"region": "jezero", "vehicle": "astronaut", "base": BASE, "target": TARGET, "budget_hours": 8}
+        planned = tools.call_tool("get_route_context", request)
+        m = tools.call_tool("recommend_gear", {"context": {"archetype": "traverse", "route_request": request}})
+        self.assertTrue(planned["route_found"], planned)
+        # the kit sees exactly the route the planner made...
+        self.assertEqual(m["context"]["route"]["distance_km"], planned["route"]["distance_km"])
+        # ...and that route is plausible. Exact values depend on the cube's resolution, which changes on rebuild.
         self.assertGreater(m["context"]["route"]["distance_km"], 3)
         self.assertGreater(m["context"]["route"]["round_trip_h"], 2)
         ids = {r["id"] for r in m["triggered_rules"]}
