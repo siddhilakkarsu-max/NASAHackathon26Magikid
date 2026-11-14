@@ -1,0 +1,14 @@
+# personal Python environment (contains paths from your own computer, ~360 MB)
+.venv/
+__pycache__/
+*.pyc
+# Mac system files
+.DS_Store
+# big NASA downloads (re-download with the curl commands in README.md)
+data/
+# GeoTIFF copies of the cubes (the .npz files are what the app uses)
+cubes/*.tif
+cubes/tilecache/
+# the analysis cubes are 75-82 MB each (GitHub warns above 50 MB); teammates rebuild them with build_cube.py
+cubes/*.npz
+github_upload/

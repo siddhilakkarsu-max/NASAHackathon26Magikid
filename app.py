@@ -16,7 +16,7 @@ from pathlib import Path
 import numpy as np
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from matplotlib import colormaps
 from matplotlib.colors import LinearSegmentedColormap, to_hex
@@ -672,15 +672,24 @@ def mission_options():
 @app.post("/api/mission")
 def plan_mission(req: MissionRequest):
     """Goal + vehicle + season + priority -> 3 candidate missions, the decision matrix and the winner."""
-    for name, value, allowed in (("vehicle", req.vehicle, MISSION_VEHICLES), ("season", req.season, SEASONS),
-                                 ("priority", req.priority, PRIORITIES)):
-        if value not in allowed:
-            raise HTTPException(400, f"{name} must be one of {list(allowed)}")
-    c = get_cube(req.region)
+    c = _mission_cube(req)
     try:
         res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    return _finish_mission(res)
+
+
+def _mission_cube(req):
+    for name, value, allowed in (("vehicle", req.vehicle, MISSION_VEHICLES), ("season", req.season, SEASONS),
+                                 ("priority", req.priority, PRIORITIES)):
+        if value not in allowed:
+            raise HTTPException(400, f"{name} must be one of {list(allowed)}")
+    return get_cube(req.region)
+
+
+def _finish_mission(res):
+    """Give the plan an id (for the explanation) and turn its maps into PNG overlays."""
     score, red = res.pop("_score"), res.pop("_red")
     res["id"] = uuid.uuid4().hex[:12]
     _missions[res["id"]] = mission.explain_facts(res)
@@ -689,6 +698,53 @@ def plan_mission(req: MissionRequest):
     res["science_image"] = to_png(np.where(score >= 0.15, score, np.nan), "plasma", 0.15, 1, alpha=0.55)
     res["offlimits_image"] = to_png(np.where(red, 0.8, np.nan), "Reds", 0, 1, alpha=0.45)
     return res
+
+
+@app.post("/api/mission/stream")
+def plan_mission_stream(req: MissionRequest):
+    """The same plan as /api/mission, as a stream of server-sent events, with the AI model's thinking live:
+    {"type": "status"|"ai"|"result"|"explanation"|"note"|"error"|"done", ...}
+    "ai" events carry phase ("goal" = reading the goal, "explain" = explaining the choice), kind ("reasoning" =
+    the model's thinking, "content" = its answer) and a piece of text."""
+    c = _mission_cube(req)
+
+    def event(**data):
+        return f"data: {json.dumps(data, default=lambda o: o.item() if hasattr(o, 'item') else str(o))}\n\n"
+
+    def events():
+        spec, parser, notes = search.keyword_parse(req.goal), "keywords", []
+        if spec["unknown"] or not spec["criteria"]:
+            yield event(type="status", text="The AI model is reading the goal…")
+            for kind, *rest in search.ai_parse_stream(req.goal):
+                if kind in ("reasoning", "content"):
+                    yield event(type="ai", phase="goal", kind=kind, text=rest[0])
+                elif kind == "spec" and rest[0]["criteria"]:
+                    spec, parser = rest[0], "ai"
+                elif kind == "error":
+                    notes.append(rest[0])
+        yield event(type="status", text="Scoring every pixel, finding landing spots, routing 3 candidates…")
+        try:
+            res = _finish_mission(mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
+                                               goal_spec=(spec, parser, notes)))
+        except ValueError as e:
+            yield event(type="error", text=str(e))
+            return
+        yield event(type="result", mission=res)
+        if res["candidates"]:
+            yield event(type="status", text="The AI model is explaining the choice…")
+            text = None
+            for kind, *rest in mission.explain_stream(_missions[res["id"]]):
+                if kind in ("reasoning", "content"):
+                    yield event(type="ai", phase="explain", kind=kind, text=rest[0])
+                elif kind == "done":
+                    text = rest[0].strip() or None
+                elif kind == "error":
+                    yield event(type="note", text=rest[0])
+            yield event(type="explanation", text=text or res["explanation"], source="ai" if text else "template")
+        yield event(type="done")
+
+    return StreamingResponse(events(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/mission/{mid}/explain")
