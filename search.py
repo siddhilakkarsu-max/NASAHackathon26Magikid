@@ -12,8 +12,9 @@ know and OPENROUTER_API_KEY is set, a free AI model on OpenRouter translates the
 criteria; otherwise the unknown words are reported back.
 
 To teach the search a new word, add it to a feature's "words" in FEATURES.
-Minerals (clay, carbonate, ...) use a cube band of that name if it exists (e.g. a CRISM map),
-else the approximate zones in config.SEARCH_ZONES.
+Minerals (clay, carbonate, olivine, ...) come from CRISM bands in the cube (see config.MINERALS for
+the parameters and detection thresholds); where a region has no such band, the approximate zones in
+config.SEARCH_ZONES are used instead.
 """
 import json
 import math
@@ -27,7 +28,7 @@ import urllib.request
 import numpy as np
 from scipy.ndimage import distance_transform_edt, uniform_filter
 
-from config import MARS_RADIUS_M
+from config import MARS_RADIUS_M, MINERALS
 
 DEG_M = math.pi / 180 * MARS_RADIUS_M      # meters per degree of latitude
 
@@ -139,18 +140,28 @@ def f_rough(ctx):
     return ramp(rough, lo, hi), lambda r, c: f"roughness {rough[r, c]:.1f} m"
 
 
-def _firm_text(f):
-    return lambda r, c: f"firmness {f[r, c]:.2f} (THEMIS night-IR proxy)"
+def ti_class(ti):
+    """THEMIS thermal inertia (J m^-2 K^-1 s^-1/2) -> likely surface material."""
+    return ("fine dust" if ti < 150 else "sand" if ti < 300 else "coarse sand / crusted / mixed rock" if ti < 600
+            else "bedrock / rock-rich")
+
+
+def ground_text(cube, r, c):
+    ti = cube.bands.get("thermal_inertia")
+    if ti is not None and np.isfinite(ti[r, c]):
+        return f"thermal inertia {ti[r, c]:.0f} ({ti_class(ti[r, c])}), firmness {cube.bands['firmness'][r, c]:.2f}"
+    return f"firmness {cube.bands['firmness'][r, c]:.2f} (THEMIS night-IR proxy)"
+
 
 
 def f_firm(ctx):
     f = ctx.band("firmness")
-    return ramp(f, 0.45, 0.85), _firm_text(f)
+    return ramp(f, 0.45, 0.85), lambda r, c: ground_text(ctx.cube, r, c)
 
 
 def f_sand(ctx):
     f = ctx.band("firmness")
-    return 1 - ramp(f, 0.15, 0.5), _firm_text(f)
+    return 1 - ramp(f, 0.15, 0.5), lambda r, c: ground_text(ctx.cube, r, c)
 
 
 def f_sunny(ctx):
@@ -220,11 +231,52 @@ def f_near_base(ctx):
     return m, lambda r, c: f"{t[r, c] / 60:.0f} min from base"
 
 
+def mineral_strength(name, value):
+    """Words for a CRISM band depth: below detection / weak / clear / strong."""
+    m = MINERALS[name]
+    if not np.isfinite(value):
+        return "no CRISM data here"
+    if value < m["detect"]:
+        return f"{'/'.join(m['params'])} {value:.3f}, below detection"
+    word = "weak" if value < (m["detect"] + m["strong"]) / 2 else "clear" if value < m["strong"] else "strong"
+    return f"{word} ({'/'.join(m['params'])} {value:.3f})"
+
+
+def _mineral_band(ctx, name):
+    """0..1 per pixel from a CRISM band: 0 below the detection limit, 1 at a strong signature."""
+    m, arr = MINERALS[name], ctx.cube.bands[name]
+    detected = int((np.nan_to_num(arr, nan=-1e9) >= m["detect"]).sum())
+    if detected < 10:
+        raise Unavailable(f"CRISM shows no {m['label']} in this region ({detected} isolated pixels above the "
+                          "detection limit)")
+    covered = float(np.isfinite(arr).mean())
+    if covered < 0.95:
+        ctx.notes.append(f"{name}: CRISM covers {covered:.0%} of this region; places without data can't match.")
+    return np.nan_to_num(ramp(arr, m["detect"], m["strong"]), nan=0.0), \
+        lambda r, c: mineral_strength(name, arr[r, c])
+
+
+def f_any_mineral(ctx):
+    names = [n for n in MINERALS if n in ctx.cube.bands and n != "hydrated"]
+    if not names:
+        raise Unavailable("the cube has no CRISM mineral bands")
+    scores = np.stack([np.nan_to_num(ramp(ctx.cube.bands[n], MINERALS[n]["detect"], MINERALS[n]["strong"]))
+                       for n in names])
+    best = np.argmax(scores, axis=0)
+
+    def explain(r, c):
+        n = names[best[r, c]]
+        return f"{MINERALS[n]['label']}: {mineral_strength(n, ctx.cube.bands[n][r, c])}"
+    return scores.max(axis=0), explain
+
+
 def material(tag, band_names):
-    """A mineral/place: a cube band if one exists (higher = more), else hint zones from config."""
+    """A mineral/place: a cube band if one exists, else hint zones from config."""
     def fn(ctx):
         for b in band_names:
             if b in ctx.cube.bands:
+                if b in MINERALS:
+                    return _mineral_band(ctx, b)
                 arr = ctx.cube.bands[b]
                 lo, hi = pct(arr, [50, 98])
                 return ramp(arr, lo, hi), lambda r, c: f"{b} band = {arr[r, c]:.3g}"
@@ -298,24 +350,19 @@ FEATURES = {
     "near_base": dict(label="close to base", help="short travel time from the base", fn=f_near_base, words=[
         "base", "home", "habitat", "hab", "lander", "camp", "nearby", "close", "close by", "short walk",
         "short drive", "quick", "reachable", "within reach", "walking distance"]),
-    "clay": dict(label="clay minerals", help="clay, phyllosilicate, smectite, hydrated minerals (CRISM band or hint zone)",
-                 fn=material("clay", ["clay", "clays", "smectite", "phyllosilicate", "d2300"]), words=[
-        "clay", "clays", "smectite", "phyllosilicate", "nontronite", "saponite", "clay minerals", "mud",
-        "mudstone", "clay rich"]),
-    "carbonate": dict(label="carbonates", help="carbonate minerals (band or hint zone)",
-                      fn=material("carbonate", ["carbonate", "carbonates"]), words=[
-        "carbonate", "magnesite", "siderite", "calcite"]),
-    "olivine": dict(label="olivine", help="olivine-rich rock (band or hint zone)",
-                    fn=material("olivine", ["olivine"]), words=["olivine", "ultramafic"]),
-    "sulfate": dict(label="sulfates", help="sulfate minerals (band or hint zone)",
-                    fn=material("sulfate", ["sulfate", "sulfates"]), words=[
-        "sulfate", "sulphate", "gypsum", "jarosite"]),
-    "ice": dict(label="water ice / hydrogen", help="subsurface water-equivalent hydrogen (band or hint zone)",
+    # one feature per mineral in config.MINERALS is added below
+    "any_mineral": dict(label="any mineral detection", help="the strongest CRISM mineral signature of any kind",
+                        fn=f_any_mineral, words=["mineral", "minerals", "mineralogy", "spectral", "interesting rocks"]),
+    "ice": dict(label="water ice / hydrogen", help="subsurface ice or water-equivalent hydrogen (band or hint zone)",
                 fn=material("ice", ["ice", "hydrogen", "weh"]), words=[
-        "ice", "water", "frost", "hydrogen", "h2o", "water ice", "ground ice"]),
+        "ice", "frost", "hydrogen", "water ice", "ground ice", "glacier"]),
     "delta": dict(label="delta / fan deposit", help="river delta or alluvial fan (hint zone)",
                   fn=material("delta", ["delta"]), words=["delta", "fan", "alluvial fan", "fan delta", "deltaic"]),
 }
+
+for _name, _m in MINERALS.items():
+    FEATURES[_name] = dict(label=_m["label"], help=f"{_m['label']} from CRISM {'/'.join(_m['params'])} (or hint zone)",
+                           fn=material(_name, [_name]), words=_m["words"])
 
 # "the flattest spot" = flat, counted double
 SUPERLATIVES = {
@@ -334,7 +381,7 @@ STOP = set("""a an the with and or of to on in at for into onto from find me sho
 look looking some somewhere something spot spots place places area areas region site location point target
 terrain ground surface zone that has have having is are there where which good nice please one any it its can
 could we us our my let lets s lot bit rich bearing containing contain contains full exposed exposure deposit
-deposits mineral minerals material materials kind type sort little quite fairly too like would should
+deposits material materials kind interesting type sort little quite fairly too like would should
 destination go goes going walk drive travel route facing""".split())
 
 PHRASES = {}
@@ -417,6 +464,7 @@ def describe(cr):
 # keyword parser doesn't know, and each answer is cached.
 # OPENROUTER_MODELS="a:free,b:free" overrides the automatic choice of models (tried in order).
 OPENROUTER_URL = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
+SERVER = "OpenRouter" if "openrouter.ai" in OPENROUTER_URL else "the AI server at " + OPENROUTER_URL.split("/")[2]
 FREE_ROUTER = "openrouter/free"        # OpenRouter's router over its free models: the last fallback
 MAX_MODELS = 4
 _models_cache = {"at": 0.0, "ids": None}
@@ -548,13 +596,13 @@ def ai_parse(query):
         if e.code == 429:
             return None, (f"Free AI model limit reached (20/min, 50/day; 1000/day after buying $10 of "
                           f"OpenRouter credits), {fail}.")
-        return None, f"OpenRouter returned error {e.code}, {fail}."
+        return None, f"{SERVER} returned error {e.code}, {fail}."
     except (OSError, ValueError) as e:                  # URLError, timeout, bad JSON
         if isinstance(e, TimeoutError) or isinstance(getattr(e, "reason", None), TimeoutError):
             return None, f"The AI model took longer than 40 s, {fail}."
-        return None, f"Could not reach OpenRouter, {fail}."
+        return None, f"Could not reach {SERVER}, {fail}."
     if resp.get("error"):
-        return None, f"OpenRouter error: {resp['error'].get('message', 'unknown')}, {fail}."
+        return None, f"{SERVER} error: {resp['error'].get('message', 'unknown')}, {fail}."
     message = ((resp.get("choices") or [{}])[0].get("message") or {})
     try:
         data = _json_object(message.get("content") or "")
@@ -567,6 +615,22 @@ def ai_parse(query):
     spec = dict(criteria=_dedupe(criteria), unknown=unknown, model=resp.get("model") or models[0])
     _llm_cache[key] = spec
     return spec, None
+
+
+def ai_write(system, user, max_tokens=600):
+    """Free text from the same AI model as ai_parse (OpenRouter or a local server); None if unavailable."""
+    api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
+    if not api_key:
+        return None
+    models = free_models()
+    body = {"model": models[0], "models": models, "max_tokens": max_tokens, "reasoning": {"effort": "none"},
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    try:
+        resp = _http_json(f"{OPENROUTER_URL}/chat/completions", body, {"Authorization": f"Bearer {api_key}"}, timeout=40)
+    except (OSError, ValueError):
+        return None
+    text = (((resp.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
+    return text or None
 
 
 # -------------------------------------------------------------- search ----
@@ -619,7 +683,11 @@ def pick_peaks(score, allowed, pixel_m, count, bias=None, sep_m=2000):
         r, c = np.unravel_index(int(np.argmax(rank)), rank.shape)
         if rank[r, c] < 0.05:
             break
-        out.append((int(r), int(c), float(s[r, c])))
+        h = k // 2                                     # the best actual pixel inside the smoothing window
+        win = np.where(allowed[max(0, r - h):r + h + 1, max(0, c - h):c + h + 1],
+                       score[max(0, r - h):r + h + 1, max(0, c - h):c + h + 1], -1.0)
+        dr, dc = np.unravel_index(int(np.argmax(win)), win.shape)
+        out.append((int(max(0, r - h) + dr), int(max(0, c - h) + dc), float(s[r, c])))
         rank[max(0, r - sr):r + sr + 1, max(0, c - sc):c + sc + 1] = -1.0
     return out
 
@@ -665,7 +733,7 @@ def find(ctx, query, count=5, use_llm=True, focus=None):
         if not used & {"flat", "steep"}:
             why.append(f"slope {c.bands['slope'][r, col]:.1f}°")
         if "firmness" in c.bands and not used & {"firm", "sand"}:
-            why.append(_firm_text(c.bands["firmness"])(r, col))
+            why.append(ground_text(c, r, col))
         ok = None
         if ctx.t_base is not None:
             ok = bool(within[r, col])
