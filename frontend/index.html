@@ -13,6 +13,8 @@
 <script src="/mars_lighting.js"></script>
 <script src="/route_playback.js"></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap" rel="stylesheet" />
 <style>
   /* Designers: restyle freely. Everything visual lives in this file. */
   :root { --bg: rgba(18, 12, 10, 0.88); --fg: #f3e7dd; --accent: #e0703a; --muted: #b9a79a; }
@@ -66,6 +68,11 @@
   #routePlayback button { margin: 0 0 4px; min-height: 32px; }
   #routePlayback button:disabled { opacity: .65; cursor: default; }
   .small { color: var(--muted); font-size: 11px; }
+  #routeHover { position: absolute; z-index: 6; pointer-events: none; max-width: 300px; padding: 7px 9px;
+                background: #131520f0; color: #fff; font-size: 12px; line-height: 1.45;
+                border: 1px solid #e0703a99; border-radius: 5px; }
+  #routeHover .title { font-weight: 600; color: #ffb27f; }
+  #routeHover .warn { color: #ff9a85; }
   @media (max-width: 600px) {
     body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 55% minmax(0, 1fr); }
     #map { grid-area: 1 / 1; }
@@ -85,6 +92,9 @@
              background: linear-gradient(90deg, #8f4526, var(--accent)); transition: width .3s ease; }
   .crow.over .nm, .crow.over .val { color: #ff8f78; }
   .crow.over .bar > i { background: linear-gradient(90deg, #b03a2e, #ff6b52); }
+  .cons .bar { position: relative; }
+  .cons .bar > .tick { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--fg); opacity: .75; }
+  .cons .crow .cons-spec { margin-top: 3px; }
   .cons-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px;
                margin-top: 10px; color: var(--muted); font-size: 11px; }
   .chip { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #4a3a33;
@@ -116,10 +126,100 @@
   pre.thinking.answer { color: var(--fg); }
   .live::after { content: " ▍"; animation: blink 1s steps(2) infinite; color: var(--accent); }
   @keyframes blink { 50% { opacity: 0; } }
+  #murrayLayers label.check { margin: 3px 0; }
+  #murrayLayers .murrayHead { margin: 10px 0 2px; text-transform: uppercase; letter-spacing: .08em; }
+  #murrayLayers input[type="radio"] { accent-color: var(--accent); width: 14px; height: 14px; margin: 0 8px 0 0; } #panel a { color: var(--accent); }
+  #infoLinks a { display: block; }
   .legendkey span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 8px; }
+
+  /* ===== Design (Figma "mars - home page"): landing page + panel restyle. Overrides the styles above. ===== */
+  :root { --bg: #1c1d22; --fg: #ebebeb; --accent: #f7943a; --muted: #8e9097; --line: #8e909766;
+          --page: #131318; --navy: #111820; }
+  html, body { font-family: Inter, system-ui, sans-serif; background: var(--page); }
+  #panel { background: var(--bg); margin: 12px; padding: 18px 16px; border-radius: 14px;
+           font-size: 12px; letter-spacing: .02em; }
+  h1 { font-size: 12px; font-weight: 500; color: var(--fg); text-transform: uppercase; letter-spacing: .12em;
+       margin: 6px 0 8px; }
+  #status { padding-bottom: 12px; margin-bottom: 6px; border-bottom: 1px solid #d9d9d9; line-height: 1.35; }
+  h2 { font-size: 12px; font-weight: 500; color: var(--fg); letter-spacing: .1em; margin: 18px 0 6px; }
+  label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .1em; color: var(--fg);
+          margin: 10px 0 4px; }
+  label.check { text-transform: none; letter-spacing: .03em; font-size: 11px; }
+  .small { color: var(--muted); font-size: 10.5px; }
+  select, input[type=text], input[type=number] {
+    box-sizing: border-box; width: 100%; padding: 7px 34px 7px 12px; margin-top: 4px; font: inherit; font-size: 11.5px;
+    letter-spacing: .04em; color: var(--fg); background-color: transparent; border: 1px solid var(--line);
+    border-radius: 999px; appearance: none; -webkit-appearance: none; }
+  input[type=text], input[type=number] { padding-right: 12px; }
+  select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='10' viewBox='0 0 12 10'%3E%3Cpath d='M1 1l5 8 5-8' fill='none' stroke='%23ebebeb' stroke-width='1.6'/%3E%3C/svg%3E");
+           background-repeat: no-repeat; background-position: right 13px center; cursor: pointer; }
+  select option, select optgroup { background: var(--bg); color: var(--fg); }
+  select:focus, input[type=text]:focus, input[type=number]:focus { outline: none; border-color: var(--accent); }
+  button { margin-top: 10px; padding: 9px 12px; border-radius: 7px; background: var(--accent); color: #fff;
+           font: inherit; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .12em; }
+  button:hover { filter: brightness(1.07); }
+  button:disabled { opacity: .55; cursor: wait; }
+  button.secondary { background: transparent; border: 1px solid var(--line); border-radius: 999px; color: var(--fg); }
+  button.secondary:hover { border-color: var(--fg); }
+  button.active { outline: 1px solid var(--accent); }
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; margin: 6px 0 2px; }
+  input[type=range]::-webkit-slider-runnable-track { height: 3px; background: #f2f2f2; border-radius: 2px; }
+  input[type=range]::-moz-range-track { height: 3px; background: #f2f2f2; border-radius: 2px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; margin-top: -6px;
+                                            border-radius: 50%; background: var(--accent); border: 0; }
+  input[type=range]::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: var(--accent); border: 0; }
+  input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; flex: 0 0 15px;
+                         border: 1.5px solid var(--accent); border-radius: 3px; background: transparent; cursor: pointer;
+                         display: inline-grid; place-content: center; }
+  input[type=checkbox]:checked { background: var(--accent); }
+  input[type=checkbox]:checked::after { content: ""; width: 8px; height: 4px; border: 2px solid #fff; border-top: 0;
+                                        border-right: 0; transform: translateY(-1px) rotate(-45deg); }
+  details > summary { font-size: 11px; font-weight: 500; color: var(--fg); letter-spacing: .1em; }
+  .card { border-color: #ffffff22; border-radius: 10px; } .card.sel { border-color: var(--accent); }
+  table.matrix th, table.matrix td { border-bottom-color: #ffffff1a; }
+  #mResult h3 { color: var(--accent); font-weight: 500; letter-spacing: .06em; }
+  .chip { background: #ffffff1a; }
+  #routeHover, #weatherHover { font-family: Inter, system-ui, sans-serif; border-radius: 8px; }
+
+  /* landing page */
+  #landing { position: fixed; inset: 0; z-index: 1000; background: var(--navy); display: grid; place-items: center;
+             transition: opacity .6s ease, visibility .6s; font-family: Inter, system-ui, sans-serif; }
+  #landing.gone { opacity: 0; visibility: hidden; }
+  #landing .globe { position: relative; width: min(72vmin, 620px); aspect-ratio: 1; }
+  #landing img { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0 60px #f7943a22); }
+  #landing .hero { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+                   justify-content: center; color: #fff; text-align: center; }
+  #landing .title { font-size: clamp(44px, 11vmin, 92px); font-weight: 200; letter-spacing: .14em; line-height: 1;
+                    margin-left: .14em; text-shadow: 0 2px 18px #0007; }
+  #landing .sub { margin: 14px 0 26px; font-size: clamp(11px, 1.7vmin, 15px); letter-spacing: .12em;
+                  text-shadow: 0 1px 8px #000a; }
+  #landing button { width: auto; margin: 0; padding: 10px 26px; background: #fff; color: #111; border-radius: 999px;
+                    font-size: clamp(10px, 1.5vmin, 13px); font-weight: 500; letter-spacing: .12em; }
+  #landing button:hover { background: #ffe9d6; }
+  /* Advanced (technical) details: hidden until the A key is pressed */
+  body:not(.adv-on) .adv, body:not(.adv-on) .adv-only { display: none !important; }
+  .adv { color: var(--muted); }
+  span.adv::before { content: " · "; }
+  #advHint { margin-top: 18px; opacity: .7; }
+  #advToast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 50; background: var(--accent);
+              color: #1c1d22; font-weight: 600; padding: 8px 16px; border-radius: 999px; font-size: 12px;
+              transition: opacity .3s; pointer-events: none; }
+  #advToast.hide { opacity: 0; }
+  #areaStatus:empty { display: none; } #areaStatus { margin: -4px 0 12px; }
+  #landing button:focus { outline: none; } #landing button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 </style>
 </head>
 <body>
+<div id="landing" role="dialog" aria-label="Mars">
+  <div class="globe">
+    <img src="mars-disk.webp" alt="Mars, seen from space (NASA Viking colour mosaic)" />
+    <div class="hero">
+      <div class="title">MARS</div>
+      <div class="sub">Explore Plan Navigate</div>
+      <button id="startExploring" type="button">Start exploring</button>
+    </div>
+  </div>
+</div>
 <div id="map">
   <div id="marsSun" aria-hidden="true" hidden></div>
   <div id="weatherHover" aria-hidden="true" hidden></div>
@@ -127,12 +227,15 @@
     <button id="playRoute" type="button">Play route</button>
     <div class="small" id="routePlaybackStatus" role="status"></div>
   </div>
+  <div id="routeHover" aria-hidden="true" hidden></div>
 </div>
+<div id="advToast" class="hide" aria-live="polite"></div>
 <div id="panel">
-  <h1>Marswalk Planner</h1>
-  <div class="small" id="status">Connecting to back end…</div>
+  <h1>Mars Walk Planner</h1>
+  <div class="small adv" id="status">Connecting to back end…</div>
 
   <label>Region <select id="region"></select></label>
+  <div class="small" id="areaStatus"></div>
 
   <h2>Mission</h2>
   <label for="goal">Goal</label>
@@ -141,7 +244,8 @@
     <label>Vehicle <select id="mVehicle"></select></label>
     <label>Priority <select id="mPriority"></select></label>
   </div>
-  <label>Season <select id="mSeason"></select></label>
+  <label for="ls">Season: <b id="lsVal"></b></label>
+  <input type="range" id="ls" min="0" max="360" step="0.1" value="90" />
   <label class="check"><input type="checkbox" id="greenOnly" /> Stick to green rover-verified tracks</label>
   <button id="runMission">Plan mission</button>
   <div id="mStatus" class="small"></div>
@@ -156,21 +260,20 @@
   </div>
   <label>Local solar time: <b id="hourVal"></b></label>
   <input type="range" id="hour" min="0" max="24" step="0.25" value="11" />
-  <label>Season (Ls): <b id="lsVal"></b></label>
-  <input type="range" id="ls" min="0" max="360" step="0.1" value="90" />
   <label class="check"><input type="checkbox" id="globeLighting" checked aria-describedby="lightingNote" /> Sunlight and atmosphere</label>
   <div class="small" id="lightingNote">Move your mouse over the night side to reveal the map. Globe lighting follows the selected region’s solar time.</div>
   <select id="layer">
     <option value="">(none)</option>
+    <option value="suitability">★ Mission suitability (safety + science + shielding)</option>
     <option value="imagery">CTX image (6 m, sharp)</option>
     <option value="slope">Slope</option>
-    <option value="firmness">Ground firmness (THEMIS night)</option>
+    <option value="firmness">Ground firmness (thermal inertia + night IR)</option>
     <option value="thermal_inertia">Thermal inertia (THEMIS)</option>
     <option value="cost">Travel cost</option>
     <option value="illumination">Sunlight on slopes</option>
     <option value="temperature">Regional simulated surface temperature</option>
     <optgroup id="globalWeather" label="Global weather">
-      <option value="global_temperature" selected>Global simulated surface temperature</option>
+      <option value="global_temperature">Global simulated surface temperature</option>
       <option value="openmars_surface_temperature">OpenMARS ground temperature reference</option>
       <option value="air_temperature">Near-surface air temperature</option>
       <option value="surface_pressure">Surface pressure</option>
@@ -179,7 +282,11 @@
       <option value="dust_opacity">Atmospheric dust optical depth</option>
     </optgroup>
     <option value="shelter">Minutes to shelter</option>
-    <option value="elevation">Elevation</option>
+    <option value="elevation">Elevation (topography)</option>
+    <option value="science">Science targets (CRISM minerals)</option>
+    <option value="minerals">CRISM dominant mineral (class map)</option>
+    <option value="air_column_vs_gale">Radiation shielding (air column)</option>
+    <option value="albedo">Albedo (brightness)</option>
     <optgroup id="mineralLayers" label="Minerals (CRISM)"></optgroup>
   </select>
   <div id="legend" hidden></div><div class="small" id="legendText"></div>
@@ -188,6 +295,19 @@
   <input id="mapOpacity" type="range" min="0" max="100" value="100" step="5" disabled>
   <div class="small" id="layerStatus" role="status"></div>
   <button id="retryLayer" class="secondary" type="button" hidden>Retry layer</button>
+
+  <h2>Sharp imagery (5 m)</h2>
+  <div class="row">
+    <button id="boxBtn" class="secondary" type="button">Box a sharp area</button>
+    <button id="clearBox" class="secondary" type="button">Clear</button>
+  </div>
+  <button id="prefetchBtn" class="secondary" type="button">Pre-load box (for demos)</button>
+  <div class="small" id="boxInfo">Click "Box a sharp area", then click two corners on the map.</div>
+
+  <h2>Murray Lab maps</h2>
+  <div id="murrayLayers"></div>
+  <div class="small" id="murrayInfo">All maps from the
+    <a href="https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html" target="_blank" rel="noopener">Murray Lab CTX viewer</a>.</div>
   <button id="pauseWind" class="secondary" type="button" hidden>Pause wind motion</button>
   <section id="timeline" hidden aria-label="Weather timeline">
     <h2>Weather timeline</h2>
@@ -197,8 +317,9 @@
       <label>End sol <input id="endSol" type="number" step="1" required></label>
     </div>
     <button id="playTimeline" class="secondary" type="button">Play timeline</button>
-    <label id="timelineReadout" for="timelinePosition">Timeline position</label>
-    <input id="timelinePosition" type="range" step="1">
+    <!-- the season slider in the Mission section is the only one; weather_timeline.js still drives these -->
+    <label id="timelineReadout" for="timelinePosition" style="display:none">Timeline position</label>
+    <input id="timelinePosition" type="range" step="1" style="display:none">
     <div class="small" id="timelineMessage" role="status"></div>
   </section>
   <p class="small"><a href="/api/weather/sources" target="_blank" rel="noopener">Weather data and source inventory</a></p>
@@ -233,7 +354,9 @@
   </details>
 
   <h2>Clicked point</h2>
-  <div id="info" class="small">Click the map to see every value stored in that pixel.</div>
+  <div id="info" class="small">Click the map to see what's there.</div>
+  <div id="infoLinks" class="small"></div>
+  <div id="advHint" class="small">Press A for technical details.</div>
 </div>
 
 <script>
@@ -281,6 +404,61 @@ const routePlayback = createRoutePlayback({ viewer, ellipsoid: MARS, controls: {
 } });
 $("globeLighting").onchange = () => globeLighting.setEnabled($("globeLighting").checked);
 globeLighting.setEnabled($("globeLighting").checked);
+
+// Sharp 5 m CTX imagery (Murray Lab, Caltech), coloured by our back end, loaded ONLY inside a chosen box
+// (keeps the globe fast). Selecting a Jezero region boxes it automatically.
+let ctxLayer = null, boxEntity = null, sharpBox = null;
+function setSharpBox(r) {                       // r = {west, south, east, north} in degrees, or null
+  if (ctxLayer) { viewer.imageryLayers.remove(ctxLayer, true); ctxLayer = null; }
+  if (boxEntity) { viewer.entities.remove(boxEntity); boxEntity = null; }
+  sharpBox = r;
+  if (!r) { viewer.scene.requestRender(); return; }
+  const rect = Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north);
+  // The Murray Lab "Detailed photos (black and white)" map (CTX mosaic, 5 m, straight from Esri's OnMars tiles),
+  // clipped to the box.
+  const ctxDef = murray.defs.find((d) => d.id === "ctx");
+  ctxLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+    url: ctxDef ? ctxDef.url : "https://astro.arcgis.com/arcgis/rest/services/OnMars/CTX1/MapServer/tile/{z}/{y}/{x}",
+    tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
+    tileWidth: 512, tileHeight: 512, maximumLevel: ctxDef ? ctxDef.max_level : 17, rectangle: rect,
+    credit: ctxDef ? ctxDef.credit : "Imagery: NASA, JPL, MSSS, Caltech/Murray Lab, Esri",
+  }));                                              // above every background map...
+  for (const l of overlay) if (viewer.imageryLayers.contains(l)) viewer.imageryLayers.raiseToTop(l);   // ...below data
+  boxEntity = viewer.entities.add({ rectangle: { coordinates: rect, fill: false, outline: true,
+    outlineColor: Cesium.Color.ORANGE.withAlpha(0.8), height: 0 } });
+  fadePhoto();
+  viewer.scene.requestRender();
+}
+const USE_GLOBAL_CTX = true;   // false = only the regional Jezero photo
+
+// ------------------------------------------------- hi-res photo base ----
+let photoLayer = null;
+async function loadHiresPhoto(region) {
+  const coll = tileset ? tileset.imageryLayers : viewer.imageryLayers;
+  if (photoLayer) { coll.remove(photoLayer, true); photoLayer = null; }
+  try {
+    const m = await api(`/api/imagery/${region}`);
+    if (!m.available) return;
+    const provider = await Cesium.SingleTileImageryProvider.fromUrl(API + m.url, {
+      rectangle: Cesium.Rectangle.fromDegrees(m.west, m.south, m.east, m.north) });
+    photoLayer = new Cesium.ImageryLayer(provider);
+    coll.add(photoLayer, 1);                      // just above the global Viking map, below data layers
+    fadePhoto();
+    $("status").textContent += `  ·  photo: ${m.meters_per_px} m/px (${m.source})`;
+  } catch (e) { console.warn("hi-res photo", e); }
+}
+
+// Photo fades in as you zoom toward the surface (invisible from far away)
+const PHOTO_FULL_KM = 120, PHOTO_HIDDEN_KM = 600;
+function fadePhoto() {
+  const km = viewer.camera.positionCartographic.height / 1000;
+  const t = Math.max(0, Math.min(1, (PHOTO_HIDDEN_KM - km) / (PHOTO_HIDDEN_KM - PHOTO_FULL_KM)));
+  if (photoLayer) photoLayer.alpha = t;
+  if (ctxLayer && ctxLayer.alpha !== t) { ctxLayer.alpha = t; viewer.scene.requestRender(); }
+}
+viewer.camera.percentageChanged = 0.05;
+viewer.camera.changed.addEventListener(fadePhoto);
+viewer.camera.moveEnd.addEventListener(fadePhoto);
 
 let tileset = null;
 (async () => {
@@ -337,13 +515,24 @@ let replanHint = "";
 let planRequest = 0, planBusy = false;
 
 function conditions() {
-  return { region: $("region").value || "jezero", vehicle: $("vehicle").value || "astronaut", local_hour: +$("hour").value,
+  return { region: regionId(), vehicle: $("vehicle").value || "astronaut", local_hour: +$("hour").value,
            ls: +$("ls").value, budget_hours: +$("budget").value };
+}
+let seasonCalendar = null;                        // {sols, ls}: one Mars year, sol by sol (from /api/weather/calendar)
+function solForLs(ls) {
+  if (!seasonCalendar) return null;
+  let best = 0;
+  seasonCalendar.ls.forEach((v, i) => { if (Math.abs(v - ls) < Math.abs(seasonCalendar.ls[best] - ls)) best = i; });
+  return seasonCalendar.sols[best];
 }
 function labels() {
   const h = +$("hour").value;
   $("hourVal").textContent = `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, "0")}`;
-  $("lsVal").textContent = `${+$("ls").value}°`;
+  const ls = +$("ls").value;                        // plain season name; the exact solar longitude in advanced mode
+  $("lsVal").replaceChildren(document.createTextNode(
+    ["northern spring", "northern summer", "northern autumn", "northern winter"][Math.min(3, Math.floor(ls / 90))] +
+    (ls >= 180 && ls < 330 ? " (dust-storm season)" : "") + (solForLs(ls) != null ? ` · sol ${solForLs(ls)}` : "")),
+    el("span", { className: "adv", textContent: `Ls ${ls}°` }));
   $("budgetVal").textContent = $("budget").value;
   syncGlobeLighting();
 }
@@ -486,6 +675,7 @@ $("pauseWind").onclick = () => {
 // --------------------------------------------------------------- picking ----
 function pickLatLon(pos) {
   const cart = (tileset && viewer.scene.pickPositionSupported && viewer.scene.pickPosition(pos))
+            || (murrayOn("terrain") && viewer.scene.globe.pick(viewer.camera.getPickRay(pos), viewer.scene))
             || viewer.camera.pickEllipsoid(pos, MARS);
   if (!cart) return null;
   const c = Cesium.Cartographic.fromCartesian(cart, MARS);
@@ -596,6 +786,15 @@ function pin(id, p, color, text) {
 new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e) => {
   const p = pickLatLon(e.position); if (!p) return;
   const request = ++pointRequest;
+  if (mode === "box1") { boxCorner = p; mode = "box2"; $("boxInfo").textContent = "Now click the opposite corner."; return; }
+  if (mode === "box2") {
+    mode = null; $("boxBtn").classList.remove("active");
+    const b = { west: Math.min(boxCorner.lon, p.lon), east: Math.max(boxCorner.lon, p.lon),
+                south: Math.min(boxCorner.lat, p.lat), north: Math.max(boxCorner.lat, p.lat) };
+    setSharpBox(b);
+    $("boxInfo").textContent = `Sharp area: ${(b.east - b.west).toFixed(2)}° x ${(b.north - b.south).toFixed(2)}°. Zoom in to see 5 m detail.`;
+    return;
+  }
   if (!mode && shownConditions && hoverLayers.has(displayedLayer)) {
     const layer = displayedLayer, snapshot = shownConditions;
     $("info").textContent = pointLabel(p);
@@ -604,7 +803,7 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
       if (request !== pointRequest || snapshot !== shownConditions) return;
       $("info").textContent = `${pointLabel(p)}\n${sampleLabel(sample)}\nData grid ${sample.grid_step_deg}° · ${snapshot.local_hour} h local solar time · ${snapshot.ls}° Ls`;
     } catch (err) {
-      if (request === pointRequest) $("info").textContent = `${pointLabel(p)}\n${err.message}`;
+      if (request === pointRequest) setMsg($("info"), err.message, `${pointLabel(p)}: `);
     }
     return;
   }
@@ -612,25 +811,55 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
   if (mode === "target") { target = p; pin("target", p, Cesium.Color.ORANGE, "Target"); invalidatePlan(); }
   mode = null; $("setBase").classList.remove("active"); $("setTarget").classList.remove("active");
   try {
-    const px = await api(`/api/pixel?lat=${p.lat}&lon=${p.lon}&region=${$("region").value}`);
+    const px = await api(`/api/pixel?lat=${p.lat}&lon=${p.lon}&region=${regionId()}`);
     if (request !== pointRequest) return;
     const lines = Object.entries(px.values).map(([k, v]) => `${k.padEnd(13)} ${v ?? "no data"}`);
     const minerals = px.minerals && px.minerals.length ? `minerals: ${px.minerals.join("; ")}\n` : "";
-    $("info").textContent = `${pointLabel(p)}\n` +
-      (px.ground ? `ground: ${px.ground}\n` : "") + minerals + `confidence: ${px.confidence}\n\n` + lines.join("\n");
-  } catch (err) { if (request === pointRequest) $("info").textContent = `${pointLabel(p)}: ${err.message}`; }
+    const info = $("info"), row = (t, cls = "") => info.append(el("div", { textContent: t, className: cls }));
+    const v = px.values;
+    info.replaceChildren();
+    row(pointLabel(p));
+    if (px.ground) row(`Ground: ${px.ground.replace(/^TI \d+:\s*/, "").replace(" - ", ", ")}`);
+    if (px.minerals && px.minerals.length) row(`Minerals: ${px.minerals.map((m) => m.split(/ \(|: /)[0] +
+      (/strong/.test(m) ? " (strong)" : /clear/.test(m) ? "" : /weak/.test(m) ? " (weak)" : "")).join(", ")}`);
+    if (v.elevation != null) row(`Height: ${Math.round(v.elevation).toLocaleString()} m`);
+    if (v.slope != null) row(`Slope: ${Math.round(v.slope)}°`);
+    const tech = el("div", { className: "adv" }); tech.style.whiteSpace = "pre-wrap"; tech.style.marginTop = "6px";
+    info.append(tech);
+    tech.textContent = `${pointLabel(p)}` +
+      (px.source === "global" ? "  (live lookup)\n" : `  (${px.source} map)\n`) +
+      (px.ground ? `ground: ${px.ground}\n` : "") + minerals + (px.notes || []).map((n) => "• " + n + "\n").join("") +
+      `confidence: ${px.confidence}\n\n` + lines.join("\n");
+    murrayPointLinks(p, request);
+  } catch (err) { if (request === pointRequest) setMsg($("info"), err.message, `${pointLabel(p)}: `); }
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
+let boxCorner = null;
+$("boxBtn").onclick = () => { mode = "box1"; $("boxBtn").classList.add("active");
+  $("boxInfo").textContent = "Click the first corner of the area."; };
+$("clearBox").onclick = () => { setSharpBox(null); $("boxInfo").textContent = "Sharp imagery off (fast mode)."; };
+$("prefetchBtn").onclick = async () => {
+  if (!sharpBox) { $("boxInfo").textContent = "Box an area first."; return; }
+  try {
+    const r = await api("/api/prefetch", sharpBox);
+    $("boxInfo").textContent = `Pre-loading ${r.tiles} tiles…`;
+    const timer = setInterval(async () => {
+      const s = await api("/api/prefetch");
+      $("boxInfo").textContent = s.running ? `Pre-loading… ${s.done}/${s.total} tiles` : `Pre-loaded ${s.total} tiles ✓ (instant now)`;
+      if (!s.running) clearInterval(timer);
+    }, 1500);
+  } catch (e) { $("boxInfo").textContent = e.message; }
+};
 $("setBase").onclick = () => { mode = "base"; $("setBase").classList.add("active"); };
 $("setTarget").onclick = () => { mode = "target"; $("setTarget").classList.add("active"); };
 $("gearLink").onclick = () => {
-  const q = new URLSearchParams({ archetype: "traverse", region: $("region").value || "jezero", vehicle: $("vehicle").value || "astronaut" });
+  const q = new URLSearchParams({ archetype: "traverse", region: regionId(), vehicle: $("vehicle").value || "astronaut" });
   if (base) q.set("base", `${base.lat},${base.lon}`);
   if (target) q.set("target", `${target.lat},${target.lon}`);
   $("gearLink").href = "kit.html?" + q;
 };
 $("targets").onchange = () => {
-  const t = current.targets[+$("targets").value]; if (!t) return;
+  const t = current?.targets[+$("targets").value]; if (!t) return;
   target = { lat: t.lat, lon: t.lon }; pin("target", target, Cesium.Color.ORANGE, t.name);
   invalidatePlan();
 };
@@ -662,6 +891,8 @@ async function findTarget() {
   const isCurrent = () => id === findRequest;
   $("findInfo").textContent = "Searching…"; clearMatches();
   try {
+    if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) setMsg($("findInfo"), t); });
+    if (!isCurrent()) return;
     const res = await api("/api/find", { ...conditions(), query, base, focus: viewCenter() });
     if (!isCurrent()) return;
     const heatmapShown = await showAnalysisOverlay({
@@ -691,7 +922,7 @@ async function findTarget() {
       $("matches").appendChild(li);
     });
     chooseMatch(0, heatmapShown);
-  } catch (e) { if (isCurrent()) $("findInfo").textContent = e.message; }
+  } catch (e) { if (isCurrent()) setMsg($("findInfo"), e.message); }
 }
 $("find").onclick = findTarget;
 $("query").addEventListener("keydown", (e) => { if (e.key === "Enter") findTarget(); });
@@ -712,15 +943,48 @@ function specLine(spec) {
 
 function pctLabel(pct) { return pct >= 999 ? "999+%" : `${Math.round(pct)}%`; }
 
-function barRow(name, used, max, unit, pct) {
+const POWER = { battery: "Battery, recharged", solar: "Solar", nuclear: "Nuclear (MMRTG)",
+                primary: "Non-rechargeable battery" };
+
+function barRow(name, used, max, unit, pct, usable, reservePct) {
   const over = pct > 100;
   const width = Math.min(100, Math.max(1.5, pct));
+  const hasReserve = usable != null && max > 0;
+  const tick = hasReserve ? `<span class="tick" style="left:${Math.min(100, 100 * usable / max)}%" aria-hidden="true"></span>` : "";
+  const intoReserve = hasReserve && !over && used > usable;
+  const reserve = !hasReserve ? "" :
+    `<div class="cons-spec${intoReserve ? " bad" : ""}">Usable after ${reservePct}% reserve: ${usable.toFixed(2)} ${unit}` +
+    `${intoReserve ? " - route cuts into it" : ""}</div>`;
   return `<div class="crow${over ? " over" : ""}">
       <div class="top"><span class="nm">${name}</span>
         <span class="val">${used.toFixed(2)} / ${max.toFixed(2)} ${unit} <b>${pctLabel(pct)}</b></span></div>
       <div class="bar" role="progressbar" aria-label="${name} used" aria-valuemin="0" aria-valuemax="100"
-           aria-valuenow="${Math.min(100, Math.round(pct))}"><i style="width:${width}%"></i></div>
+           aria-valuenow="${Math.min(100, Math.round(pct))}"><i style="width:${width}%"></i>${tick}</div>
+      ${reserve}
     </div>`;
+}
+
+function whyLines(s) {                   // why the totals are what they are: terrain, climb, power and dust
+  const lines = [];
+  if (s.terrain_o2_factor != null) {
+    const parts = [];
+    if (s.slope_o2_factor != null) parts.push(`slope ×${s.slope_o2_factor.toFixed(2)}`);
+    if (s.slope_o2_factor) parts.push(`ground ×${(s.terrain_o2_factor / s.slope_o2_factor).toFixed(2)}`);
+    lines.push(`O2 ×${s.terrain_o2_factor.toFixed(2)} vs flat firm ground` + (parts.length ? `: ${parts.join(", ")}` : ""));
+  }
+  const climb = [];
+  if (s.elevation_gain_m != null) climb.push(`outbound ${s.elevation_gain_m} m up, ${s.elevation_loss_m ?? 0} m down`);
+  if (s.climb_kwh != null) climb.push(`climbing ${s.climb_kwh.toFixed(2)} kWh`);
+  if (climb.length) lines.push(climb.join(" · ").replace(/^./, (c) => c.toUpperCase()));
+  if (s.power_source && s.power_source !== "suit") {
+    const bits = [POWER[s.power_source] || s.power_source];
+    if (s.sunlight_pct != null) bits.push(`sunlight ${s.sunlight_pct}%` +
+      (s.dust_opacity != null ? ` (dust opacity ${s.dust_opacity.toFixed(2)})` : ""));
+    if (s.recharge_sols != null) bits.push(`recharge ${s.recharge_sols.toFixed(1)} sols`);
+    else if (s.recharge_h != null) bits.push(`recharge ${s.recharge_h.toFixed(1)} h`);
+    lines.push(bits.join(" · "));
+  }
+  return lines.map((l) => `<div class="cons-spec">${l}</div>`).join("");
 }
 
 function renderConsumables() {
@@ -736,17 +1000,21 @@ function renderConsumables() {
     return;
   }
   let rows = "";
-  if (s.o2_used_kg != null) rows += barRow("O2", s.o2_used_kg, s.o2_max_kg, "kg", s.o2_pct);
-  if (s.energy_used_kwh != null) rows += barRow("Energy", s.energy_used_kwh, s.energy_max_kwh, "kWh", s.energy_pct);
+  if (s.o2_used_kg != null) rows += barRow("O2", s.o2_used_kg, s.o2_max_kg, "kg", s.o2_pct, s.o2_usable_kg, s.reserve_pct);
+  if (s.energy_used_kwh != null) rows += barRow("Energy", s.energy_used_kwh, s.energy_max_kwh, "kWh", s.energy_pct,
+                                                s.energy_usable_kwh, s.reserve_pct);
   const overCap = (s.o2_pct || 0) > 100 || (s.energy_pct || 0) > 100;
   const overTime = s.within_budget === false;
+  const intoReserve = (s.o2_usable_kg != null && s.o2_used_kg > s.o2_usable_kg) ||
+                      (s.energy_usable_kwh != null && s.energy_used_kwh > s.energy_usable_kwh);
   const range = s.max_range_km != null ? `max ${s.max_range_km.toFixed(1)} km out and back` : "";
   const chip = overCap ? "over capacity"
     : overTime ? "over time budget"
+    : intoReserve ? "into the reserve"
     : `${BINDING[s.limiting_factor] || s.limiting_factor || "limit"} binds`;
-  box.innerHTML = head + rows +
+  box.innerHTML = head + rows + whyLines(s) +
     `<div class="cons-foot"><span>${range}</span>` +
-    `<span class="chip${overCap || overTime ? " over" : ""}">${chip}</span></div>` +
+    `<span class="chip${overCap || overTime || intoReserve ? " over" : ""}">${chip}</span></div>` +
     '<div class="cons-spec">Amounts are the round trip.</div>';
 }
 
@@ -783,11 +1051,16 @@ $("plan").onclick = async () => {
   planBusy = true;
   const requestAtStart = layerRequest;
   try {
+    if (anywhere()) await ensureArea({ lat: (base.lat + target.lat) / 2, lon: (base.lon + target.lon) / 2 },
+                                     (t) => { if (planId === planRequest) setMsg($("explain"), t); }, [base, target]);
+    if (planId !== planRequest) return;
     const res = await api("/api/plan", { ...conditions(), base, target });
     if (planId !== planRequest) return;
     await showAnalysisOverlay({
       image: res.walkback_image, rect: res.rect, name: "walkback",
-      label: "Shaded terrain marks the round-trip walk-back zone.",
+      label: "Shaded terrain marks the round-trip walk-back zone, limited by " +
+        ({ oxygen: "suit oxygen", energy: "battery energy" }[res.walkback_basis] || "the time budget") +
+        ". Green = little used, yellow = near the tightest limit (time, O2 or battery, after reserves).",
       requestAtStart, isCurrent: () => planId === planRequest
     });
     if (planId !== planRequest) return;
@@ -803,12 +1076,13 @@ $("plan").onclick = async () => {
     $("explain").textContent = res.explanation +
       (res.stats ? `\n\nMax slope ${res.stats.max_slope_deg}°, mean ${res.stats.mean_slope_deg}°` : "") +
       "\nGreen area = places you can reach and still return within the budget.";
-    lastPlan = { stats: res.stats || null };
+    lastPlan = { stats: res.stats || null, route: res.route || null,               // route: for the hover readout
+                 vehicle: $("vehicle").selectedOptions[0]?.textContent || "", vehicleKey: $("vehicle").value };
     replanHint = "";
     renderConsumables();
   } catch (e) {
     if (planId !== planRequest) return;
-    $("explain").textContent = e.message;
+    setMsg($("explain"), e.message);
     lastPlan = null;
     renderConsumables();
   } finally {
@@ -866,7 +1140,7 @@ function renderLiveGoal(g) {                 // the AI reading the goal, before 
   let box = $("mGoalLive");
   if (!box) {
     $("mResult").innerHTML = "";
-    box = el("details", { className: "ai", id: "mGoalLive", open: true });
+    box = el("details", { className: "ai adv", id: "mGoalLive", open: true });
     box.append(el("summary", { id: "mGoalSum" }), el("pre", { className: "thinking", id: "mGoalThink" }),
                el("pre", { className: "thinking answer", id: "mGoalAns" }));
     $("mResult").append(box);
@@ -891,10 +1165,12 @@ async function runMission() {
   $("mStatus").textContent = "Planning…";
   $("runMission").disabled = true;
   try {
-    await streamEvents("/api/mission/stream", { region: $("region").value, goal, vehicle: $("mVehicle").value,
-      season: $("mSeason").value, priority: $("mPriority").value, green_only: $("greenOnly").checked }, async (e) => {
+    if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) setMsg($("mStatus"), t); });
+    if (!isCurrent()) return;
+    await streamEvents("/api/mission/stream", { region: regionId(), goal, vehicle: $("mVehicle").value,
+      ls: +$("ls").value, priority: $("mPriority").value, green_only: $("greenOnly").checked }, async (e) => {
       if (!isCurrent()) return;
-      if (e.type === "status") $("mStatus").textContent = e.text;
+      if (e.type === "status") setMsg($("mStatus"), e.text);
       else if (e.type === "ai" && e.phase === "goal") { goalAI[e.kind] += e.text; renderLiveGoal(goalAI); }
       else if (e.type === "result") {
         res = e.mission; res.goal_ai = goalAI;
@@ -916,11 +1192,24 @@ async function runMission() {
       else if (e.type === "explanation" && res) {
         res.explanation = e.text; res.explanation_source = e.source; res.explain_ai.live = false;
         $("mStatus").textContent = ""; updateExplain();
-      } else if (e.type === "error") $("mStatus").textContent = e.text;
+      } else if (e.type === "error") {
+        setMsg($("mStatus"), e.detail ? `${e.text} | ${e.detail}` : e.text);
+        if (e.suggest) {                                   // e.g. a dust-covered area: offer the nearest firm ground
+          const go = document.createElement("button");
+          go.className = "secondary"; go.type = "button"; go.style.marginTop = "8px";
+          go.textContent = `Go there and plan (${e.suggest.km} km ${e.suggest.direction})`;
+          go.onclick = () => {
+            if (!anywhere()) { $("region").value = ANYWHERE; $("region").onchange(); }
+            viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(e.suggest.lon, e.suggest.lat, 90000, MARS),
+                                  complete: () => runMission() });
+          };
+          $("mStatus").append(document.createElement("br"), go);
+        }
+      }
       else if (e.type === "done" && res && !res.explain_ai.live) $("mStatus").textContent = "";
     }, ctl.signal);
   } catch (err) {
-    if (err.name !== "AbortError" && isCurrent()) $("mStatus").textContent = err.message;
+    if (err.name !== "AbortError" && isCurrent()) setMsg($("mStatus"), err.message);
   } finally {
     if (isCurrent()) $("runMission").disabled = false;
   }
@@ -954,33 +1243,43 @@ function selectRoute(i) { selected = i; renderMission(); drawMission(true); show
 function renderMission() {
   const r = mission, s = r.settings, out = $("mResult"), h3 = (t) => out.append(el("h3", { textContent: t }));
   out.innerHTML = "";
-  h3("Mission settings");
+  h3("Your mission");
   const set = el("ul"), li = (ul, t, cls = "") => ul.append(el("li", { textContent: t, className: cls }));
-  li(set, `Target: ${s.targets.join(" + ")}` + (s.parser === "ai" ? ` (goal read by ${s.model})` : ""));
+  const liAdv = (ul, plain, detail, cls = "") => {           // plain line + a technical tail for advanced mode
+    const item = el("li", { textContent: plain, className: cls });
+    if (detail) item.append(el("span", { className: "adv", textContent: detail }));
+    ul.append(item);
+  };
+  if (current) liAdv(set, `Where: ${current.label}`, `region ${current.region}`);
+  liAdv(set, `Looking for: ${s.targets.join(" + ")}`, s.parser === "ai" ? `goal read by ${s.model}` : "goal read by keywords");
   if (s.not_understood.length) li(set, `Not understood: ${s.not_understood.join(", ")}`);
-  li(set, `${s.vehicle.label}: max slope ${s.vehicle.max_slope}°, range ${s.vehicle.range_km} km`);
-  li(set, `${s.season.label}; walk planned for ${s.local_hour}:00 local (sun ${s.sun_elevation}° up)`);
-  li(set, `Priority ${s.priority.label}: route cost weighs time ${s.priority.cost.time}, energy ${s.priority.cost.energy}, ` +
-          `risk ${s.priority.cost.risk}` + (s.green_only ? "; sticking to green tracks" : ""));
+  liAdv(set, `Travelling by: ${plainName(s.vehicle.label).toLowerCase()}`,
+        `${s.vehicle.label}: max slope ${s.vehicle.max_slope}°, range ${s.vehicle.range_km} km`);
+  liAdv(set, `Season: ${plainName(s.season.label).replace(/:.*/, "")}`,
+        `${s.season.label}; walk planned for ${s.local_hour}:00 local (sun ${s.sun_elevation}° up)`);
+  liAdv(set, `Priority: ${s.priority.label.toLowerCase()}` + (s.green_only ? ", staying on rover tracks" : ""),
+        `route cost weighs time ${s.priority.cost.time}, energy ${s.priority.cost.energy}, risk ${s.priority.cost.risk}`);
   out.append(set);
-  for (const n of r.notes) out.append(el("div", { className: "small", textContent: n }));
+  for (const n of r.notes) { const d = el("div", { className: "small" }); setMsg(d, n); out.append(d); }
   const g = r.goal_ai;
   if (g && (g.reasoning || g.content)) {                       // how the AI read the goal (collapsed)
-    const d = el("details", { className: "ai" });
+    const d = el("details", { className: "ai adv" });
     d.append(el("summary", { textContent: `How ${s.model || "the AI model"} read the goal` }),
              el("pre", { className: "thinking", textContent: g.reasoning || "(no reasoning returned)" }),
              el("pre", { className: "thinking answer", textContent: g.content }));
     out.append(d);
   }
 
-  h3(`Tools: ${r.tools.kg} kg, ${r.tools.w} W if all run at once`);
+  const toolsH = el("h3", { textContent: "What to bring" });
+  toolsH.append(el("span", { className: "adv", textContent: `${r.tools.kg} kg, ${r.tools.w} W if all run at once` }));
+  out.append(toolsH);
   const tl = el("ul");
-  for (const t of r.tools.items) li(tl, `${t.name}: ${t.kg} kg${t.w ? `, ${t.w} W` : ""} (${t.why})`);
+  for (const t of r.tools.items) liAdv(tl, plainName(t.name), `${t.name}: ${t.kg} kg${t.w ? `, ${t.w} W` : ""} (${t.why})`);
   out.append(tl);
 
   if (r.candidates.length) {
-    h3("Decision matrix (each criterion scored 1-5)");
-    const tb = el("table", { className: "matrix" }), head = el("tr");
+    out.append(el("h3", { className: "adv", textContent: "Decision matrix (each criterion scored 1-5)" }));
+    const tb = el("table", { className: "matrix adv" }), head = el("tr");
     head.append(el("th", { textContent: "Criterion" }), el("th", { textContent: "Weight" }));
     r.candidates.forEach((c, i) => head.append(el("th", { className: `cand${i === 0 ? " win" : ""}${i === selected ? " sel" : ""}`,
       textContent: `#${c.rank}`, title: "Show this route", onclick: () => selectRoute(i) })));
@@ -997,10 +1296,10 @@ function renderMission() {
     tb.append(tot); out.append(tb);
   }
 
-  h3("Why");
-  const think = el("details", { className: "ai", id: "mThinkBox" });
+  h3("Why this plan");
+  const think = el("details", { className: "ai adv", id: "mThinkBox" });
   think.append(el("summary", { id: "mThinkSum" }), el("pre", { className: "thinking", id: "mThinking" }));
-  out.append(think, el("div", { id: "mExplain" }), el("div", { className: "small", id: "mExplainNote" }));
+  out.append(think, el("div", { id: "mExplain" }), el("div", { className: "small adv", id: "mExplainNote" }));
   updateExplain();
   if (selected > 0) {
     const a = r.candidates[0], b = r.candidates[selected];
@@ -1012,8 +1311,8 @@ function renderMission() {
   if (prevMission && prevMission.candidates.length && r.candidates.length) {
     const a = prevMission.candidates[0], b = r.candidates[0], ps = prevMission.settings;
     const same = Math.abs(a.B.lat - b.B.lat) < 1e-4 && Math.abs(a.B.lon - b.B.lon) < 1e-4;
-    h3("Compared with the previous plan");
-    out.append(el("div", { id: "mCompare", className: "small", textContent:
+    out.append(el("h3", { className: "adv", textContent: "Compared with the previous plan" }));
+    out.append(el("div", { id: "mCompare", className: "small adv", textContent:
       `Before: ${ps.goal} · ${ps.vehicle.label} · ${ps.priority.label} · ${ps.season.label.split(" (")[0]}\n` +
       `${same ? "Same destination" : `New destination (${deg(a.B)} → ${deg(b.B)})`}\n` +
       `Score ${a.total} → ${b.total} · round trip ${a.route.round_trip_h} → ${b.route.round_trip_h} h · ` +
@@ -1021,17 +1320,38 @@ function renderMission() {
       `green track ${a.route.green_pct}% → ${b.route.green_pct}% · max slope ${a.route.max_slope}° → ${b.route.max_slope}°` }));
   }
 
-  h3(r.candidates.length ? "Candidates (click to open)" : "Candidates");
+  h3(r.candidates.length ? "Options (best first, click to open)" : "Options");
   r.candidates.forEach((c, i) => out.append(candidateCard(c, i)));
-  for (const d of r.dropped) out.append(el("div", { className: "small bad", textContent: `Dropped B${d.id} (${deg(d.B)}): ${d.reason}` }));
+  for (const d of r.dropped) out.append(el("div", { className: "small bad adv", textContent: `Dropped B${d.id} (${deg(d.B)}): ${d.reason}` }));
+}
+
+// Mission-planner vehicle (config.MISSION_VEHICLES) -> closest gear-page traveller (config.VEHICLES).
+// The scout bike has no own profile; the open LRV-class rover is the nearest (suited crew, battery, ~10 km/h).
+const MISSION_GEAR_VEHICLE = { on_foot: "astronaut", two_wheel: "unpressurized_rover",
+                               four_wheel: "unpressurized_rover", buggy: "pressurized_rover" };
+function missionGearHref(c) {
+  const s = mission.settings, v = MISSION_GEAR_VEHICLE[s.vehicle.key];
+  const q = new URLSearchParams({ archetype: "traverse", region: $("region").value || "jezero" });
+  if (v) q.set("vehicle", v);
+  q.set("base", `${c.A.lat},${c.A.lon}`); q.set("target", `${c.B.lat},${c.B.lon}`);
+  q.set("ls", s.season.ls); q.set("hour", s.local_hour);
+  return "kit.html?" + q;
 }
 
 function candidateCard(c, i) {
   const d = el("details", { className: "card" + (i === selected ? " sel" : ""), open: i === selected });
-  const chip = el("span", { className: "chip" + (c.A.kind === "NASA candidate" ? " nasa" : ""), textContent: c.A.kind });
-  d.append(el("summary", {}, `#${c.rank} · ${c.total}/100 · B ${deg(c.B)} `, chip));
-  const ul = el("ul"), add = (t, cls = "") => ul.append(el("li", { textContent: t, className: cls }));
+  const nasa = c.A.kind === "NASA candidate";
+  const chip = el("span", { className: "chip" + (nasa ? " nasa" : "") + (nasa ? "" : " adv"),
+                            textContent: nasa ? "NASA landing site" : c.A.kind });
+  d.append(el("summary", {}, `#${c.rank} · score ${c.total}/100 `, el("span", { className: "adv", textContent: `B ${deg(c.B)} ` }), chip));
   const k = c.card, rt = c.route, R = c.resources, ta = R.turnaround;
+  const easy = el("ul"), say = (t, cls = "") => easy.append(el("li", { textContent: t, className: cls }));
+  say(`What's there: ${(k.target_plain || k.target).join(", ")}`);
+  say(`Land at ${nasa ? "a NASA landing site" : "a flat, firm spot"} ${c.A.dist_km.toFixed(1)} km away`);
+  say(`Trip: ${rt.distance_km} km, about ${rt.round_trip_h} h there and back`);
+  for (const it of R.items) say(`${it.name[0].toUpperCase() + it.name.slice(1)} left at the end: ${it.left_pct}%`, it.ok ? "ok" : "bad");
+  say(`Turn back after ${ta.h} h at the latest`);
+  const ul = el("ul", { className: "adv" }), add = (t, cls = "") => ul.append(el("li", { textContent: t, className: cls }));
   add(`Target: ${k.target.join("; ")}`);
   add(`Data confidence: ${k.confidence}`);
   add(`Terrain: ${k.terrain.join("; ")}`);
@@ -1047,8 +1367,10 @@ function candidateCard(c, i) {
     if (it.source) ul.lastChild.title = it.source;                // hover: where the number comes from
   }
   add(`Turn back no later than ${ta.h} h after leaving A` + (ta.at_B ? " (B is reached before then)" : ` (at ${deg(ta)})`));
-  d.append(ul, el("button", { className: "secondary", textContent: i === selected ? "Showing this route" : "Show this route",
-                              onclick: () => selectRoute(i) }));
+  d.append(easy, ul, el("button", { className: "secondary", textContent: i === selected ? "Showing this route" : "Show this route",
+                              onclick: () => selectRoute(i) }),
+           el("p", { className: "small" }, el("a", { href: missionGearHref(c), target: "_blank", rel: "noopener",
+                                                    textContent: "Gear for this mission" })));
   return d;
 }
 
@@ -1090,7 +1412,7 @@ async function showTracks(on) {
   $("trackInfo").textContent = "";
   if (on) {
     try {
-      const region = $("region").value, vehicle = $("mVehicle").value;
+      const region = regionId(), vehicle = $("mVehicle").value;
       const key = `${region}|${vehicle}`;
       const data = tracksData?.key === key ? tracksData
         : { key, ...(await api(`/api/tracks?${new URLSearchParams({ region, vehicle })}`)) };
@@ -1116,7 +1438,7 @@ async function showTracks(on) {
           ? `${rt.green_pct}% of this route follows green rover-verified track (${rt.green_km} km, highlighted).`
           : "This route doesn't use rover-verified track; the green network shows other ways through." }));
       }
-    } catch (e) { if (id === trackRequest) $("trackInfo").textContent = e.message; }
+    } catch (e) { if (id === trackRequest) setMsg($("trackInfo"), e.message); }
   }
   drawMission(false);
 }
@@ -1126,7 +1448,466 @@ $("goal").addEventListener("keydown", (e) => { if (e.key === "Enter") runMission
 $("showTracks").onchange = () => showTracks($("showTracks").checked);
 $("mVehicle").addEventListener("change", () => { if ($("showTracks").checked) showTracks(true); });
 
+
+// ------------------------------------------------------- Murray Lab maps ----
+// Every map from the Murray Lab CTX viewer (murray.py on the server). Tiles come straight from Esri's OnMars
+// services; terrain, traverses, names, craters, the CTX tile index and HiRISE footprints come via our server.
+const murray = { defs: [], state: {} };
+const flatTerrain = new Cesium.EllipsoidTerrainProvider({ ellipsoid: MARS });
+const murrayOn = (id) => !!(murray.state[id] && murray.state[id].on);
+
+function murrayLine(ds, ring, color, width, maxDist) {
+  if (ring.length < 2) return;
+  ds.entities.add({ polyline: { positions: Cesium.Cartesian3.fromDegreesArray(ring.flat(), MARS), width,
+    material: color, clampToGround: true,
+    distanceDisplayCondition: maxDist ? new Cesium.DistanceDisplayCondition(0, maxDist) : undefined } });
+}
+function murrayLabel(ds, lon, lat, text, maxDist, color = Cesium.Color.WHITE) {
+  ds.entities.add({ position: Cesium.Cartesian3.fromDegrees(lon, lat, 0, MARS), label: { text,
+    font: "12px sans-serif", fillColor: color, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
+    style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: 1e9,
+    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, maxDist) } });
+}
+const sizeDist = (km) => Math.min(9e6, Math.max(2.5e5, (km || 10) * 1.5e4));   // big features show from farther
+
+// Traverses are drawn whole. Names, craters and the tile map have thousands of features: they are kept in memory
+// and only the ones in view are drawn (biggest first, capped), refreshed when the camera stops.
+const VIEW_CAP = { names: 250, craters: 250, quads: 200 };
+function viewBoxes() {
+  const r = viewer.camera.computeViewRectangle(MARS);
+  if (!r) return null;
+  const [w, s, e, n] = [r.west, r.south, r.east, r.north].map(Cesium.Math.toDegrees);
+  return w <= e ? [[w, s, e, n]] : [[w, s, 180, n], [-180, s, e, n]];       // split at the antimeridian
+}
+const inView = (boxes, b) => boxes.some(([w, s, e, n]) => b[0] <= e && b[2] >= w && b[1] <= n && b[3] >= s);
+
+async function murrayGeojson(def) {
+  const data = await api(def.url), ds = new Cesium.CustomDataSource(def.id);
+  const color = def.color ? C(def.color) : Cesium.Color.WHITE.withAlpha(0.7);
+  const items = [];
+  for (const f of data.features) {
+    const g = f.geometry, p = f.properties || {};
+    if (g.type === "LineString") murrayLine(ds, g.coordinates, color, 3);
+    else if (g.type === "Polygon") {
+      const ring = g.coordinates[0], xs = ring.map((c) => c[0]), ys = ring.map((c) => c[1]);
+      items.push({ ring, name: p.name, size: def.id === "quads" ? 1 : p.diameter_km || 1,
+                   box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+                   lon: xs.reduce((a, b) => a + b, 0) / xs.length, lat: ys.reduce((a, b) => a + b, 0) / ys.length });
+    } else if (g.type === "Point" && p.name) {
+      const [lon, lat] = g.coordinates;
+      items.push({ name: p.name, size: p.diameter_km || 1, box: [lon, lat, lon, lat], lon, lat });
+    }
+  }
+  if (items.length) murray.state[def.id].items = items.sort((a, b) => b.size - a.size);
+  return ds;
+}
+
+function refreshViewLayers() {
+  const boxes = viewBoxes();
+  for (const id of Object.keys(VIEW_CAP)) {
+    const st = murray.state[id];
+    if (!st || !st.on || !st.ds || !st.items) continue;
+    st.ds.entities.removeAll();
+    if (!boxes) continue;
+    const color = id === "quads" ? C("#ffd27a").withAlpha(0.6) : Cesium.Color.WHITE.withAlpha(0.75);
+    const shown = st.items.filter((it) => inView(boxes, it.box)).slice(0, VIEW_CAP[id]);
+    for (const it of shown) {
+      if (it.ring) murrayLine(st.ds, it.ring, color, id === "quads" ? 1.5 : 2);
+      if (it.name) murrayLabel(st.ds, it.lon, it.lat, it.name, id === "quads" ? 2e6 : sizeDist(it.size),
+                               id === "names" ? C("#ffe9c7") : Cesium.Color.WHITE);
+    }
+  }
+  viewer.scene.requestRender();
+}
+viewer.camera.moveEnd.addEventListener(refreshViewLayers);
+
+let hiriseRequest = 0;
+async function refreshHirise() {
+  const st = murray.state.hirise;
+  if (!st || !st.on) return;
+  const id = ++hiriseRequest, r = viewer.camera.computeViewRectangle(MARS);
+  st.ds.entities.removeAll();
+  if (!r) return;
+  const box = [r.west, r.south, r.east, r.north].map(Cesium.Math.toDegrees);
+  if (box[2] - box[0] > 25 || box[3] - box[1] > 25) {
+    $("murrayInfo").textContent = "HiRISE footprints: zoom in closer (view under ~25°) to load them."; return;
+  }
+  try {
+    const d = await api(`/murray/hirise?west=${box[0]}&south=${box[1]}&east=${box[2]}&north=${box[3]}`);
+    if (id !== hiriseRequest || !st.on) return;
+    for (const f of d.features) murrayLine(st.ds, f.geometry.coordinates[0], C("#7ad7ff").withAlpha(0.75), 1.5);
+    $("murrayInfo").textContent = `HiRISE footprints in view: ${d.total}` + (d.truncated ? ` (showing ${d.features.length}; zoom in for all)` : "");
+  } catch (e) { if (id === hiriseRequest) $("murrayInfo").textContent = e.message; }
+  viewer.scene.requestRender();
+}
+viewer.camera.moveEnd.addEventListener(refreshHirise);
+
+async function murrayToggle(def, on) {
+  const st = murray.state[def.id] || (murray.state[def.id] = {});
+  st.on = on;
+  const coll = tileset ? tileset.imageryLayers : viewer.imageryLayers;
+  $("murrayInfo").textContent = on ? `Loading ${def.title}…` : "";
+  try {
+    if (def.kind === "tiles") {
+      if (on && !st.layer) {                                   // above every base map, below the data overlays
+        st.layer = coll.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+          url: def.url, tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
+          tileWidth: 512, tileHeight: 512, maximumLevel: def.max_level, credit: def.credit }));
+        if (ctxLayer && coll.contains(ctxLayer)) coll.raiseToTop(ctxLayer);   // the boxed sharp photo stays visible
+        for (const l of overlay) if (coll.contains(l)) coll.raiseToTop(l);
+      }
+      if (!on && st.layer) { coll.remove(st.layer, true); st.layer = null; }
+    } else if (def.kind === "terrain") {
+      if (on && !st.provider) st.provider = await Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(API + def.url, { ellipsoid: MARS });
+      viewer.terrainProvider = murrayOn("terrain") ? st.provider : flatTerrain;
+    } else if (def.kind === "geojson") {
+      if (on) {
+        if (!st.ds) st.ds = await murrayGeojson(def);
+        if (st.on && !viewer.dataSources.contains(st.ds)) viewer.dataSources.add(st.ds);
+        refreshViewLayers();
+      }
+      else if (st.ds) viewer.dataSources.remove(st.ds, false);
+    } else if (def.kind === "bbox") {
+      if (!st.ds) st.ds = new Cesium.CustomDataSource(def.id);
+      if (on) { viewer.dataSources.add(st.ds); await refreshHirise(); } else viewer.dataSources.remove(st.ds, false);
+    }
+    if (on && def.kind !== "bbox") $("murrayInfo").textContent = `${def.title}: ${def.credit}`;
+  } catch (e) {
+    st.on = false; $(`murray_${def.id}`).checked = false;
+    if (def.kind === "tiles") $("murray_none").checked = true;      // a map failed: back to the planner's own map
+    $("murrayInfo").textContent = `${def.title} could not load: ${e.message || e}`;
+  }
+  viewer.scene.requestRender();
+}
+
+async function murrayPointLinks(p, request) {
+  const box = $("infoLinks");
+  box.innerHTML = "";
+  const add = (text, href) => box.append(href ? el("a", { href, textContent: text, target: "_blank", rel: "noopener" })
+                                              : el("div", { textContent: text }));
+  try {
+    if (murrayOn("quads")) {
+      const q = await api(`/murray/quad/at?lat=${p.lat}&lon=${p.lon}`);
+      if (request === pointRequest && q.name) add(`CTX mosaic tile ${q.name}: download page`, q.link);
+    }
+    if (murrayOn("hirise")) {
+      const h = await api(`/murray/hirise/at?lat=${p.lat}&lon=${p.lon}`);
+      if (request !== pointRequest) return;
+      if (!h.total) add("No HiRISE image covers this point.");
+      for (const o of h.observations.slice(0, 6)) add(`HiRISE ${o.name}`, o.link);
+      if (h.total > 6) add(`…and ${h.total - 6} more HiRISE images here`);
+    }
+  } catch (e) { /* the panel already shows the pixel values */ }
+}
+
+// Background maps are radio buttons (one at a time: each one hides the others completely); the rest draw on top
+// of any map, so they stay checkboxes. Plain names for everyone, the catalogue title in advanced mode.
+const MURRAY_PLAIN = { ctx: "Detailed photos (black and white)", mola: "Height map (coloured by height)",
+  viking: "Colour photos", terrain: "3D hills and craters", m2020: "Perseverance rover's path",
+  msl: "Curiosity rover's path", names: "Place names", craters: "Crater names",
+  quads: "Photo tile grid (with download links)", hirise: "Where close-up photos exist" };
+async function pickMurrayMap(def) {
+  for (const m of murray.defs) if (m.kind === "tiles" && m !== def && murrayOn(m.id)) await murrayToggle(m, false);
+  if (def) await murrayToggle(def, true);
+}
+api("/api/murray/layers").then((d) => {
+  murray.defs = d.layers;
+  const box = $("murrayLayers");
+  const label = (def, input) => el("label", { className: "check", title: def.credit || "" }, input,
+    MURRAY_PLAIN[def.id] || def.title, el("span", { className: "adv", textContent: def.title }));
+  box.append(el("div", { className: "small murrayHead", textContent: "Map (one at a time)" }));
+  const none = el("input", { type: "radio", name: "murrayMap", id: "murray_none", checked: true });
+  none.onchange = () => pickMurrayMap(null);
+  box.append(el("label", { className: "check" }, none, "The planner's own map"));
+  for (const def of d.layers.filter((x) => x.kind === "tiles")) {
+    const r = el("input", { type: "radio", name: "murrayMap", id: `murray_${def.id}` });
+    r.onchange = () => { if (r.checked) pickMurrayMap(def); };
+    box.append(label(def, r));
+  }
+  box.append(el("div", { className: "small murrayHead", textContent: "Show on top" }));
+  for (const def of d.layers.filter((x) => x.kind !== "tiles")) {
+    const c = el("input", { type: "checkbox", id: `murray_${def.id}` });
+    c.onchange = () => murrayToggle(def, c.checked);
+    box.append(label(def, c));
+  }
+}).catch((e) => { $("murrayInfo").textContent = "Murray Lab maps unavailable: " + e.message; });
+
+
+// ------------------------------------------------------ route hover + rover ----
+// Hover over a route (mission candidates, the manual route, Perseverance's tracks): a 3D rover (rover.glb, made by
+// tools/make_rover_glb.py; one per vehicle) stands at that point facing along the route, and a card shows what it would see there.
+const DEG_M = Math.PI / 180 * 3396190;
+const ROVER_HEADING_OFFSET = 0;                   // the model faces +X, which Cesium points north at heading 0 (clockwise)
+const roverEntity = viewer.entities.add({ id: "hoverRover", show: false,
+  position: Cesium.Cartesian3.fromDegrees(0, 0, 0, MARS),
+  model: { uri: "rover.glb", minimumPixelSize: 64, maximumScale: 20000,
+           heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+           silhouetteColor: Cesium.Color.fromCssColorString("#e0703a"), silhouetteSize: 1.5 } });
+
+// which 3D model stands in for each vehicle (models made by tools/make_rover_glb.py)
+const VEHICLE_MODEL = { on_foot: "astronaut", two_wheel: "bike", four_wheel: "lrv", buggy: "buggy",
+                        astronaut: "astronaut", pressurized_rover: "buggy", small_rover: "rover" };
+function modelFor(path) {
+  if (path.kind === "mission") return VEHICLE_MODEL[mission.settings.vehicle.key] || "rover";
+  if (path.kind === "manual") return VEHICLE_MODEL[path.plan.vehicleKey] || "rover";
+  return "rover";                                    // Perseverance's own tracks
+}
+let roverModel = "rover";
+
+function hoverPaths() {
+  const paths = [];
+  if (mission) mission.candidates.forEach((c, i) => paths.push({ kind: "mission", c, selected: i === selected, pts: c.route.points }));
+  if (lastPlan && lastPlan.route) paths.push({ kind: "manual", plan: lastPlan, pts: lastPlan.route });
+  if ($("showTracks").checked && tracksData && tracksData.segments)
+    for (const sg of tracksData.segments) paths.push({ kind: "track", seg: sg, pts: sg._pts || (sg._pts = sg.coords.map(([lon, lat]) => ({ lon, lat }))) });
+  return paths;
+}
+
+function nearestOnPaths(lat, lon, maxM) {          // closest point on any route segment, within maxM metres
+  const kx = Math.cos(lat * Math.PI / 180) * DEG_M, ky = DEG_M;
+  let best = null;
+  for (const path of hoverPaths()) {
+    const p = path.pts;
+    for (let i = 0; i + 1 < p.length; i++) {
+      const ax = (p[i].lon - lon) * kx, ay = (p[i].lat - lat) * ky;
+      const dx = (p[i + 1].lon - p[i].lon) * kx, dy = (p[i + 1].lat - p[i].lat) * ky, l2 = dx * dx + dy * dy;
+      const t = l2 > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+      const qx = ax + t * dx, qy = ay + t * dy, d2 = qx * qx + qy * qy;
+      if (d2 > maxM * maxM) continue;
+      const score = path.selected ? d2 / 4 : d2;   // prefer the route being shown
+      if (!best || score < best.score) best = { path, i, t, score };
+    }
+  }
+  return best;
+}
+
+function lerpPoint(a, b, t) {
+  const out = {};
+  for (const k of Object.keys(a)) {
+    const x = a[k], y = b[k];
+    if (typeof x === "number" && typeof y === "number") out[k] = x + (y - x) * t;
+    else if (k === "used" && x && y) { out.used = {}; for (const n of Object.keys(x)) out.used[n] = x[n] == null || y[n] == null ? x[n] : x[n] + (y[n] - x[n]) * t; }
+    else out[k] = t < 0.5 ? x : y;
+  }
+  return out;
+}
+
+const fmt = (x, d = 1) => (x == null || Number.isNaN(x) ? "–" : (+x).toFixed(d));
+const hm = (h) => (h == null ? "–" : h < 1 ? `${Math.round(h * 60)} min` : `${Math.floor(h)} h ${String(Math.round((h % 1) * 60)).padStart(2, "0")} min`);
+function groundLines(p) {                       // [[plain line], [technical line, "adv"]] for the hover card
+  if (p.ti != null) {
+    const cls = p.ti < 150 ? "soft dust" : p.ti < 300 ? "sand" : p.ti < 600 ? "coarse sand or crust" : "solid rock";
+    return [[`Ground: ${cls}`], [`thermal inertia ${fmt(p.ti, 0)}` + (p.firm != null ? `, firmness ${fmt(p.firm, 2)}` : ""), "adv"]];
+  }
+  if (p.firm == null) return [];
+  return [[`Ground: ${p.firm < 0.3 ? "soft" : p.firm < 0.6 ? "medium" : "firm"}`], [`firmness ${fmt(p.firm, 2)}`, "adv"]];
+}
+
+function roverCard(path, p) {
+  const lines = [];                                  // [text, className]
+  if (path.kind === "mission") {
+    const c = path.c, r = c.route;
+    lines.push([`Route #${c.rank}${path.selected ? "" : " (backup)"} · ${plainName(mission.settings.vehicle.label)}`, "title"]);
+    lines.push([`${fmt(p.d, 2)} of ${r.distance_km} km · ${hm(p.t)} of ${hm(r.one_way_h)} out`]);
+    lines.push([`Height ${fmt(p.elev, 0)} m · slope ${fmt(p.slope, 0)}°`]);
+    lines.push(...groundLines(p));
+    lines.push([`Risk: ${["low", "moderate", "high"][Math.round(p.risk)] || "–"}` +
+                (p.green ? " · on green rover-verified track" : p.yellow ? " · on high-strain (yellow) track" : ""),
+                p.risk >= 1.5 ? "warn" : ""]);
+    lines.push([`Sunlight cos(i) ${fmt(p.sun, 2)} · surface ~${fmt(p.temp, 0)} K at ${mission.settings.local_hour}:00`, "adv"]);
+    for (const it of c.resources.items) {
+      const used = p.used && p.used[it.name];
+      if (used == null) continue;
+      const left = 100 * (1 - used / it.capacity), back = 100 * (1 - 2 * used / it.capacity);
+      const name = it.name[0].toUpperCase() + it.name.slice(1);
+      lines.push([`${name}: ${fmt(left, 0)}% left`]);
+      lines.push([`${fmt(used, it.unit === "Wh" ? 0 : 2)} ${it.unit} used so far`, "adv"]);
+      lines.push([`  turning back here: ${fmt(back, 0)}% left at base`, back < c.resources.reserve_pct ? "warn" : ""]);
+    }
+  } else if (path.kind === "manual") {
+    const s = path.plan.stats || {};
+    lines.push([`Planned route · ${path.plan.vehicle}`, "title"]);
+    lines.push([`${fmt(p.d, 2)} of ${s.distance_km ?? "–"} km · ${hm(p.t)} of ${hm(s.one_way_h)} out`]);
+    lines.push([`Height ${fmt(p.elev, 0)} m · slope ${fmt(p.slope, 0)}°`]);
+    lines.push(...groundLines(p));
+    if (p.o2_kg != null) lines.push([`O2: ≈${fmt(p.o2_kg, 2)} kg used so far` + (s.o2_max_kg ? ` of ${s.o2_max_kg} kg` : "")]);
+    if (p.energy_kwh != null) lines.push([`Energy: ≈${fmt(p.energy_kwh, 2)} kWh used so far` + (s.energy_max_kwh ? ` of ${s.energy_max_kwh} kWh` : "")]);
+  } else {
+    const sg = path.seg;
+    lines.push([`${tracksData.rover} · sol ${sg.sol}`, "title"]);
+    lines.push([`Drive of ${fmt(sg.length_m, 0)} m on this sol`]);
+    lines.push([sg.class === "green" ? "Green: drove without warning signs" : `Yellow, high strain: ${sg.why}`,
+                sg.class === "green" ? "" : "warn"]);
+  }
+  lines.push([`${Math.abs(p.lat).toFixed(4)}° ${p.lat < 0 ? "S" : "N"}, ${p.lon.toFixed(4)}° E`, "adv"]);
+  return lines.filter(([t]) => t);
+}
+
+function hideRover() {
+  if (roverEntity.show) { roverEntity.show = false; viewer.scene.requestRender(); }
+  $("routeHover").hidden = true;
+}
+
+let roverFrame = 0, roverMove = null;
+function updateRoverHover() {
+  roverFrame = 0;
+  const e = roverMove;
+  if (!e) return;
+  const b = viewer.scene.canvas.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+  const loc = pickLatLon(new Cesium.Cartesian2(x, y));
+  if (!loc) return hideRover();
+  const scene = viewer.scene;
+  const metresPerPx = viewer.camera.getPixelSize(new Cesium.BoundingSphere(Cesium.Cartesian3.fromDegrees(loc.lon, loc.lat, 0, MARS), 0),
+                                                scene.drawingBufferWidth, scene.drawingBufferHeight) * (scene.drawingBufferWidth / scene.canvas.clientWidth);
+  const hit = nearestOnPaths(loc.lat, loc.lon, 14 * metresPerPx);
+  if (!hit) return hideRover();
+  const p0 = hit.path.pts[hit.i], p1 = hit.path.pts[hit.i + 1], p = lerpPoint(p0, p1, hit.t);
+  const bearing = Math.atan2((p1.lon - p0.lon) * Math.cos(p.lat * Math.PI / 180), p1.lat - p0.lat);   // clockwise from north
+  const pos = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS);
+  const model = modelFor(hit.path);
+  if (model !== roverModel) { roverModel = model; roverEntity.model.uri = `${model}.glb`; }
+  roverEntity.position = pos;
+  roverEntity.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(bearing + ROVER_HEADING_OFFSET, 0, 0), MARS);
+  roverEntity.show = true;
+  const tip = $("routeHover");
+  tip.innerHTML = "";
+  for (const [text, cls] of roverCard(hit.path, p)) tip.append(el("div", { textContent: text, className: cls || "" }));
+  tip.hidden = false;
+  const map = $("map");
+  tip.style.left = Math.max(0, Math.min(x + 18, map.clientWidth - tip.offsetWidth - 5)) + "px";
+  tip.style.top = Math.max(0, Math.min(y + 18, map.clientHeight - tip.offsetHeight - 5)) + "px";
+  $("weatherHover").hidden = true;                  // one card at a time
+  scene.requestRender();
+}
+viewer.scene.canvas.addEventListener("pointermove", (event) => {
+  if (event.pointerType === "touch" || event.buttons) { hideRover(); return; }
+  roverMove = event;
+  if (!roverFrame) roverFrame = requestAnimationFrame(updateRoverHover);
+});
+$("map").addEventListener("pointerleave", () => { roverMove = null; hideRover(); });
+
+
+// ---------------------------------------------------------------- landing ----
+function startExploring() {
+  const l = $("landing");
+  if (l.classList.contains("gone")) return;
+  l.classList.add("gone");
+  setTimeout(() => viewer.resize(), 50);
+}
+$("startExploring").onclick = startExploring;
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") startExploring(); });
+$("startExploring").focus();
+
+// ------------------------------------------------ plan anywhere on Mars ----
+function fillRegions(selected = $("region").value) {
+  $("region").innerHTML = `<option value="${ANYWHERE}">Anywhere on Mars (where you're looking)</option>` +
+    '<optgroup label="Loaded areas">' +
+    regions.map((r) => `<option value="${r.region}">${r.label || r.region}</option>`).join("") + "</optgroup>";
+  if (selected && regions.some((r) => r.region === selected)) $("region").value = selected;
+}
+// ------------------------------------------- advanced (technical) details ----
+// Everything technical has class "adv" and shows only after pressing A. Server messages are "plain | detail":
+// the plain part is for everyone, the detail part is technical (a message starting "| " is technical only).
+const ADV_KEY = "marswalk.advanced";
+function setAdvanced(on, toast = false) {
+  document.body.classList.toggle("adv-on", on);
+  $("advHint").textContent = on ? "Technical details are on. Press A to hide them." : "Press A for technical details.";
+  try { localStorage.setItem(ADV_KEY, on ? "1" : "0"); } catch (e) { /* private mode: not remembered */ }
+  if (toast) {
+    const t = $("advToast");
+    t.textContent = on ? "Technical details on" : "Technical details off";
+    t.classList.remove("hide");
+    clearTimeout(setAdvanced.timer);
+    setAdvanced.timer = setTimeout(() => t.classList.add("hide"), 1400);
+  }
+}
+document.addEventListener("keydown", (e) => {
+  if ((e.key !== "a" && e.key !== "A") || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;   // typing a goal
+  setAdvanced(!document.body.classList.contains("adv-on"), true);
+});
+function splitMsg(text) {
+  text = String(text ?? "");
+  if (text.startsWith("| ")) return ["", text.slice(2)];
+  const i = text.indexOf(" | ");
+  return i < 0 ? [text, ""] : [text.slice(0, i), text.slice(i + 3)];
+}
+function setMsg(node, text, prefix = "") {          // plain part for everyone, detail only in advanced mode
+  const [plain, detail] = splitMsg(text);
+  node.replaceChildren(document.createTextNode(plain ? prefix + plain : ""));
+  if (detail) node.append(el("span", { className: "adv", textContent: detail }));
+  node.classList.toggle("adv-only", !plain && !!detail);
+}
+const plainName = (t) => String(t).split(" (")[0];   // "Handheld spectrometer (VNIR / Raman)" -> "Handheld spectrometer"
+
+const ANYWHERE = "here";
+const anywhere = () => $("region").value === ANYWHERE;
+const regionId = () => current?.region || "jezero";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Make sure the area around `p` is loaded (and every point in `need` lies inside it), building it from the
+// globe's 3D terrain if needed; it becomes `current`. Minerals keep loading in the background (watchArea).
+const ZOOMED_OUT_M = 1.5e6;                      // above this camera height "where you're looking" is too vague
+const zoomedOut = () => viewer.camera.positionCartographic.height > ZOOMED_OUT_M;
+async function ensureArea(p, say = () => {}, need = [p]) {
+  if (zoomedOut() && current && need.length === 1) {       // whole-planet view: keep the current area
+    say(`Planning in ${current.label}. Zoom in on any other place on Mars to plan there.`);
+    return current.region;
+  }
+  if (!p) throw new Error("Point the map at the surface of Mars first.");
+  const inside = (r, q, m = 0.05) => q.lat > r.rect.south + m && q.lat < r.rect.north - m &&
+                                      q.lon > r.rect.west + m && q.lon < r.rect.east - m;
+  if (current && need.every((q) => inside(current, q))) return current.region;
+  say(`Loading this part of Mars… | 3D terrain around ${pointLabel(p)}`);
+  let st = await api("/api/sites/build", { lat: p.lat, lon: p.lon });
+  const t0 = Date.now();
+  while (!st.ready) {
+    if (st.status === "failed") throw new Error("Couldn't load this area: " + (st.log || []).slice(-1).join(" "));
+    say(`Loading this part of Mars… ${Math.round((Date.now() - t0) / 1000)} s | 3D terrain (MDEM200M), THEMIS ` +
+        `thermal inertia and night-time IR, TES albedo around ${pointLabel(p)}`);
+    await sleep(2000);
+    st = await api(`/api/sites/build/${st.region}`);
+  }
+  await useArea(st.region);
+  if (!need.every((q) => inside(current, q, 0))) throw new Error("Base and target are too far apart for one area " +
+    `(about ${(current.rect.north - current.rect.south).toFixed(1)}° across); move them closer together.`);
+  if (st.status !== "done") watchArea(st.region);
+  return st.region;
+}
+async function useArea(region) {
+  regions = (await api("/api/regions")).regions;
+  fillRegions();
+  current = regions.find((r) => r.region === region);
+  showRegionInfo(); setSharpBox(current.rect); syncGlobeLighting(); refreshLayer();
+  if ($("showTracks").checked) showTracks(true);
+}
+const watching = new Set();
+async function watchArea(region) {                // CRISM minerals arrive a few minutes after the terrain
+  if (watching.has(region)) return;
+  watching.add(region);
+  try {
+    for (;;) {
+      const st = await api(`/api/sites/build/${region}`);
+      const mine = current?.region === region;
+      if (st.status === "done" || st.status === "failed") {
+        regions = (await api("/api/regions")).regions; fillRegions();
+        if (current?.region === region) { current = regions.find((r) => r.region === region); showRegionInfo(); }
+        if (mine) setMsg($("areaStatus"), st.status === "done"
+          ? `Mineral maps loaded: goals like "clay" now work here. | ${st.label}: CRISM summary parameters` : "");
+        return;
+      }
+      if (mine) setMsg($("areaStatus"), "Loading the mineral maps for this area… goals like \"clay\" work once " +
+        `they're in. | ${st.label}: CRISM ` + (st.crism_total ? `${st.crism_done}/${st.crism_total} observations` : "query"));
+      await sleep(5000);
+    }
+  } catch (e) { /* the server restarted: the next plan reloads the area */ }
+  finally { watching.delete(region); }
+}
+
 // ------------------------------------------------------------------ boot ----
+let advStart = false;
+try { advStart = localStorage.getItem(ADV_KEY) === "1"; } catch (e) { /* storage blocked: start plain */ }
+setAdvanced(advStart);
 function flyTo(r) {
   viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
 }
@@ -1145,13 +1926,7 @@ function globalLayerSelected() {
 }
 let wasGlobal = globalLayerSelected();
 showWholeMars();
-$("wholeMars").onclick = () => {
-  $("layer").value = "global_temperature";
-  wasGlobal = true;
-  showWholeMars();
-  timeline?.setEnabled(true);
-  refreshLayer();
-};
+$("wholeMars").onclick = () => showWholeMars();   // just the view: weather layers only when picked in the menu
 $("zoomRegion").onclick = () => { if (current) flyTo(current.rect); };
 ["hour", "ls", "budget"].forEach((id) => $(id).addEventListener("input", labels));
 ["hour", "ls", "vehicle"].forEach((id) => $(id).addEventListener("change", () => {
@@ -1172,6 +1947,10 @@ $("layer").onchange = () => {
 };
 ["budget", "region"].forEach((id) => $(id).addEventListener("change", invalidatePlan));
 $("region").onchange = () => {
+  setMsg($("areaStatus"), anywhere() ? "Zoom in anywhere on Mars and plan: the plan uses the place in the middle " +
+    `of the map. Zoomed out, it uses ${current ? current.label : "the current area"}. | New areas load from the ` +
+    "3D terrain (MDEM200M) in seconds; CRISM minerals follow." : "");
+  if (anywhere()) { if (current) { showRegionInfo(); refreshLayer(); } return; }
   current = regions.find((r) => r.region === $("region").value);
   syncGlobeLighting();
   routePlayback.clear();
@@ -1180,6 +1959,14 @@ $("region").onchange = () => {
   clearMatches(); $("findInfo").textContent = "";
   mission = prevMission = null; tracksData = null; missionLayer.entities.removeAll(); $("mResult").innerHTML = "";
   if ($("showTracks").checked) showTracks(true);
+  showRegionInfo();
+  if (!globalLayerSelected()) flyTo(current.rect);
+  setSharpBox(current.rect);
+  if (!USE_GLOBAL_CTX) setTimeout(() => loadHiresPhoto(current.region), 0);
+  refreshLayer();
+};
+// Mineral layer list, science targets and the size/bands line for the current region.
+function showRegionInfo() {
   const mineralLayers = $("mineralLayers");
   mineralLayers.innerHTML = "";
   for (const [key, label] of Object.entries(current.minerals || {})) {
@@ -1188,13 +1975,12 @@ $("region").onchange = () => {
   mineralLayers.hidden = !mineralLayers.children.length;
   $("targets").innerHTML = '<option value="">…or pick a science target</option>' +
     current.targets.map((t, i) => `<option value="${i}">${t.name}</option>`).join("");
-  if (!globalLayerSelected()) flyTo(current.rect);
   $("status").textContent = `${current.size[0]}×${current.size[1]} px · ~${current.pixel_m[1]} m/px · ` +
     `bands: ${current.bands.join(", ")}`;
-  refreshLayer();
-};
+}
 labels();
 api("/api/weather/calendar").then(calendar => {
+  seasonCalendar = calendar; labels();             // the season slider shows the sol from now on
   timeline = createWeatherTimeline({
     calendar,
     controls: { group: $("timeline"), start: $("startSol"), end: $("endSol"),
@@ -1214,20 +2000,22 @@ api("/api/weather/calendar").then(calendar => {
     const opts = await api("/api/mission/options");
     const fill = (id, obj, val) => { $(id).innerHTML = Object.entries(obj).map(([k, v]) =>
       `<option value="${k}">${typeof v === "string" ? v : v.label}</option>`).join(""); $(id).value = val; };
-    fill("mVehicle", opts.vehicles, "on_foot"); fill("mSeason", opts.seasons, "northern_summer");
+    fill("mVehicle", opts.vehicles, "on_foot");
     fill("mPriority", opts.priorities, "safety");
     const meta = await api("/api/regions");
     regions = meta.regions;
     Object.assign(SPECS, meta.vehicle_specs || {});
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
-    $("region").innerHTML = regions.map((r) => `<option>${r.region}</option>`).join("");
+    fillRegions(ANYWHERE);
+    current = regions.find((r) => r.region === "jezero") || regions[0] || null;
     applyVehicleLimits();
     renderConsumables();
-    if (regions.length) $("region").onchange();
-    else {
-      $("status").textContent = "Global view available. Load a region cube for route planning.";
-      refreshLayer();
-    }
+    if (current) {
+      showRegionInfo(); syncGlobeLighting(); setSharpBox(current.rect);
+      if (!globalLayerSelected()) flyTo(current.rect);
+    } else $("status").textContent = "Move the globe anywhere on Mars and plan: the area loads from the 3D terrain.";
+    refreshLayer();
+    $("region").onchange();
   } catch (e) {
     $("status").textContent = "Regional layers could not load: " + e.message;
     if (globalLayerSelected()) refreshLayer();

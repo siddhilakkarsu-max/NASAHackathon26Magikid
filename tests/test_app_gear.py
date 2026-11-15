@@ -8,7 +8,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import _gear_state  # noqa: E402,F401  (before gear: keeps the real state file untouched)
 from fastapi.testclient import TestClient  # noqa: E402
 
 import app  # noqa: E402

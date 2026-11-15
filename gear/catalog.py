@@ -148,12 +148,13 @@ _i("c_personal", "Personal items allowance", "consumables",
 # ---------------------------------------------------------------- vehicles and traverse gear
 _i("v_pressurized_rover", "Pressurized crew rover", "mobility",
    "A shirt-sleeve vehicle that carries the team out, serves as shelter and extends walk-back range.",
-   carried_by="rover", per="mission", planner_vehicle="pressurized_rover", conf="P", sources=("wiki_sev", "nasa_moonbase"),
+   carried_by="rover", per="mission", planner_vehicle="pressurized_rover", conf="P",
+   sources=("nasa_mars_pr", "wiki_sev", "nasa_moonbase"),
    rate="SEV concept: 10 km/h, 125 km, up to 14 days, 2 crew (4 in emergency)",
-   mass_kg=3000.0, mass_basis="published",
-   note="Concept stage only. The SEV concept lists cabin 3,000 kg, chassis 1,000 kg, payload 1,000 kg. NASA's lunar "
-        "pages list a 15 degree slope limit for a pressurized rover. No battery size, idle power or energy per km "
-        "has been published.")
+   mass_kg=5193.0, mass_basis="published",
+   note="Concept stage only. NASA's Mars pressurized rover study (Chappell et al. 2022) gives 5,193 kg with a "
+        "60 kWh battery and a 1.85 kW hotel load, and keeps crewed traverses within about 20 km of the landing "
+        "site. NASA's lunar pages list a 15 degree slope limit for a pressurized rover.")
 _i("v_unpressurized_rover", "Open crew rover (Apollo LRV-class)", "mobility",
    "Open vehicle for two suited crew and a tool load over short distances.",
    carried_by="rover", per="mission", planner_vehicle="unpressurized_rover", conf="P",

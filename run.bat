@@ -118,7 +118,7 @@ echo.
 
 if not defined NOBROWSER start "" /b powershell -NoProfile -NonInteractive -Command "for ($i=0; $i -lt 240; $i++) { try { Invoke-WebRequest -UseBasicParsing -TimeoutSec 2 -Uri 'http://127.0.0.1:%PORT%/api/regions' | Out-Null; Start-Process 'http://localhost:%PORT%/'; break } catch { Start-Sleep -Milliseconds 500 } }"
 
-"%PY%" -m uvicorn gear_server:server --host 127.0.0.1 --port %PORT% %RELOAD%
+"%PY%" -m uvicorn app:app --host 127.0.0.1 --port %PORT% %RELOAD%
 exit /b %ERRORLEVEL%
 
 rem ---- helpers ----

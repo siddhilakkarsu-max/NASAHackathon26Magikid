@@ -18,9 +18,82 @@ REGIONS = {
     "jezero": dict(west=77.0, east=78.0, south=18.0, north=18.8, px_per_deg=2048),
     # HiRISE close-up of the landing site + delta at ~10 m/px (HiRISE 1 m elevation, resampled)
     "jezero_hirise": dict(west=77.25, east=77.55, south=18.35, north=18.65, px_per_deg=6144),
-    "gale":   dict(west=137.0, east=138.0, south=-5.2, north=-4.2, px_per_deg=256),
     "global": dict(west=-180.0, east=180.0, south=-90.0, north=90.0, px_per_deg=16),
 }
+
+# ---------------------------------------------------------------------------
+# PLANNING ANYWHERE ELSE. Any other place is a square SITE_SIZE_DEG box built on demand from global data
+# (HRSC-MOLA 200 m elevation, THEMIS, TES albedo, THEMIS thermal inertia, CRISM): pick a named site below or
+# click the globe. A spot's region id is "site_<lat>_<lon>" (e.g. site_-4.59_137.44), so the builder and the
+# server can rebuild it from the name alone:  python build_cube.py gale   /   python build_cube.py site_-4.59_137.44
+# ---------------------------------------------------------------------------
+SITE_SIZE_DEG = 0.8          # ~47 km across at the equator: room for a 100 km buggy round trip
+SITE_PX_PER_DEG = 512        # ~115 m/px, the scale the mineral thresholds and landing rules were tuned at
+# Named places. lat/lon (east-positive) is the box centre; "landed" marks a real landing site (a NASA
+# candidate spot for the landing check). Coordinates from NASA/JPL mission pages; ~0.01 deg.
+SITES = {
+    "gale": dict(label="Gale crater (Curiosity)", lat=-4.5895, lon=137.4417, landed="Curiosity (Bradbury Landing, 2012)"),
+    "gusev": dict(label="Gusev crater (Spirit)", lat=-14.5684, lon=175.4726, landed="Spirit (Columbia Memorial Station, 2004)"),
+    "meridiani": dict(label="Meridiani Planum (Opportunity)", lat=-1.9462, lon=-5.5266, landed="Opportunity (Eagle crater, 2004)"),
+    "utopia": dict(label="Utopia Planitia (Zhurong)", lat=25.066, lon=109.925, landed="Zhurong (2021)"),
+    "elysium": dict(label="Elysium Planitia (InSight)", lat=4.5024, lon=135.6234, landed="InSight (Homestead hollow, 2018)"),
+    "ares_vallis": dict(label="Ares Vallis (Pathfinder)", lat=19.13, lon=-33.22, landed="Mars Pathfinder (Carl Sagan Memorial Station, 1997)"),
+    "chryse": dict(label="Chryse Planitia (Viking 1)", lat=22.27, lon=-47.95, landed="Viking 1 (Thomas Mutch Memorial Station, 1976)"),
+    "mawrth": dict(label="Mawrth Vallis (clay-rich layers)", lat=24.0, lon=-19.0),
+    "eberswalde": dict(label="Eberswalde delta", lat=-23.8, lon=-33.6),
+    "holden": dict(label="Holden crater", lat=-26.4, lon=-34.0),
+    "melas": dict(label="Melas Chasma (Valles Marineris)", lat=-9.8, lon=-76.5),
+    "arcadia": dict(label="Arcadia Planitia (shallow ice)", lat=40.0, lon=-160.0),
+}
+_SITE_ID = r"site_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)"
+
+
+def site_id(lat, lon):
+    """Region id for a box centred on (lat, lon), rounded to 0.01 deg."""
+    return f"site_{round(lat, 2):g}_{round((lon + 180) % 360 - 180, 2):g}"
+
+
+def region_box(name):
+    """Bounds + grid density of any region: one of REGIONS, a named SITE or a site_<lat>_<lon> id. None if unknown."""
+    import re
+    if name in REGIONS:
+        return dict(REGIONS[name])
+    m = re.fullmatch(_SITE_ID, name)
+    lat, lon = (SITES[name]["lat"], SITES[name]["lon"]) if name in SITES else \
+               (float(m.group(1)), float(m.group(2))) if m else (None, None)
+    if lat is None or not (-88 <= lat <= 88 and -180 <= lon <= 180):
+        return None
+    h = SITE_SIZE_DEG / 2
+    return dict(west=lon - h, east=lon + h, south=max(-89.9, lat - h), north=min(89.9, lat + h),
+                px_per_deg=SITE_PX_PER_DEG)
+
+
+def region_label(name):
+    import re
+    if name in SITES:
+        return SITES[name]["label"]
+    m = re.fullmatch(_SITE_ID, name)
+    if m:
+        lat, lon = float(m.group(1)), float(m.group(2))
+        return f"Site {abs(lat):.2f}°{'S' if lat < 0 else 'N'} {abs(lon):.2f}°{'W' if lon < 0 else 'E'}"
+    return {"jezero": "Jezero crater (Perseverance)", "jezero_hirise": "Jezero close-up (HiRISE)"}.get(
+        name, name.replace("_", " ").capitalize())
+
+
+def mc_quadrangle(lat, lon):
+    """Mars Chart quadrangle number (MC-01..30) holding (lat, lon east-positive)."""
+    x = (lon + 180) % 360
+    if lat > 65:
+        return 1
+    if lat < -65:
+        return 30
+    if lat >= 30:
+        return 2 + int(x // 60)
+    if lat >= 0:
+        return 8 + int(x // 45)
+    if lat >= -30:
+        return 16 + int(x // 45)
+    return 24 + int(x // 60)
 
 # ---------------------------------------------------------------------------
 # DATA SOURCES (one entry per band). These kinds are supported:
@@ -29,6 +102,8 @@ REGIONS = {
 #   {"kind": "download", "url": "...", "path": "data/..."}  fetched once into data/, then read as a file
 #   {"kind": "wms",  "server": "...", "layer": "..."}  a USGS WMS layer
 #   {"kind": "crism"}                           CRISM mineral maps, found automatically (see MINERALS)
+#   {"kind": "table", "path": ..., "lon_col": 0, "lat_col": 1, "value_col": 2}   point table, interpolated
+# Optional on file/cog/download: "nodata": 0 (extra no-data value), "resampling": "nearest" (class maps).
 # The builder tries each source in the list in order and uses the first that works.
 # Set a "file" path once you have downloaded something -> it wins.
 # ---------------------------------------------------------------------------
@@ -55,7 +130,18 @@ SOURCES = {
     # CRISM (MRO) mineral maps -> one band per entry in MINERALS below. The builder asks NASA's Orbital
     # Data Explorer for every CRISM product over the region: targeted observations (MTRDR, ~18-36 m)
     # first, the multispectral mapping tile (MRDR, ~180 m) fills the gaps. Skipped for huge regions.
-    "minerals": [{"kind": "crism"}],
+    "crism": [{"kind": "crism"}],
+    # TES bolometric albedo, whole planet (USGS, 16 MB). Dark = absorbs more sunlight.
+    "albedo": [
+        {"kind": "download", "url": "https://planetarymaps.usgs.gov/mosaic/Mars_MGS_TES_Albedo_mosaic_global_7410m.tif",
+         "path": "data/Mars_MGS_TES_Albedo_mosaic_global_7410m.tif"},
+        # team table (lon, lat, albedo, TI) if someone has it:
+        {"kind": "table", "path": "data/mars_albedo_ti.txt", "lon_col": 0, "lat_col": 1, "value_col": 2, "valid_min": 0},
+    ],
+    # Calibrated thermal inertia: region-specific maps first (see REGION_SOURCES), then the team table
+    "thermal_inertia": [
+        {"kind": "table", "path": "data/mars_albedo_ti.txt", "lon_col": 0, "lat_col": 1, "value_col": 3, "valid_min": 1},
+    ],
     # Add more as the team finds them, e.g.:
     # "albedo":   [{"kind": "file", "path": "data/TES_albedo.tif"}],
     # "dust":     [{"kind": "file", "path": "data/TES_dust_cover_index.tif"}],
@@ -74,6 +160,7 @@ def themis_ti(mc):
 # ---------------------------------------------------------------------------
 # MINERALS from CRISM spectral summary parameters (Viviano-Beck et al. 2014, JGR Planets 119, 1403).
 # Each mineral band in the cube = the strongest of its CRISM parameters (a band depth, no unit).
+# label: plain name shown to everyone ("clay"); science: the precise name, shown in the advanced view.
 # detect: below this, treat as no detection (noise); strong: a clear, strong signature.
 # Thresholds are for ~100 m cube pixels: averaging 18 m CRISM pixels lowers band depths, so they sit below
 # full-resolution values. Checked at Jezero against published maps (Ehlmann 2008, Goudge 2015, Horgan 2020):
@@ -82,20 +169,20 @@ def themis_ti(mc):
 # add a mineral here and rebuild the cube.
 # ---------------------------------------------------------------------------
 MINERALS = {
-    "clay": dict(label="Fe/Mg clay (smectite)", params=["D2300"], detect=0.010, strong=0.020, words=[
+    "clay": dict(label="clay", science="Fe/Mg clay (smectite)", params=["D2300"], detect=0.010, strong=0.020, words=[
         "clay", "clays", "smectite", "phyllosilicate", "nontronite", "saponite", "clay minerals", "mud",
         "mudstone", "clay rich"]),
-    "carbonate": dict(label="carbonate", params=["MIN2295_2480", "MIN2345_2537"], detect=0.002, strong=0.006,
+    "carbonate": dict(label="carbonate", science="carbonate (Mg/Fe/Ca)", params=["MIN2295_2480", "MIN2345_2537"], detect=0.002, strong=0.006,
                       words=["carbonate", "magnesite", "siderite", "calcite"]),
-    "olivine": dict(label="olivine", params=["OLINDEX3"], detect=0.12, strong=0.16, words=[
+    "olivine": dict(label="olivine", science="olivine (Fe/Mg silicate)", params=["OLINDEX3"], detect=0.12, strong=0.16, words=[
         "olivine", "forsterite", "ultramafic"]),
-    "pyroxene": dict(label="pyroxene", params=["LCPINDEX2", "HCPINDEX2"], detect=0.010, strong=0.020, words=[
+    "pyroxene": dict(label="pyroxene", science="pyroxene (low/high-Ca)", params=["LCPINDEX2", "HCPINDEX2"], detect=0.010, strong=0.020, words=[
         "pyroxene", "augite", "pigeonite", "basaltic"]),
-    "sulfate": dict(label="sulfate", params=["SINDEX2"], detect=0.010, strong=0.020, words=[
+    "sulfate": dict(label="sulfate", science="sulfate (polyhydrated)", params=["SINDEX2"], detect=0.010, strong=0.020, words=[
         "sulfate", "sulphate", "gypsum", "jarosite"]),
-    "hydrated_silica": dict(label="hydrated silica (opal)", params=["MIN2250"], detect=0.005, strong=0.010,
+    "hydrated_silica": dict(label="silica", science="hydrated silica (opal)", params=["MIN2250"], detect=0.005, strong=0.010,
                             words=["hydrated silica", "opal", "opaline", "silica"]),
-    "hydrated": dict(label="water-bearing minerals", params=["BD1900_2"], detect=0.008, strong=0.015, words=[
+    "hydrated": dict(label="water-bearing minerals", science="hydrated minerals (1.9 µm water band)", params=["BD1900_2"], detect=0.008, strong=0.015, words=[
         "hydrated", "hydrated minerals", "water bearing", "water bearing minerals", "water", "h2o", "aqueous", "wet"]),
 }
 
@@ -110,22 +197,28 @@ CTX_IMG = {"kind": "cog", "url": f"{M20}/CTX/JEZ_ctx_B_soc_008_orthoMosaic_6m_Eq
 HIRISE_DEM_FILE = {"kind": "file", "path": "data/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif"}  # 1.8 GB
 CTX_DEM_FILE = {"kind": "file", "path": "data/M20_JezeroCrater_CTXDEM_20m.tif"}
 CTX_IMG_FILE = {"kind": "file", "path": "data/JEZ_ctx_B_soc_008_orthoMosaic_6m_Eqc_latTs0_lon0.tif"}
+# Jezero thermal inertia (THEMIS, calibrated, J m-2 K-1 s-1/2) - Zenodo record 4931348
+JEZ_TI = {"kind": "download", "url": "https://zenodo.org/records/4931348/files/Jezero_Thermal_Inertia_v1.tiff?download=1",
+          "path": "data/Jezero_Thermal_Inertia_v1.tiff", "nodata": 0}
+# Jezero CRISM dominant-mineral map (classes, 0 = no data) - Zenodo record 5575824
+JEZ_MIN = {"kind": "download", "url": "https://zenodo.org/records/5575824/files/jezeroFinal.tif?download=1",
+           "path": "data/jezeroFinal.tif", "nodata": 0, "resampling": "nearest"}
 
 REGION_SOURCES = {
     "jezero": {
         "elevation": [CTX_DEM_FILE, CTX_DEM],
         "imagery":   [CTX_IMG_FILE, CTX_IMG],
-        "thermal_inertia": [themis_ti(13)],          # MC-13 Syrtis Major
+        "thermal_inertia": [JEZ_TI, themis_ti(13)],  # calibrated Jezero map, else MC-13 Syrtis Major (1 km)
+        "minerals":  [JEZ_MIN],
     },
     "jezero_hirise": {
         "elevation": [HIRISE_DEM_FILE, CTX_DEM_FILE, CTX_DEM],
         "imagery":   [CTX_IMG_FILE, CTX_IMG],
-        "thermal_inertia": [themis_ti(13)],
-    },
-    "gale": {
-        "thermal_inertia": [themis_ti(23)],          # MC-23 Aeolis
+        "thermal_inertia": [JEZ_TI, themis_ti(13)],
+        "minerals":  [JEZ_MIN],
     },
 }
+# Every other region gets the THEMIS thermal-inertia tile of its quadrangle automatically (build_cube.sources_for).
 
 # Hand-placed science targets per region (replace with Siddhi's CRISM-based picks).
 # Coordinates are approximate and for the demo only.
@@ -134,6 +227,8 @@ _JEZERO_TARGETS = [
         {"name": "Western delta front (approx.)", "lat": 18.50, "lon": 77.40},
 ]
 SCIENCE_TARGETS = {"jezero": _JEZERO_TARGETS, "jezero_hirise": _JEZERO_TARGETS}
+SCIENCE_TARGETS.update({k: [{"name": f"{s['landed']} landing site", "lat": s["lat"], "lon": s["lon"]}]
+                        for k, s in SITES.items() if s.get("landed")})
 
 # Approximate places for the text target search when the cube has NO band for that material (e.g. a
 # region without CRISM coverage). Each zone is a circle; "tags" are the search words that select it.
@@ -165,6 +260,13 @@ CONSUMABLE_SOURCES = {
                     "~3.3 kWh per km.",
     "estimate": "Engineering estimate for a conceptual crew rover - no published NASA figure was "
                 "available for these loads. Treat the numbers as tunable, not as fact.",
+    "mars_pr_battery": "NASA Mars Architecture Team pressurized rover (Chappell, Hoffman and Bekdash, \"Human Mars "
+                       "Mission Surface Power Impacts on Timeline and Traverse Capabilities\", IEEE Aerospace "
+                       "Conference 2022, NTRS 20210022250): 5,193 kg with 60 kWh of batteries, a 1.85 kW hotel load "
+                       "for everything but driving, and transport cost = rolling resistance 0.15 x mass x gravity x "
+                       "distance, which on Mars is 0.80 kWh per km. The study keeps crewed traverses within about "
+                       "20 km of the landing site. Speed 10 km/h is the NASA SEV / Lunar Electric Rover prototype's "
+                       "(NASA fact sheet); the study assumed an 8 km/h average.",
     "lrv_battery": "Apollo LRV: two 36 V silver-zinc batteries of 121 A-h each (about 8.7 kWh together) "
                    "and a 92 km range, so about 0.095 kWh per km averaged over everything the batteries "
                    "ran. The crew breathe suit oxygen at the astronaut rate. NASA's DRA 5.0 proposes "
@@ -199,9 +301,10 @@ CONSUMABLE_RESERVE = dict(normal=0.15, dust_season=0.20, dust_season_ls=(180.0, 
 #   recharge_ratio: hours of charging per hour of driving (team research, Gia), used only where
 #                   no published array figure exists
 VEHICLE_POWER = {
-    "pressurized_rover": dict(source="battery", mass_kg=4000.0, recharge_ratio=2.0,
-                              note="SEV concept: cabin 3,000 kg + chassis 1,000 kg. Recharge ratio 2:1 is the "
-                                   "team's resource research figure, not a NASA one."),
+    "pressurized_rover": dict(source="battery", mass_kg=5193.0, recharge_ratio=2.0,
+                              note="NASA Mars pressurized rover study (Chappell et al. 2022): 5,193 kg with its "
+                                   "60 kWh battery. Recharge ratio 2:1 is the team's resource research figure, "
+                                   "not a NASA one."),
     "unpressurized_rover": dict(source="primary", mass_kg=210.0,
                                 note="Apollo LRV mass; its silver-zinc batteries were not rechargeable."),
     "small_rover": dict(source="nuclear", mass_kg=899.0, note="Curiosity, MMRTG."),
@@ -213,16 +316,25 @@ VEHICLE_POWER = {
 }
 
 # Vehicle / walker profiles. Weights are tunable during the demo.
+# The crewed ones (astronaut, pressurized_rover, unpressurized_rover) are also the mission planner's on_foot,
+# buggy and four_wheel: MISSION_VEHICLES below is built from these entries, so change the numbers here only.
 VEHICLES = {
+    # max_slope 18: NASA sizes the exploration suit for walking up, down and across slopes of up to 20 deg
+    # (Exploration EVA System Concept of Operations, EVA-EXP-0075, 2020); Apollo 15 crews walked ~17 deg slopes
+    # and Apollo crews put the unassisted limit at 20-26 deg (Scheuring et al. 2007, NTRS 20070030109).
+    # 18 keeps a margin under the 20 deg design figure; the margin itself is the team's choice.
     "astronaut": dict(label="Astronaut on foot (suited)", max_slope=18.0, base_speed_kmh=6.0,
                       suit_factor=0.5, sand_penalty=1.5, rough_penalty=1.0, uses_slip_table=False,
                       rated_hours=8.0, consumable_source="suit_o2",
                       consumables=dict(_SUIT_O2_SUPPLY)),
+    # NASA Mars pressurized rover (see CONSUMABLE_SOURCES["mars_pr_battery"]): 60 kWh, 1.85 kW hotel load,
+    # 0.15 x 5,193 kg x 3.711 m/s2 = 2.89 kN of rolling resistance = 0.80 kWh per km. Terrain penalties are
+    # the team's, not NASA's.
     "pressurized_rover": dict(label="Pressurized crew rover", max_slope=20.0, base_speed_kmh=10.0,
                               suit_factor=1.0, sand_penalty=3.0, rough_penalty=2.0, uses_slip_table=True,
-                              rated_hours=12.0, consumable_source="estimate",
-                              consumables=dict(energy_capacity_kwh=20.0, energy_idle_kw=1.5,
-                                               energy_per_km_kwh=0.12)),
+                              rated_hours=12.0, consumable_source="mars_pr_battery",
+                              consumables=dict(energy_capacity_kwh=60.0, energy_idle_kw=1.85,
+                                               energy_per_km_kwh=0.80)),
     # Apollo LRV figures (flown 1971-72). Design top speed 10 km/h; NASA's LRV mobility report found
     # 20-23 deg slopes workable (spec 25), so 20 here. Terrain penalties copied from the crew rover.
     "unpressurized_rover": dict(label="Open crew rover (Apollo LRV-class)", max_slope=20.0, base_speed_kmh=10.0,
@@ -270,7 +382,8 @@ VEHICLES = {
 
 # ===========================================================================
 # MISSION PLANNER (mission.py). Every number below is a first-order assumption for the demo:
-# tune freely, and say "approximate" if judges ask.
+# tune freely, and say "approximate" if judges ask. Exception: the vehicles shared with VEHICLES (see
+# MISSION_VEHICLE_OF) take their numbers, and sources, from there.
 # ===========================================================================
 
 # Real rover traverses (NASA/JPL mission maps), fetched with: python fetch_tracks.py <region>
@@ -290,19 +403,43 @@ TRACK_RULES = dict(
 # Vehicles. max_slope / range_km are hard limits. Suited crews (on foot, open rovers) are also limited by
 # suit oxygen (SUIT below).
 # Battery vehicles: battery_wh, wh_per_km on flat firm ground, hotel_w for computers/heaters/radios.
+# on_foot, four_wheel and buggy are the route planner's astronaut, unpressurized_rover and pressurized_rover:
+# their physical numbers (slope, speed, terrain penalties, mass, battery, energy per km, idle power) come from
+# VEHICLES / VEHICLE_POWER and their sources. Only range_km and suited are set here.
+MISSION_VEHICLE_OF = {"on_foot": "astronaut", "four_wheel": "unpressurized_rover", "buggy": "pressurized_rover"}
+
+
+def _mission_vehicle(mission_key, range_km, suited):
+    """The mission planner entry for `mission_key`, read from its VEHICLES profile (kWh -> Wh, kW -> W),
+    plus the mission-only range_km (one way) and suited."""
+    key = MISSION_VEHICLE_OF[mission_key]
+    v = VEHICLES[key]
+    c = v.get("consumables") or {}
+    out = dict(label=v["label"], max_slope=v["max_slope"], range_km=range_km, base_speed_kmh=v["base_speed_kmh"],
+               suit_factor=v["suit_factor"], sand_penalty=v["sand_penalty"], rough_penalty=v["rough_penalty"],
+               uses_slip_table=v["uses_slip_table"],
+               mass_kg=VEHICLE_POWER.get(key, {}).get("mass_kg", WALKER["body_kg"] + WALKER["suit_kg"]),
+               suited=suited, battery_wh=None)
+    if c.get("energy_capacity_kwh"):
+        out.update(battery_wh=round(c["energy_capacity_kwh"] * 1000, 3),
+                   wh_per_km=round(c["energy_per_km_kwh"] * 1000, 3), hotel_w=round(c["energy_idle_kw"] * 1000, 3))
+    return out
+
+
 MISSION_VEHICLES = {
-    "on_foot": dict(label="On foot (suited astronaut)", max_slope=15.0, range_km=2.0, base_speed_kmh=6.0,
-                    suit_factor=0.5, sand_penalty=1.5, rough_penalty=1.0, uses_slip_table=False,
-                    mass_kg=170, suited=True, battery_wh=None),
-    "two_wheel": dict(label="2-wheel scout bike", max_slope=15.0, range_km=15.0, base_speed_kmh=8.0,
+    # range 2 km: NASA's exploration EVA concept of operations plans walking traverses up to 2 km from the lander
+    "on_foot": _mission_vehicle("on_foot", range_km=2.0, suited=True),
+    # Team estimate, not a published vehicle: no source for any of these numbers. 14 km (was 15) so the round
+    # trip (1.8 kWh) fits in the 2.5 kWh battery after the largest (25 %) reserve.
+    "two_wheel": dict(label="2-wheel scout bike", max_slope=15.0, range_km=14.0, base_speed_kmh=8.0,
                       suit_factor=1.0, sand_penalty=3.5, rough_penalty=2.5, uses_slip_table=True,
                       mass_kg=250, suited=True, battery_wh=2500, wh_per_km=60, hotel_w=30),
-    "four_wheel": dict(label="4-wheel open rover (LRV-class)", max_slope=20.0, range_km=30.0, base_speed_kmh=10.0,
-                       suit_factor=1.0, sand_penalty=2.5, rough_penalty=2.0, uses_slip_table=True,
-                       mass_kg=550, suited=True, battery_wh=12000, wh_per_km=150, hotel_w=100),
-    "buggy": dict(label="Pressurized buggy (6-wheel)", max_slope=20.0, range_km=100.0, base_speed_kmh=12.0,
-                  suit_factor=1.0, sand_penalty=2.0, rough_penalty=1.5, uses_slip_table=True,
-                  mass_kg=3000, suited=False, battery_wh=90000, wh_per_km=600, hotel_w=1500),
+    # 30 km one way: 60 km x 95 Wh/km = 5.7 kWh, inside the 8.71 kWh LRV battery after the largest (25 %) reserve
+    "four_wheel": _mission_vehicle("four_wheel", range_km=30.0, suited=True),
+    # 20 km one way: NASA's Mars pressurized rover study keeps crewed traverses within about 20 km of the landing
+    # site, and 40 km at 0.80 kWh/km + 1.85 kW for 4 h of driving and 1 h on site (41.3 kWh) fits in the
+    # 45 kWh its 60 kWh battery leaves after the largest (25 %) reserve; the old 100 km did not
+    "buggy": _mission_vehicle("buggy", range_km=20.0, suited=False),
 }
 # Suit oxygen = the astronaut profile in VEHICLES (NASA-sourced, see CONSUMABLE_SOURCES["suit_o2"]). The same rate
 # applies walking, riding an open rover and sampling; mission.py adds the extra cost of walking uphill.
@@ -320,6 +457,23 @@ SEASONS = {
     "northern_autumn": dict(label="Northern autumn (Ls 180-270): dust-storm season", ls=225, dust_risk=0.50),
     "northern_winter": dict(label="Northern winter (Ls 270-360): dust-storm season", ls=315, dust_risk=0.35),
 }
+
+
+BASE_SEASONS = list(SEASONS)          # the four named seasons, Ls 0-90 / 90-180 / 180-270 / 270-360 in order
+
+
+def season_for_ls(ls):
+    """Season entry for any solar longitude from the season slider: the dust risk of the SEASONS range it falls in,
+    planned at that exact Ls. Registered in SEASONS under "ls_<deg>" so the planner can use it like the others."""
+    ls = round(float(ls) % 360, 1)
+    key = f"ls_{ls:g}"
+    if key not in SEASONS:
+        base = SEASONS[BASE_SEASONS[min(3, int(ls // 90))]]       # spring 0-90, summer, autumn, winter 270-360
+        name, dusty = base["label"].split(" (")[0], base["dust_risk"] >= 0.3
+        SEASONS[key] = dict(label=f"{name} (Ls {ls:g}°)" + (": dust-storm season" if dusty else ""), ls=ls,
+                            dust_risk=base["dust_risk"])
+    return key
+
 
 # Priority: how the route cost map weighs time, energy/oxygen and terrain risk, and which decision-matrix
 # criterion gets +10 points (the rest are scaled down so weights still sum to 100).
@@ -374,8 +528,10 @@ NASA_SITES = {
              bounds=[75.154, 15.906, 78.872, 19.445]),
     ],
 }
+NASA_SITES.update({k: [dict(name=f"{s['landed']} landing site", kind="past landing site", lat=s["lat"], lon=s["lon"],
+                            radius_km=0.6)] for k, s in SITES.items() if s.get("landed")})
 
 # COSPAR planetary-protection Special Regions (where liquid water or Earth microbes might survive, e.g.
 # recurring slope lineae, gullies, shallow ice). None are known inside the current regions; add circles as
 # dict(name=..., lat=..., lon=..., radius_km=..., source=...).
-SPECIAL_REGIONS = {"jezero": [], "jezero_hirise": [], "gale": []}
+SPECIAL_REGIONS = {"jezero": [], "jezero_hirise": []}

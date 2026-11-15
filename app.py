@@ -9,6 +9,10 @@ import base64
 import io
 import json
 import math
+import subprocess
+import sys
+import threading
+import time
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -24,10 +28,12 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 import mission
+import murray
 import physics
 import search
 from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
-                    PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, VEHICLES)
+                    PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, SITE_SIZE_DEG, BASE_SEASONS, season_for_ls, SITES, VEHICLES,
+                    region_box, region_label, site_id)
 from gear.api import router as gear_router
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
 from surface_temperature import temperature_overlay
@@ -83,9 +89,49 @@ class Cube:
         return {"west": self.w, "south": self.s, "east": self.e, "north": self.n}
 
 
-@lru_cache(maxsize=4)
+def _cube_path(region):
+    return ROOT / "cubes" / f"{region}.npz"
+
+
 def get_cube(region):
+    """The cube for a region, reloaded when build_cube.py replaces its file (site cubes are saved twice)."""
+    p = _cube_path(region)
+    return _load_cube(region, p.stat().st_mtime if p.exists() else 0)
+
+
+@lru_cache(maxsize=4)
+def _load_cube(region, mtime):
     return Cube(region)
+
+
+@lru_cache(maxsize=128)
+def _cube_meta(region, mtime):
+    """What /api/regions lists, read without decompressing the bands (a cube can be >100 MB)."""
+    z = np.load(_cube_path(region), allow_pickle=False)
+    names = [str(n) for n in z["band_names"]]
+    w, s, e, n = [float(v) for v in z["bounds"]]
+    H, W = z["coverage_fraction"].shape
+    mid = math.radians((s + n) / 2)
+    return {"region": region, "label": region_label(region), "rect": {"west": w, "south": s, "east": e, "north": n},
+            "size": [W, H], "bands": names,
+            "pixel_m": [round((e - w) / W * math.pi / 180 * MARS_RADIUS_M * math.cos(mid)),
+                        round((n - s) / H * math.pi / 180 * MARS_RADIUS_M)],
+            "provenance": [str(p) for p in z["provenance"]],
+            "targets": list({t["name"]: t for lst in SCIENCE_TARGETS.values() for t in lst
+                             if s <= t["lat"] <= n and w <= t["lon"] <= e}.values()),
+            "minerals": {k: m["label"] for k, m in MINERALS.items() if k in names}}
+
+
+def _region_order(region):
+    return (0 if region.startswith("jezero") else 1 if region in SITES else 2, region)
+
+
+def cube_metas():
+    out = []
+    for p in sorted((ROOT / "cubes").glob("*.npz"), key=lambda p: _region_order(p.stem)):
+        if not p.name.startswith("."):
+            out.append(_cube_meta(p.stem, p.stat().st_mtime))
+    return out
 
 
 # -------------------------------------------------------------- helpers ----
@@ -183,6 +229,7 @@ class MissionRequest(BaseModel):
     goal: str = Field(..., min_length=1, max_length=300, description='e.g. "sample clay where water once flowed"')
     vehicle: str = "on_foot"
     season: str = "northern_summer"
+    ls: float | None = Field(None, ge=0, le=360, description="season slider (solar longitude); overrides 'season'")
     priority: str = "safety"
     green_only: bool = Field(False, description="stick to green, rover-verified tracks where possible")
 
@@ -204,6 +251,22 @@ def conditions_layers(cube, cond):
     illum = physics.illumination(b["slope"], b["aspect"], sun_e, sun_az)
     cost = physics.cost_seconds_per_meter(b, v, cond.weights)
     return v, sun_e, sun_az, illum, cost
+
+
+def suitability(c, v, cost):
+    """Decision layer: where is it safe AND worthwhile to go? (0 = poor, 1 = best)
+    safety   : gentle slope + firm ground          (weight 0.45)
+    science  : CRISM mineral detections           (weight 0.35, only where mapped)
+    shielding: more air above = less radiation    (weight 0.20)"""
+    b = c.bands
+    slope_ok = 1 - np.clip(b["slope"] / v["max_slope"], 0, 1)
+    firm = b.get("firmness", np.full_like(b["slope"], 0.5))
+    safety = 0.6 * slope_ok + 0.4 * np.nan_to_num(firm, nan=0.5)
+    sci = b.get("science")
+    sci = np.zeros_like(safety) if sci is None else np.nan_to_num(sci)
+    shield = np.clip((b["air_column_vs_gale"] - 0.7) / 0.5, 0, 1) if "air_column_vs_gale" in b else 0.5
+    score = 0.45 * safety + 0.35 * sci + 0.20 * shield
+    return np.where(np.isfinite(cost), score, np.nan)
 
 
 # ---------------------------------------------------------- consumables ----
@@ -356,34 +419,141 @@ def consumables_block(v, seconds, distance_m, veh_key="", route=None):
 # ------------------------------------------------------------ endpoints ----
 @app.get("/api/regions")
 def regions():
-    out = []
-    for p in sorted((ROOT / "cubes").glob("*.npz")):
-        c = get_cube(p.stem)
-        out.append({"region": c.region, "rect": c.rect, "size": [c.W, c.H], "bands": c.names,
-                    "pixel_m": [round(c.pixel_m[0]), round(c.pixel_m[1])], "provenance": c.provenance,
-                    "targets": SCIENCE_TARGETS.get(c.region, []),
-                    "minerals": {n: m["label"] for n, m in MINERALS.items() if n in c.bands}})
-    return {"regions": out, "vehicles": {k: v["label"] for k, v in VEHICLES.items()},
+    return {"regions": cube_metas(), "vehicles": {k: v["label"] for k, v in VEHICLES.items()},
             "vehicle_specs": {k: vehicle_spec(v) for k, v in VEHICLES.items()}}
+
+
+@app.get("/api/imagery/{region}")
+def hires_imagery(region: str):
+    """High-resolution photo overlay for a region, if build_cube.py made one."""
+    import json
+    meta = ROOT / "cubes" / f"{region}_imagery.json"
+    if not meta.exists():
+        return {"available": False}
+    return {"available": True, "url": f"/cubes/{region}_imagery.webp", **json.loads(meta.read_text())}
+
+
+GLOBAL_DEM = "https://planetarymaps.usgs.gov/mosaic/Mars/HRSC_MOLA_Blend/Mars_HRSC_MOLA_BlendDEM_Global_200mp_v2.tif"
+_ds_cache = {}
+
+
+def _open(path):
+    import rasterio
+    if path not in _ds_cache:
+        p = "/vsicurl/" + path if path.startswith("http") else path
+        with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
+            _ds_cache[path] = rasterio.open(p)
+    return _ds_cache[path]
+
+
+def _sample(path, lat, lon, half=3):
+    """Read a small (2*half+1)^2 window around lat/lon from a Mars equirectangular GeoTIFF."""
+    from rasterio.windows import Window
+    from rasterio.warp import transform as warp_transform
+    ds = _open(path)
+    xs, ys = warp_transform("+proj=longlat +R=3396190 +no_defs", ds.crs, [lon], [lat])
+    row, col = ds.index(xs[0], ys[0])
+    win = Window(col - half, row - half, 2 * half + 1, 2 * half + 1)
+    arr = ds.read(1, window=win, boundless=True, fill_value=np.nan).astype("float64")
+    if ds.nodata is not None:
+        arr[arr == ds.nodata] = np.nan
+    res = abs(ds.transform.a)
+    if ds.crs.is_geographic:                       # degrees -> metres
+        res = res * np.pi / 180 * MARS_RADIUS_M
+    return arr, res
+
+
+def _wms_point(layer, lat, lon, d=0.01):
+    """Average value of a USGS WMS layer in a tiny box around the point."""
+    url = (f"https://planetarymaps.usgs.gov/cgi-bin/mapserv?map=/maps/mars/mars_simp_cyl.map&SERVICE=WMS"
+           f"&VERSION=1.1.1&REQUEST=GetMap&SRS=EPSG:4326&STYLES=&LAYERS={layer}&FORMAT=image/png"
+           f"&BBOX={lon - d},{lat - d},{lon + d},{lat + d}&WIDTH=4&HEIGHT=4")
+    img = np.asarray(Image.open(io.BytesIO(_get(url))).convert("L"), dtype="float64")
+    return float(img.mean())
+
+
+@app.get("/api/point")
+def point_query(lat: float, lon: float):
+    """Live lookup anywhere on Mars (no cube needed). Lower resolution than the Jezero cubes."""
+    vals, notes = {}, []
+    try:
+        z, res = _sample(GLOBAL_DEM, lat, lon)
+        if np.isfinite(z[3, 3]):
+            vals["elevation"] = round(float(z[3, 3]), 1)
+            dx = res * (np.cos(np.radians(lat)) if _open(GLOBAL_DEM).crs.is_geographic else 1.0)
+            gy, gx = np.gradient(z, res, dx)
+            vals["slope"] = round(float(np.degrees(np.arctan(np.hypot(gx[3, 3], gy[3, 3])))), 2)
+            vals["roughness"] = round(float(np.nanstd(z[2:5, 2:5])), 2)
+            air = float(np.exp(-(vals["elevation"] + 4500.0) / 11100.0))
+            vals["air_column_vs_gale"] = round(air, 3)
+            notes.append(f"air column {air * 100:.0f}% of Gale crater (Curiosity RAD there: ~0.64 mSv/day); "
+                         + ("more shielding" if air > 1.03 else "less shielding" if air < 0.97 else "about the same"))
+    except Exception as ex:
+        notes.append(f"elevation unavailable ({type(ex).__name__})")
+    tes = ROOT / "data" / "Mars_MGS_TES_Albedo_mosaic_global_7410m.tif"
+    try:
+        a, _ = _sample(str(tes) if tes.exists() else
+                       "https://planetarymaps.usgs.gov/mosaic/Mars_MGS_TES_Albedo_mosaic_global_7410m.tif", lat, lon, 0)
+        if np.isfinite(a[0, 0]) and 0 < a[0, 0] < 1:
+            vals["albedo"] = round(float(a[0, 0]), 3)
+            notes.append(f"albedo {vals['albedo']:.2f} - " + ("bright, likely dusty" if vals["albedo"] > 0.26
+                                                                 else "dark, less dust"))
+    except Exception:
+        pass
+    for band, layer in (("themis_night", "THEMIS_night"), ("themis_day", "THEMIS")):
+        try:
+            vals[band] = round(_wms_point(layer, lat, lon), 1)
+        except Exception:
+            pass
+    ground = None
+    if "themis_night" in vals:   # relative proxy: warm at night = rock, cold = loose
+        n = vals["themis_night"]
+        ground = ("probably loose dust/sand (cold at night)" if n < 90 else
+                  "mixed ground" if n < 150 else "probably rocky / firm (warm at night)") + " - THEMIS estimate"
+    return {"lat": lat, "lon": lon, "values": vals, "ground": ground, "notes": notes,
+            "confidence": "live lookup (~200 m elevation, ~7 km albedo)", "source": "global"}
 
 
 @app.get("/api/pixel")
 def pixel(lat: float, lon: float, region: str = "jezero"):
-    c = get_cube(region)
+    """Values stored in a cube pixel. Falls back to other regions, then a live global lookup."""
+    metas = cube_metas()
+    candidates = [m["region"] for m in metas if m["region"] == region] + \
+                 [m["region"] for m in metas if m["region"] != region]
+    rects = {m["region"]: m["rect"] for m in metas}
+    c = None
+    for reg in candidates:
+        b = rects[reg]
+        if b["south"] <= lat <= b["north"] and b["west"] <= lon <= b["east"]:
+            c = get_cube(reg)
+            break
+    if c is None:
+        return point_query(lat, lon)
     r, col = c.rc(lat, lon)
     vals = {n: (None if not np.isfinite(c.bands[n][r, col]) else round(float(c.bands[n][r, col]), 3))
             for n in c.names}
-    ti, firm = vals.get("thermal_inertia"), vals.get("firmness")
-    if ti is not None:   # THEMIS thermal inertia classes (J m^-2 K^-1 s^-1/2)
-        ground = f"thermal inertia {ti:.0f}: {search.ti_class(ti)}" + (" - slip/sinkage risk" if ti < 300 else "")
+    firm, ti = vals.get("firmness"), vals.get("thermal_inertia")
+    if ti is not None:   # team reference table (J m-2 K-1 s-1/2)
+        ground = (f"TI {ti:.0f}: " + ("fine dust - very loose" if ti < 150 else "sand - loose, slip risk" if ti < 300
+                  else "coarse sand / crusted soil / mixed rocks" if ti < 600 else "bedrock / rock-rich - firm"))
     else:
         ground = None if firm is None else ("loose sand/dust - slip risk" if firm < 0.3
                                             else "mixed" if firm < 0.6 else "firm / bedrock")
+    air = vals.get("air_column_vs_gale")
+    notes = []
+    if air is not None:
+        notes.append(f"air column {air * 100:.0f}% of Gale crater (Curiosity RAD there: ~0.64 mSv/day); "
+                     + ("more shielding" if air > 1.03 else "less shielding" if air < 0.97 else "about the same"))
+    if vals.get("science"):
+        notes.append(f"CRISM mineral detection (class {vals.get('minerals'):.0f}) - science target")
+    alb = vals.get("albedo")
+    if alb is not None:
+        notes.append(f"albedo {alb:.2f} - " + ("bright, likely dusty" if alb > 0.26 else "dark, less dust"))
     minerals = [f"{m['label']}: {search.mineral_strength(n, c.bands[n][r, col])}"
                 for n, m in MINERALS.items() if n in c.bands and np.isfinite(c.bands[n][r, col])
                 and c.bands[n][r, col] >= m["detect"]]
-    return {"lat": lat, "lon": lon, "values": vals, "ground": ground, "minerals": minerals,
-            "confidence": round(float(c.coverage[r, col]), 2)}
+    return {"lat": lat, "lon": lon, "values": vals, "ground": ground, "minerals": minerals, "notes": notes,
+            "confidence": round(float(c.coverage[r, col]), 2), "source": c.region}
 
 
 @app.get("/api/weather/calendar")
@@ -507,8 +677,16 @@ def layer(name: str, cond: Conditions):
             arr, unit, cmap = arr, "deg", "magma"
         if name == "firmness":
             cmap = "cividis"
+        if name == "albedo":
+            cmap = "gray"
         if name == "thermal_inertia":
-            unit, cmap = "J m-2 K-1 s-1/2", "cividis"
+            arr, unit, cmap = arr, "J m-2 K-1 s-1/2", "plasma"
+        if name == "minerals":
+            cmap, unit = "tab20", "CRISM class"
+        if name == "science":
+            arr, cmap, unit = np.where(arr > 0, 1.0, np.nan), "Greens", "mineral detected"
+        if name == "air_column_vs_gale":
+            cmap, unit = "Blues", "x Gale air column"
         if name in MINERALS:   # show only real detections: transparent below the detection limit
             m = MINERALS[name]
             shown = np.where(arr >= m["detect"], arr, np.nan)
@@ -521,6 +699,8 @@ def layer(name: str, cond: Conditions):
             return {"image": to_png(arr, "gray", lo, hi, alpha=1.0), "rect": c.rect,
                     "legend": legend(name, "brightness", lo, hi, "gray"),
                     "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
+    elif name == "suitability":
+        arr, unit, cmap = suitability(c, v, cost), "0 poor - 1 best", "RdYlGn"
     elif name == "illumination":
         arr, unit, cmap = np.clip(illum, 0, 1), "cos(i)", "inferno"
     elif name == "cost":
@@ -538,12 +718,96 @@ def layer(name: str, cond: Conditions):
             "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
 
 
+def _walkback_round_trip(c, v, veh_key, cost, start, ls, horizon_s):
+    """Time from base and the round-trip O2 / energy to each pixel, costed along the same
+    travel-time-optimal paths the planner uses, with the model of consumables_block().
+
+    Each pixel's path is the shortest-time tree from base; per step the walker's oxygen is
+    rate x flat-pace seconds x Minetti (out and back over that step's grade, so the round trip
+    climbs every slope once and descends it once). Vehicles use idle power x time + driving energy
+    per km + the energy to lift the vehicle up every climb (out) and descent (back). The sums are
+    accumulated down the tree by pointer jumping, so no per-pixel Python loop. Only pixels whose
+    round trip takes at most horizon_s are costed; the rest are NaN.
+    Returns (t_from_base, {name: round-trip amount grid}, {name: usable amount}, reserve)."""
+    from config import CONSUMABLE_RESERVE, VEHICLE_POWER
+
+    mcp = physics._mcp_costs(cost, c.pixel_m)
+    t, tb = mcp.find_costs([start])
+    reserve = CONSUMABLE_RESERVE["dust_season" if _in_dust_season(ls, CONSUMABLE_RESERVE["dust_season_ls"])
+                                 else "normal"]
+    cons, power = v.get("consumables") or {}, VEHICLE_POWER.get(veh_key, {})
+    walking = veh_key == "astronaut" and "o2_rate_kg_per_h" in cons
+    with np.errstate(invalid="ignore"):
+        rt_h = np.where(2 * t <= horizon_s, 2 * t / 3600, np.nan)
+    amounts, usable = {}, {}
+    if "o2_rate_kg_per_h" in cons and not walking:     # crew on suit O2 while riding: flat rate
+        amounts["oxygen"] = cons["o2_rate_kg_per_h"] * rt_h
+        usable["oxygen"] = float(cons["o2_capacity_kg"]) * (1 - reserve)
+    if walking or "energy_capacity_kwh" in cons:
+        # The pixels in the horizon, as a sub-tree: every predecessor is closer, so it is in too
+        H, W = t.shape
+        sel = np.flatnonzero(np.isfinite(rt_h))
+        pos = np.full(H * W, -1, dtype=np.int64)
+        pos[sel] = np.arange(sel.size)
+        step = tb.ravel()[sel]                          # index into mcp.offsets; -1 at the base
+        reached = step >= 0
+        off = np.asarray(mcp.offsets, dtype=np.int64)
+        k = np.where(reached, step, len(off))           # extra last entry = "no step"
+        step_flat = np.append(off[:, 0] * W + off[:, 1], 0)
+        step_run = np.append(np.hypot(off[:, 0] * c.pixel_m[0], off[:, 1] * c.pixel_m[1]), 0.0)
+        pred_flat = sel - step_flat[k]                  # the predecessor is one offset back
+        pred = pos[pred_flat]
+        run = step_run[k]
+        tf = t.ravel()
+        seg_s = np.where(reached, tf[sel] - tf[pred_flat], 0.0)
+        z = np.asarray(c.bands["elevation"], dtype="float64").ravel()
+        dz = np.where(reached, z[sel] - z[pred_flat], 0.0)
+        dz = np.where(np.isfinite(dz), dz, 0.0)
+        edges = []
+        if walking:
+            s = np.asarray(c.bands["slope"], dtype="float64").ravel()
+            slow = physics.walker_slope_slowdown(0.5 * (s[sel] + s[pred_flat]))
+            # (minetti_cw(g) + minetti_cw(-g)) / 2 is its even part; written out because evaluating the
+            # quintic on every pixel twice took longer than the whole path search
+            g2 = np.minimum((dz / np.maximum(run, 1e-6)) ** 2, 0.45 ** 2)
+            both = (-58.7 * g2 * g2 + 51.9 * g2 + 2.5) / physics.minetti_cw(0.0)
+            edges.append(cons["o2_rate_kg_per_h"] * 2 * seg_s * slow * both / 3600)
+        if "energy_capacity_kwh" in cons:
+            edges.append(np.where(reached, run, 0.0))
+            edges.append(np.abs(dz))
+        # Pointer jumping: sum each pixel's path back to base. The base points to itself with zero
+        # cost, so adding it again changes nothing.
+        acc, ptr = np.vstack(edges), pred
+        while sel.size:
+            acc += np.take(acc, ptr, axis=1)
+            nxt = np.take(ptr, ptr)
+            if np.array_equal(nxt, ptr):
+                break
+            ptr = nxt
+        full = np.full((len(edges), H * W), np.nan)
+        full[:, sel] = acc
+        acc = full.reshape(len(edges), H, W)
+        if walking:
+            amounts["oxygen"] = acc[0]
+            usable["oxygen"] = float(cons["o2_capacity_kg"]) * (1 - reserve)
+        if "energy_capacity_kwh" in cons:
+            kwh = cons["energy_idle_kw"] * rt_h + cons["energy_per_km_kwh"] * 2 * acc[-2] / 1000
+            if power.get("mass_kg"):                    # climbs out = descents back: lift over gain + loss
+                kwh = kwh + physics.climb_energy_kwh(power["mass_kg"], 1.0) * acc[-1]
+            amounts["energy"] = kwh
+            usable["energy"] = float(cons["energy_capacity_kwh"]) * (1 - reserve)
+    return t, amounts, usable, reserve
+
+
 @app.post("/api/plan")
 def plan(req: PlanRequest):
     c = get_cube(req.region)
     v, sun_e, sun_az, illum, cost = conditions_layers(c, req)
     start, goal = c.rc(req.base.lat, req.base.lon), c.rc(req.target.lat, req.target.lon)
     warnings = []
+    if 180 <= req.ls <= 330:
+        warnings.append(f"Season Ls {req.ls:.0f}: dusty season (Ls ~180-330), when regional/global dust storms "
+                        "usually occur. Check dust forecasts; EVAs are cancelled during storms.")
     if sun_e < req.min_sun_elev:
         warnings.append(f"Sun is {sun_e:.0f} deg above the horizon (minimum {req.min_sun_elev:.0f}). "
                         "Walks are restricted near dawn/dusk.")
@@ -552,20 +816,34 @@ def plan(req: PlanRequest):
             warnings.append(f"{name} is on terrain too steep for {v['label']} "
                             f"({c.bands['slope'][r, col]:.0f} deg > {v['max_slope']} deg).")
 
-    # Walk-back zone: places you can reach AND return from within the budget minus reserve
-    t_from_base = physics.travel_time_from(cost, [start], c.pixel_m)
+    # Walk-back zone: places you can reach AND return from within the time budget minus reserve AND
+    # the suit O2 / battery minus the consumables reserve (15 %, 20 % in dust season); tightest wins
     rated_hours = v.get("rated_hours") or math.inf
     budget_hours = min(req.budget_hours, rated_hours)
+    # O2 / energy are costed out to the time budget without its reserve, which bounds every zone
+    t_from_base, amounts, usable, cons_reserve = _walkback_round_trip(
+        c, v, req.vehicle, cost, start, req.ls, budget_hours * 3600)
     if req.budget_hours > rated_hours:
         warnings.append(f"Time budget capped at the {v['label']} rating of {rated_hours:g} h.")
     usable_s = budget_hours * 3600 * (1 - req.reserve)
-    walkback = np.where(2 * t_from_base <= usable_s, 1.0, np.nan)
-    walkback_t = np.where(np.isfinite(walkback), t_from_base / 60, np.nan)
+    with np.errstate(invalid="ignore"):
+        shares = {"time": 2 * t_from_base / usable_s, **{k: amounts[k] / usable[k] for k in amounts}}
+        fits = {k: np.isfinite(s) & (s <= 1.0) for k, s in shares.items()}
+    walkback = np.logical_and.reduce(list(fits.values()))
+    px_km2 = c.pixel_m[0] * c.pixel_m[1] / 1e6
+    areas = {k: round(float(f.sum()) * px_km2, 2) for k, f in fits.items()}
+    tightest = min(areas, key=lambda k: (areas[k], k != "time"))     # a tie goes to the time budget
+    used_pct = np.where(walkback, 100 * np.fmax.reduce(list(shares.values())), np.nan)
 
     path, seconds = physics.best_route(cost, start, goal, c.pixel_m)
     result = {"warnings": warnings, "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)},
               "rect": c.rect,
-              "walkback_image": to_png(walkback_t, "YlGn_r", 0, usable_s / 120, alpha=0.45)}
+              "walkback_image": to_png(used_pct, "YlGn_r", 0, 100, alpha=0.45),
+              "walkback_basis": tightest,
+              "walkback_area_km2": {"zone": round(float(walkback.sum()) * px_km2, 2), **areas},
+              "walkback_reserve_pct": int(round(100 * cons_reserve)),
+              "walkback_o2_usable_kg": round(usable["oxygen"], 3) if "oxygen" in usable else None,
+              "walkback_energy_usable_kwh": round(usable["energy"], 2) if "energy" in usable else None}
     if path is None:
         result["route"] = None
         result["explanation"] = "No safe route exists under these limits. Try another vehicle, time, or target."
@@ -618,9 +896,29 @@ def plan(req: PlanRequest):
         explanation += (f" Round trip uses {' and '.join(spent)}. "
                         f"{cons['binding_label']} is the tightest vehicle limit")
         explanation += ", and the EVA time budget is already exceeded." if not within else "."
+    # per point, for hovering over the route: distance and time so far, terrain, and supplies used so far
+    # (supplies estimated as the share of the one-way total by time)
+    step_m = np.append(np.hypot(seg[:, 0], seg[:, 1]), 0.0) if len(seg) else np.zeros(1)
+    t_at = np.concatenate([[0.0], np.cumsum(step_m * cost[rr, cc])[:-1]]) / 3600
+    d_at = np.concatenate([[0.0], np.cumsum(step_m)[:-1]]) / 1000
+    one_way_h = max(seconds / 3600, 1e-9)
+    o2_rt, e_rt = cons["stats"].get("o2_used_kg"), cons["stats"].get("energy_used_kwh")
+    ti_b, firm_b = c.bands.get("thermal_inertia"), c.bands.get("firmness")
+    num = lambda x, nd=2: None if x is None or not np.isfinite(x) else round(float(x), nd)
+
+    def route_point(i):
+        r_, c_ = path[i]
+        share = t_at[i] / one_way_h
+        return {"lat": coords[i][0], "lon": coords[i][1], "d": num(d_at[i], 3), "t": num(t_at[i], 3),
+                "elev": num(c.bands["elevation"][r_, c_], 0), "slope": num(c.bands["slope"][r_, c_], 1),
+                "ti": num(ti_b[r_, c_], 0) if ti_b is not None else None,
+                "firm": num(firm_b[r_, c_]) if firm_b is not None else None,
+                "o2_kg": num(share * o2_rt / 2, 3) if o2_rt is not None else None,
+                "energy_kwh": num(share * e_rt / 2, 3) if e_rt is not None else None}
+
+    k = max(1, len(coords) // 400)
     result.update({
-        "route": [{"lat": a, "lon": b} for a, b in coords[:: max(1, len(coords) // 400)]] + [
-            {"lat": coords[-1][0], "lon": coords[-1][1]}],
+        "route": [route_point(i) for i in list(range(0, len(coords), k)) + [len(coords) - 1]],
         "stats": {"distance_km": round(dist_m / 1000, 2), "one_way_h": round(seconds / 3600, 2),
                   "round_trip_h": round(round_trip_h, 2), "max_slope_deg": round(float(np.nanmax(route_slope)), 1),
                   "mean_slope_deg": round(float(np.nanmean(route_slope)), 1), "within_budget": within,
@@ -635,7 +933,7 @@ def find(req: FindRequest):
     """Turn a text description ("valley with clay") into the best matching target pixels."""
     c = get_cube(req.region)
     v, sun_e, sun_az, illum, cost = conditions_layers(c, req)
-    temp = physics.surface_temp_k(illum, c.bands.get("firmness"), sun_e)
+    temp = physics.surface_temp_k(illum, c.bands.get("firmness"), sun_e, c.bands.get("albedo"))
     t_base, notes = None, []
     focus = (req.focus.lat, req.focus.lon) if req.focus else ((c.s + c.n) / 2, (c.w + c.e) / 2)
     usable_s = min(req.budget_hours, v.get("rated_hours") or math.inf) * 3600 * (1 - req.reserve)
@@ -665,7 +963,7 @@ _missions = {}   # mission id -> facts for the explanation (last 50)
 def mission_options():
     return {"vehicles": {k: {"label": v["label"], "max_slope": v["max_slope"], "range_km": v["range_km"]}
                          for k, v in MISSION_VEHICLES.items()},
-            "seasons": {k: v["label"] for k, v in SEASONS.items()},
+            "seasons": {k: SEASONS[k]["label"] for k in BASE_SEASONS},
             "priorities": {k: v["label"] for k, v in PRIORITIES.items()},
             "criteria": {k: {"label": v[0], "weight": v[1]} for k, v in MATRIX_CRITERIA.items()}}
 
@@ -676,12 +974,48 @@ def plan_mission(req: MissionRequest):
     c = _mission_cube(req)
     try:
         res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only)
+    except mission.NoLandingSpot as e:
+        nl = _no_landing(c, e)
+        raise HTTPException(400, f"{nl['text']} | {nl['detail']}")
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, _loading_hint(c.region, str(e)))
     return _finish_mission(res)
 
 
+def _no_landing(cube, err):
+    """Error for an area with no landing spot: the plain reason ("text"), the technical one ("detail") and, when
+    dust is why, the nearest firm ground ("suggest")."""
+    near = None
+    if err.dusty:
+        try:
+            near = mission.nearest_firm_ground(cube)
+        except Exception:
+            near = None
+    text, _, detail = str(err).partition(" | ")
+    if near:
+        text += f" The nearest firm ground is about {near['km']} km {near['direction']}."
+        detail += (f" Nearest firm ground: thermal inertia {near['ti']} at {abs(near['lat']):.2f}°"
+                   f"{'S' if near['lat'] < 0 else 'N'} {abs(near['lon']):.2f}°{'W' if near['lon'] < 0 else 'E'} "
+                   "(THEMIS 1 km map).")
+    elif err.dusty:
+        text += " There is no firm ground within about 300 km; try another part of Mars."
+    return {"text": text, "detail": detail.strip(), "suggest": near}
+
+
+def _loading_hint(region, text):
+    """A goal that needs CRISM minerals fails while an area's minerals are still loading: say so."""
+    b = _builds.get(region)
+    if b and b["proc"].poll() is None and "band in this cube" in text:
+        st = _build_status(region)
+        done = f" ({st['crism_done']}/{st['crism_total']} observations)" if st.get("crism_total") else ""
+        return ("The mineral maps for this area are still loading. Mineral goals work here in a few minutes; try "
+                f"again then. | CRISM observations read so far: {done.strip(' ()') or 'starting'}.")
+    return text
+
+
 def _mission_cube(req):
+    if req.ls is not None:
+        req.season = season_for_ls(req.ls)
     for name, value, allowed in (("vehicle", req.vehicle, MISSION_VEHICLES), ("season", req.season, SEASONS),
                                  ("priority", req.priority, PRIORITIES)):
         if value not in allowed:
@@ -715,24 +1049,28 @@ def plan_mission_stream(req: MissionRequest):
     def events():
         spec, parser, notes = search.keyword_parse(req.goal), "keywords", []
         if spec["unknown"] or not spec["criteria"]:
-            yield event(type="status", text="The AI model is reading the goal…")
+            yield event(type="status", text="The AI is reading your goal…")
             for kind, *rest in search.ai_parse_stream(req.goal):
                 if kind in ("reasoning", "content"):
                     yield event(type="ai", phase="goal", kind=kind, text=rest[0])
                 elif kind == "spec" and rest[0]["criteria"]:
                     spec, parser = rest[0], "ai"
                 elif kind == "error":
-                    notes.append(rest[0])
-        yield event(type="status", text="Scoring every pixel, finding landing spots, routing 3 candidates…")
+                    notes.append(f"| {rest[0]}")
+        yield event(type="status", text="Finding the best places, landing spots and routes…")
         try:
             res = _finish_mission(mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
                                                goal_spec=(spec, parser, notes)))
+        except mission.NoLandingSpot as e:
+            yield event(type="status", text=str(e).split(" | ")[0] + " Looking for the nearest firm ground…")
+            yield event(type="error", **_no_landing(c, e))
+            return
         except ValueError as e:
-            yield event(type="error", text=str(e))
+            yield event(type="error", text=_loading_hint(c.region, str(e)))
             return
         yield event(type="result", mission=res)
         if res["candidates"]:
-            yield event(type="status", text="The AI model is explaining the choice…")
+            yield event(type="status", text="The AI is explaining the choice…")
             text = None
             for kind, *rest in mission.explain_stream(_missions[res["id"]]):
                 if kind in ("reasoning", "content"):
@@ -805,6 +1143,259 @@ def trek_tile(layer: str, z: int, y: int, x: int):
 
 
 app.include_router(gear_router)
+
+
+# ------------------------------------- global 5 m CTX mosaic, colourised ----
+CTX_TILES = "https://astro.arcgis.com/arcgis/rest/services/OnMars/CTX1/MapServer/tile"   # Murray Lab, Caltech
+VIKING = "Mars_Viking_MDIM21_ClrMosaic_global_232m"
+VIKING_LEVEL = 7                     # Trek's deepest Viking level (~1.4 deg tiles, 256 px)
+_ctx_cache = {}
+
+
+_session = None
+TILE_DIR = ROOT / "cubes" / "tilecache"          # tiles saved to disk: instant on the next run
+
+
+def _get(url):
+    """HTTP GET with a shared keep-alive connection pool (avoids a new TLS handshake per tile)."""
+    global _session
+    try:
+        import requests  # noqa: F401
+    except ImportError:                      # fallback if 'requests' isn't installed
+        import ssl
+        import urllib.request
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (MarswalkPlanner)"})
+        with urllib.request.urlopen(req, timeout=20, context=ssl.create_default_context()) as r:
+            return r.read()
+    if _session is None:
+        import requests
+        from requests.adapters import HTTPAdapter
+        _session = requests.Session()
+        _session.headers["User-Agent"] = "Mozilla/5.0 (MarswalkPlanner)"
+        _session.mount("https://", HTTPAdapter(pool_connections=8, pool_maxsize=32))
+    r = _session.get(url, timeout=20)
+    r.raise_for_status()
+    return r.content
+
+
+def _fast_lowpass(img, factor=16):
+    """Cheap large blur: shrink, then enlarge (much faster than a big Gaussian)."""
+    h, w = img.shape
+    small = Image.fromarray((img * 255).astype("uint8")).resize((max(1, w // factor), max(1, h // factor)), Image.BILINEAR)
+    return np.asarray(small.resize((w, h), Image.BILINEAR), dtype="float32") / 255.0
+
+
+@lru_cache(maxsize=256)
+def _viking_tile(row, col):
+    url = (f"https://trek.nasa.gov/tiles/Mars/EQ/{VIKING}/1.0.0/default/default028mm/"
+           f"{VIKING_LEVEL}/{row}/{col}.jpg")
+    return np.asarray(Image.open(io.BytesIO(_get(url))).convert("RGB"), dtype="float32")
+
+
+_missing = set()
+
+
+@app.get("/ctxtiles/{z}/{y}/{x}.jpg")
+def ctx_tile(z: int, y: int, x: int):
+    """Global 5 m CTX tile (geographic, 512 px, same grid as Viking) coloured with Viking colours."""
+    from fastapi.responses import Response
+    key = (z, y, x)
+    headers = {"Cache-Control": "public, max-age=604800"}
+    if key in _missing:
+        raise HTTPException(404, "no CTX tile")
+    if key in _ctx_cache:
+        return Response(_ctx_cache[key], media_type="image/jpeg", headers=headers)
+    disk = TILE_DIR / f"{z}_{y}_{x}.jpg"
+    if disk.exists():
+        data = disk.read_bytes()
+        _ctx_cache[key] = data
+        return Response(data, media_type="image/jpeg", headers=headers)
+    try:
+        gray = np.asarray(Image.open(io.BytesIO(_get(f"{CTX_TILES}/{z}/{y}/{x}"))).convert("L"),
+                          dtype="float32") / 255.0
+    except Exception:
+        _missing.add(key)
+        raise HTTPException(404, "no CTX tile")
+    out = None
+    if z >= VIKING_LEVEL:
+        try:
+            f = 2 ** (z - VIKING_LEVEL)                 # CTX tile nests inside one Viking tile
+            vik = _viking_tile(y // f, x // f)
+            s = 256 / f
+            x0, y0 = int((x % f) * s), int((y % f) * s)
+            crop = Image.fromarray(vik.astype("uint8")).crop((x0, y0, max(int((x % f + 1) * s), x0 + 1),
+                                                               max(int((y % f + 1) * s), y0 + 1)))
+            color = np.asarray(crop.resize(gray.shape[::-1], Image.BILINEAR), dtype="float32")
+            detail = (gray + 0.04) / (_fast_lowpass(gray) + 0.04)
+            out = np.clip(color * np.clip(detail, 0.3, 2.2)[..., None], 0, 255).astype("uint8")
+        except Exception:
+            out = None
+    if out is None:                                   # fallback: greyscale
+        g = (gray * 255).astype("uint8")
+        out = np.dstack([g, g, g])
+    buf = io.BytesIO()
+    Image.fromarray(out).save(buf, format="JPEG", quality=82)
+    data = buf.getvalue()
+    _ctx_cache[key] = data
+    if len(_ctx_cache) > 3000:
+        _ctx_cache.pop(next(iter(_ctx_cache)))
+    try:
+        TILE_DIR.mkdir(parents=True, exist_ok=True)
+        disk.write_bytes(data)
+    except Exception:
+        pass
+    return Response(data, media_type="image/jpeg", headers=headers)
+
+
+class Box(BaseModel):
+    west: float
+    south: float
+    east: float
+    north: float
+    max_level: int = 12
+
+
+_prefetch = {"done": 0, "total": 0, "running": False}
+
+
+@app.post("/api/prefetch")
+def prefetch(box: Box):
+    """Download + colour every CTX tile inside the box (levels 8..max_level) in the background,
+    so that area is instant later (e.g. before recording the demo)."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    tiles = []
+    for z in range(8, box.max_level + 1):
+        t = 180.0 / 2 ** z
+        for y in range(int((90 - box.north) // t), int((90 - box.south) // t) + 1):
+            for x in range(int((box.west + 180) // t), int((box.east + 180) // t) + 1):
+                tiles.append((z, y, x))
+    if len(tiles) > 4000:
+        raise HTTPException(400, f"Box too big ({len(tiles)} tiles). Draw a smaller box (about 1 degree).")
+    _prefetch.update(done=0, total=len(tiles), running=True)
+
+    def one(t):
+        try:
+            ctx_tile(*t)
+        except Exception:
+            pass
+        _prefetch["done"] += 1
+
+    def run():
+        with ThreadPoolExecutor(8) as ex:
+            list(ex.map(one, tiles))
+        _prefetch["running"] = False
+    threading.Thread(target=run, daemon=True).start()
+    return {"tiles": len(tiles)}
+
+
+@app.get("/api/prefetch")
+def prefetch_status():
+    return _prefetch
+
+
+# ------------------------------------------------- plan anywhere on Mars ----
+# A site cube is built by build_cube.py in a child process (a few minutes for the CRISM minerals); the cube is
+# saved once its terrain is ready (~1 min), so planning can start before the minerals arrive.
+_builds = {}                 # region -> {"proc", "log", "started"}
+_builds_lock = threading.Lock()
+MAX_BUILDS = 2
+
+
+class SiteRequest(BaseModel):
+    site: str | None = None              # a named site from config.SITES
+    lat: float | None = Field(None, ge=-88, le=88)
+    lon: float | None = Field(None, ge=-180, le=360)
+
+
+def _build_status(region):
+    b = _builds.get(region)
+    ready = _cube_path(region).exists()
+    if b is None:
+        return {"region": region, "label": region_label(region), "status": "done" if ready else "not built",
+                "ready": ready}
+    log = b["log"].read_text(errors="replace") if b["log"].exists() else ""
+    code = b["proc"].poll()
+    if code is None:
+        status = "minerals" if "STAGE terrain ready" in log else "terrain"
+    else:
+        status = "done" if code == 0 and ready else "failed"
+    lines = [l for l in log.splitlines() if l.strip() and "Warning" not in l and "DatasetReader" not in l]
+    crism = next((l for l in lines if "CRISM:" in l), "")
+    done_products = sum(1 for l in lines if l.startswith("    [ok]") or l.startswith("    [--]"))
+    total = int(crism.split("CRISM:")[1].split()[0]) if crism else 0
+    return {"region": region, "label": region_label(region), "status": status, "ready": ready,
+            "seconds": round(time.time() - b["started"]), "crism_done": done_products, "crism_total": total,
+            "log": lines[-6:]}
+
+
+def covering_cube(lat, lon, margin=0.12):
+    """The loaded cube holding (lat, lon) at least `margin` degrees from its edges, most central first."""
+    lon = (lon + 180) % 360 - 180
+    best, best_m = None, margin
+    for m in cube_metas():
+        r = m["rect"]
+        inner = min(lat - r["south"], r["north"] - lat, lon - r["west"], r["east"] - lon)
+        if m["region"] != "global" and inner >= best_m:
+            best, best_m = m, inner
+    return best
+
+
+@app.get("/api/sites")
+def sites():
+    """Named places to plan at, and which have a cube already. Any other spot: POST /api/sites/build with lat/lon."""
+    return {"size_deg": SITE_SIZE_DEG,
+            "sites": [{"site": k, "label": s["label"], "lat": s["lat"], "lon": s["lon"],
+                       "ready": _cube_path(k).exists(), "building": k in _builds and _builds[k]["proc"].poll() is None}
+                      for k, s in SITES.items()]}
+
+
+@app.post("/api/sites/build")
+def build_site(req: SiteRequest):
+    if req.site:
+        if req.site not in SITES:
+            raise HTTPException(400, f"site must be one of {list(SITES)}")
+        region = req.site
+    elif req.lat is not None and req.lon is not None:
+        region = site_id(req.lat, req.lon)
+    else:
+        raise HTTPException(400, "give a named site or lat and lon")
+    if region_box(region) is None:
+        raise HTTPException(400, f"can't build a region at {region}")
+    # a loaded area with the spot well inside it is reused (the one where it sits most centrally)
+    if not req.site:
+        m = covering_cube(req.lat, req.lon)
+        if m:
+            return {**_build_status(m["region"]), "reused": True, "rect": m["rect"]}
+    with _builds_lock:
+        b = _builds.get(region)
+        if b and b["proc"].poll() is None:
+            return _build_status(region)
+        if _cube_path(region).exists() and not b:
+            return _build_status(region)
+        running = sum(1 for x in _builds.values() if x["proc"].poll() is None)
+        if running >= MAX_BUILDS:
+            raise HTTPException(429, f"{running} regions are already being built; try again in a few minutes")
+        log = ROOT / "cubes" / f".build_{region}.log"
+        log.parent.mkdir(exist_ok=True)
+        with open(log, "w") as fh:
+            proc = subprocess.Popen([sys.executable, "-u", str(ROOT / "build_cube.py"), region], cwd=ROOT,
+                                    stdout=fh, stderr=subprocess.STDOUT)
+        _builds[region] = {"proc": proc, "log": log, "started": time.time()}
+    return _build_status(region)
+
+
+@app.get("/api/sites/build/{region}")
+def build_site_status(region: str):
+    if region_box(region) is None:
+        raise HTTPException(404, f"unknown region {region}")
+    return _build_status(region)
+
+
+app.include_router(murray.router)          # every map from the Murray Lab CTX viewer (murray.py)
+
+(ROOT / "cubes").mkdir(exist_ok=True)
+app.mount("/cubes", StaticFiles(directory=ROOT / "cubes"), name="cubes")   # hi-res photo overlays
 
 # Serve the front end from the same server (one command = whole app)
 app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")

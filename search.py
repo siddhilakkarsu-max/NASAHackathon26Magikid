@@ -247,11 +247,12 @@ def _mineral_band(ctx, name):
     m, arr = MINERALS[name], ctx.cube.bands[name]
     detected = int((np.nan_to_num(arr, nan=-1e9) >= m["detect"]).sum())
     if detected < 10:
-        raise Unavailable(f"CRISM shows no {m['label']} in this region ({detected} isolated pixels above the "
-                          "detection limit)")
+        raise Unavailable(f"no {m['label']} was found in this area | CRISM: {m['science']}, {detected} isolated "
+                          "pixels above the detection limit")
     covered = float(np.isfinite(arr).mean())
     if covered < 0.95:
-        ctx.notes.append(f"{name}: CRISM covers {covered:.0%} of this region; places without data can't match.")
+        ctx.notes.append(f"Mineral maps cover {covered:.0%} of this area, so {m['label']} elsewhere may be missed. "
+                         f"| {name}: CRISM covers {covered:.0%} of this region; places without data can't match.")
     return np.nan_to_num(ramp(arr, m["detect"], m["strong"]), nan=0.0), \
         lambda r, c: mineral_strength(name, arr[r, c])
 
@@ -282,14 +283,16 @@ def material(tag, band_names):
                 return ramp(arr, lo, hi), lambda r, c: f"{b} band = {arr[r, c]:.3g}"
         zones = [z for z in ctx.zones if tag in z["tags"]]
         if not zones:
-            raise Unavailable(f"no '{tag}' band in this cube and no '{tag}' zone in config.SEARCH_ZONES")
+            raise Unavailable(f"there is no map of {tag} for this area | no '{tag}' band in this cube and no "
+                              f"'{tag}' zone in config.SEARCH_ZONES")
         dists = [ctx.zone_distance_km(z) for z in zones]
         near_i = np.argmin(np.stack(dists), axis=0)
         dmin = np.min(np.stack(dists), axis=0)
         # 1 inside the zone, fading to ~0 one radius outside it
         radius = np.array([z["radius_km"] for z in zones])[near_i]
         m = np.where(dmin <= 0, 1.0, np.exp(-(dmin / (0.5 * radius)) ** 2)).astype("float32")
-        ctx.notes.append(f"{tag}: the cube has no '{tag}' band yet, so this uses the approximate zone "
+        ctx.notes.append(f"The {tag} location is approximate. | {tag}: the cube has no '{tag}' band yet, so this "
+                         "uses the approximate zone "
                          + ", ".join(f"'{z['name']}' ({z['source']})" for z in zones))
 
         def explain(r, c):
@@ -303,29 +306,29 @@ def material(tag, band_names):
 
 
 FEATURES = {
-    "valley": dict(label="valley / channel", help="valleys, channels, dry riverbeds, where water flowed: lower than the land around it", fn=f_valley, words=[
+    "valley": dict(label="valley", help="valleys, channels, dry riverbeds, where water flowed: lower than the land around it", fn=f_valley, words=[
         "valley", "vallis", "valles", "channel", "canyon", "gully", "gulley", "ravine", "trough", "depression",
         "hollow", "ditch", "riverbed", "river bed", "streambed", "stream bed", "wash", "wadi", "river", "stream",
         "drainage", "dry river", "low spot", "inlet", "outlet"]),
-    "ridge": dict(label="ridge / high point", help="ridges, hills, viewpoints: higher than the land around it", fn=f_ridge, words=[
+    "ridge": dict(label="ridge or high point", help="ridges, hills, viewpoints: higher than the land around it", fn=f_ridge, words=[
         "ridge", "crest", "hill", "hilltop", "peak", "summit", "mound", "knob", "butte", "mesa", "high point",
         "high ground", "rise", "overlook", "vantage", "vantage point", "viewpoint", "view", "lookout", "top",
         "rim", "crater rim"]),
     "flat": dict(label="flat ground", help="slope under ~2-10 degrees", fn=f_flat, words=[
         "flat", "flats", "level", "plain", "plains", "gentle", "low slope", "gentle slope", "shallow slope",
         "horizontal", "landing zone", "landing pad"]),
-    "steep": dict(label="steep slope / cliff", help="slope over ~8-25 degrees", fn=f_steep, words=[
+    "steep": dict(label="steep slope", help="slope over ~8-25 degrees", fn=f_steep, words=[
         "steep", "slope", "sloped", "sloping", "hillside", "incline", "inclined", "cliff", "scarp", "escarpment",
         "wall", "bluff", "ledge", "precipice", "steep slope", "crater wall"]),
     "smooth": dict(label="smooth ground", help="low small-scale roughness", fn=f_smooth, words=[
         "smooth", "even", "boulder free"]),
-    "rough": dict(label="rough / rocky ground", help="high small-scale roughness", fn=f_rough, words=[
+    "rough": dict(label="rough, rocky ground", help="high small-scale roughness", fn=f_rough, words=[
         "rough", "rugged", "bumpy", "boulder", "boulder field", "jagged", "broken", "chaotic", "hummocky",
         "rubble", "blocky", "rocky"]),
-    "firm": dict(label="firm ground / bedrock", help="high night-time IR (thermal inertia proxy)", fn=f_firm, words=[
+    "firm": dict(label="firm ground", help="high night-time IR (thermal inertia proxy)", fn=f_firm, words=[
         "firm", "solid", "hard", "bedrock", "bed rock", "rock", "outcrop", "compact", "compacted", "stable",
         "packed", "hard packed", "consolidated", "indurated", "rocky"]),
-    "sand": dict(label="loose sand / dust", help="low night-time IR (loose material)", fn=f_sand, words=[
+    "sand": dict(label="loose sand or dust", help="low night-time IR (loose material)", fn=f_sand, words=[
         "sand", "sandy", "dune", "ripple", "loose", "dust", "dusty", "soft", "powdery", "unconsolidated",
         "sand trap", "fines"]),
     "sunny": dict(label="in sunlight", help="sunlit at the chosen time and season", fn=f_sunny, words=[
@@ -336,7 +339,7 @@ FEATURES = {
         "warm", "warmer", "hot", "heated"]),
     "cold": dict(label="cold surface", help="colder than most of the region (approx. model)", fn=f_cold, words=[
         "cold", "colder", "cool", "chilly", "freezing", "frigid", "cold trap"]),
-    "shelter": dict(label="shelter (foot of a wall)", help="close to a wall too steep for the vehicle",
+    "shelter": dict(label="shelter at the foot of a cliff", help="close to a wall too steep for the vehicle",
                     fn=f_shelter, words=[
         "shelter", "sheltered", "cover", "covered", "protected", "protection", "refuge", "hide", "hideout",
         "hiding", "cave", "overhang", "alcove", "lee", "haven", "storm shelter", "dust storm",
@@ -351,17 +354,17 @@ FEATURES = {
         "base", "home", "habitat", "hab", "lander", "camp", "nearby", "close", "close by", "short walk",
         "short drive", "quick", "reachable", "within reach", "walking distance"]),
     # one feature per mineral in config.MINERALS is added below
-    "any_mineral": dict(label="any mineral detection", help="the strongest CRISM mineral signature of any kind",
+    "any_mineral": dict(label="any interesting mineral", help="the strongest CRISM mineral signature of any kind",
                         fn=f_any_mineral, words=["mineral", "minerals", "mineralogy", "spectral", "interesting rocks"]),
-    "ice": dict(label="water ice / hydrogen", help="subsurface ice or water-equivalent hydrogen (band or hint zone)",
+    "ice": dict(label="water ice", help="subsurface ice or water-equivalent hydrogen (band or hint zone)",
                 fn=material("ice", ["ice", "hydrogen", "weh"]), words=[
         "ice", "frost", "hydrogen", "water ice", "ground ice", "glacier"]),
-    "delta": dict(label="delta / fan deposit", help="river delta or alluvial fan (hint zone)",
+    "delta": dict(label="river delta", help="river delta or alluvial fan (hint zone)",
                   fn=material("delta", ["delta"]), words=["delta", "fan", "alluvial fan", "fan delta", "deltaic"]),
 }
 
 for _name, _m in MINERALS.items():
-    FEATURES[_name] = dict(label=_m["label"], help=f"{_m['label']} from CRISM {'/'.join(_m['params'])} (or hint zone)",
+    FEATURES[_name] = dict(label=_m["label"], help=f"{_m['science']} from CRISM {'/'.join(_m['params'])} (or hint zone)",
                            fn=material(_name, [_name]), words=_m["words"])
 
 # "the flattest spot" = flat, counted double
@@ -763,7 +766,7 @@ def score_map(ctx, criteria):
         try:
             m, explain = f["fn"](ctx)
         except Unavailable as e:
-            ctx.notes.append(f"{describe(cr)}: skipped, {e}")
+            ctx.notes.append(f"{describe(cr)}: {e}")
             continue
         m = np.nan_to_num(m, nan=0.0)
         if cr["near"]:
@@ -812,7 +815,7 @@ def find(ctx, query, count=5, use_llm=True, focus=None):
         if llm and llm["criteria"]:
             spec, parser = llm, "ai"
         elif why:
-            ctx.notes.append(why)
+            ctx.notes.append(f"| {why}")
     if not spec["criteria"]:
         raise ValueError(f"No terrain words recognised in '{query}'. Try e.g. 'valley with clay', "
                          "'flat firm ground near a cliff', 'sunny ridge close to base', 'shelter without sand'.")

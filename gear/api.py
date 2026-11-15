@@ -8,9 +8,7 @@ HTTP surface for the gear system.
     DELETE /api/gear/published                     forget the published kit (memory and the saved file)
     GET  /api/gear/catalog | /archetypes | /rules  reference data for the page
 
-Mounting (two lines in app.py, placed BEFORE the static-files mount):
-    from gear.api import router as gear_router
-    app.include_router(gear_router)
+app.py includes this router (before its static-files mount), so `uvicorn app:app` serves it.
 """
 from typing import Optional
 

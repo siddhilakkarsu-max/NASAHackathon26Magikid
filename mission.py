@@ -10,8 +10,9 @@ Mission planner: goal + vehicle + season + priority -> the recommended mission.
                    spot passing config.LANDING_RULES ("Tool-found")
   4. routes        cost map from time, energy/oxygen, terrain risk and seasonal dust; green rover tracks get a
                    discount, yellow ones a penalty, off-limits terrain is blocked; lowest-cost route A -> B
-     resources     round-trip oxygen and/or battery incl. tool mass, with a 15-25 % reserve and a turnaround
-                   deadline; routes that fail are dropped
+     resources     oxygen and/or battery out and back (the return is the route reversed: Minetti slope cost
+                   for walkers, m g h climbs for vehicles) incl. tool mass, with a 15-25 % reserve and a
+                   turnaround deadline; routes that fail are dropped
   5. decision      each candidate scored 1-5 on config.MATRIX_CRITERIA, weighted by priority -> recommended
   6. explanation   the AI model words the reasons from the numbers (template text without a model)
 
@@ -23,13 +24,15 @@ import math
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_edt
+from scipy.ndimage import binary_dilation, distance_transform_edt
 from skimage.draw import line as draw_line
 
 import physics
 import search
-from config import (ESSENTIALS, LANDING_RULES, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES, NASA_SITES,
-                    PRIORITIES, SEARCH_ZONES, SEASONS, SITE_HOURS, SPECIAL_REGIONS, SUIT, TOOLS, TRACK_RULES)
+from config import MARS_RADIUS_M
+from config import (CONSUMABLE_RESERVE, ESSENTIALS, LANDING_RULES, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
+                    NASA_SITES, PRIORITIES, SEARCH_ZONES, SEASONS, SITE_HOURS, SPECIAL_REGIONS, SUIT, TOOLS,
+                    TRACK_RULES, VEHICLE_POWER, WALKER)
 
 ROOT = Path(__file__).parent
 LOCAL_HOUR = 11.0            # plan the walk for late morning: sun high, warmest part of the day
@@ -49,11 +52,6 @@ def _circle_mask(cube, lat, lon, radius_km):
     dy = (lat_g - lat) * search.DEG_M
     dx = (lon_g - lon) * search.DEG_M * math.cos(math.radians(lat))
     return np.hypot(dx, dy) <= radius_km * 1000
-
-
-def _disk(r_px):
-    y, x = np.mgrid[-r_px:r_px + 1, -r_px:r_px + 1]
-    return x * x + y * y <= r_px * r_px
 
 
 def _ti(cube):
@@ -137,22 +135,134 @@ def offlimits(cube, v):
 
 # ------------------------------------------------------------------ landing ----
 def landing_mask(cube):
-    """Pixels where a lander can touch down: config.LANDING_RULES hold over a whole circle around the spot."""
+    """Pixels where a lander can touch down: config.LANDING_RULES hold over (90 % of) a circle around the spot.
+    Slope is judged over a ~100 m baseline, as for a landing-site survey, so a sharp cube (e.g. 9 m from the
+    1 m HiRISE elevation model) isn't failed by metre-scale bumps.
+    Elevation and latitude limits belong to the lander (air for the parachute, sun and cold), not to the spot: in an
+    area where no spot meets them (highlands, high latitudes) spots are chosen on the ground rules alone and the
+    relaxed rules are listed in landing_relaxed(cube), so the plan can say so."""
     def make():
+        from scipy.ndimage import uniform_filter
         R = LANDING_RULES
         b = cube.bands
+        px = min(cube.pixel_m)
+        k = max(1, int(round(100 / px)))
+        if k > 1:
+            z = np.nan_to_num(b["elevation"], nan=float(np.nanmean(b["elevation"])))
+            gy, gx = np.gradient(uniform_filter(z, k), cube.pixel_m[0], cube.pixel_m[1])
+            slope = np.degrees(np.arctan(np.hypot(gx, gy)))
+        else:
+            slope = np.nan_to_num(b["slope"], nan=90)
         rough = b["roughness"]
-        ok = (np.nan_to_num(b["slope"], nan=90) <= R["max_slope_deg"])
+        ok = slope <= R["max_slope_deg"]
         ok &= np.nan_to_num(rough, nan=1e9) <= np.nanpercentile(rough, R["max_rough_percentile"])
         ti = _ti(cube)
         ok &= (np.nan_to_num(ti, nan=0) >= R["min_ti"]) if ti is not None else (np.nan_to_num(b["firmness"]) >= 0.35)
-        ok &= np.nan_to_num(b["elevation"], nan=1e9) <= R["max_elevation_m"]
-        lat = (cube.n - (np.arange(cube.H) + 0.5) * (cube.n - cube.s) / cube.H)[:, None]
-        ok &= np.abs(lat) <= R["max_abs_lat"]
         ok &= ~special_mask(cube)
-        r_px = max(1, int(round(R["area_radius_m"] / min(cube.pixel_m))))
-        return binary_erosion(ok, structure=_disk(r_px), border_value=0)
+        r_px = max(1, int(round(R["area_radius_m"] / px)))
+
+        def spots(mask):
+            return mask & (uniform_filter(mask.astype("float32"), 2 * r_px + 1, mode="constant") >= 0.9)
+        lat = (cube.n - (np.arange(cube.H) + 0.5) * (cube.n - cube.s) / cube.H)[:, None]
+        low = np.nan_to_num(b["elevation"], nan=1e9) <= R["max_elevation_m"]
+        mid = np.broadcast_to(np.abs(lat) <= R["max_abs_lat"], ok.shape)
+        relaxed = landing_relaxed(cube)
+        for lander, why in (((low & mid), []), (mid, ["elevation"]), (low, ["latitude"]),
+                            (np.ones_like(ok), ["elevation", "latitude"])):
+            found = spots(ok & lander)
+            if found.any():
+                relaxed[:] = why
+                return found
+        return found
     return _cached(cube, "landing", make)
+
+
+class NoLandingSpot(ValueError):
+    """No spot in the area passes the ground rules for landing; .dusty when loose dust is the cause."""
+    def __init__(self, text, dusty=False):
+        super().__init__(text)
+        self.dusty = dusty
+
+
+def no_landing_reason(cube):
+    """Why no landing spot exists here, in words, and whether loose dust is the cause."""
+    R, b = LANDING_RULES, cube.bands
+    ti = _ti(cube)
+    if ti is not None and float(np.nanmean(np.nan_to_num(ti, nan=0) >= R["min_ti"])) < 0.02:
+        lo, hi = np.nanpercentile(ti, [5, 95])
+        return (f"No safe place to land here: the whole area is covered in soft dust that a lander or rover would "
+                f"sink into. | Thermal inertia {lo:.0f}-{hi:.0f} (5th-95th percentile); landing needs at least "
+                f"{R['min_ti']:.0f}."), True
+    flat = float(np.nanmean(np.nan_to_num(b["slope"], nan=90) <= R["max_slope_deg"]))
+    if flat < 0.05:
+        return (f"No safe place to land here: the ground is too steep. | Only {100 * flat:.0f}% of the area is "
+                f"flatter than {R['max_slope_deg']:.0f}° (over a 100 m baseline)."), False
+    return ("No safe place to land here: there is no patch of flat, smooth, firm ground big enough. | No 1 km "
+            f"circle passes on 90% of its area: slope ≤ {R['max_slope_deg']:.0f}°, roughness ≤ "
+            f"{R['max_rough_percentile']}th percentile, thermal inertia ≥ {R['min_ti']:.0f}."), False
+
+
+def nearest_firm_ground(cube, min_ti=None, search_deg=5.0):
+    """Nearest place outside this area with room for a mission, from the THEMIS thermal-inertia map (1 km): a ~9 km
+    patch all >= min_ti to land on, inside ~27 km where most ground (60 %) is drivable (not loose, TI >= 150).
+    {lat, lon, km, direction, ti}; None if none within search_deg. Downloads the quadrangle tiles it needs."""
+    import build_cube
+    from scipy.ndimage import uniform_filter
+    from config import mc_quadrangle, themis_ti
+    min_ti = min_ti or LANDING_RULES["min_ti"]
+    lat0, lon0 = (cube.s + cube.n) / 2, (cube.w + cube.e) / 2
+    south, north = max(-35.0, lat0 - search_deg), min(45.0, lat0 + search_deg)   # the TI maps cover 35S-45N
+    if south >= north:
+        return None
+    w, e = lon0 - search_deg, lon0 + search_deg
+    ppd = 20                                                         # ~3 km cells
+    W, H = int(round((e - w) * ppd)), int(round((north - south) * ppd))
+    from rasterio.transform import from_bounds
+    grid = dict(bounds=(w, south, e, north), width=W, height=H, transform=from_bounds(w, south, e, north, W, H))
+    ti = np.full((H, W), np.nan, "float32")
+    quads = {mc_quadrangle(la, lo) for la in np.linspace(south, north, 9) for lo in np.linspace(w, e, 9)}
+    for mc in sorted(q for q in quads if 2 <= q <= 29):
+        spec = themis_ti(mc)
+        try:
+            a = build_cube.read_raster_into_grid(str(build_cube.download(spec["url"], spec["path"])), grid)
+        except Exception:
+            continue
+        ti = np.where(np.isnan(ti), a, ti)
+    t = np.nan_to_num(ti, nan=0)
+    firm = uniform_filter((t >= min_ti).astype(float), 3, mode="constant") >= 0.99
+    firm &= uniform_filter((t >= 150).astype(float), 9, mode="constant") >= 0.6
+    lat = north - (np.arange(H) + 0.5) / ppd
+    lon = w + (np.arange(W) + 0.5) / ppd
+    LA, LO = np.meshgrid(lat, lon, indexing="ij")
+    firm &= ~((LA >= cube.s) & (LA <= cube.n) & (LO >= cube.w) & (LO <= cube.e))
+    if not firm.any():
+        return None
+    p1, p2, dl = np.radians(lat0), np.radians(LA), np.radians(LO - lon0)
+    km = 2 * MARS_RADIUS_M / 1000 * np.arcsin(np.sqrt(np.sin((p2 - p1) / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dl / 2) ** 2))
+    i = np.unravel_index(np.argmin(np.where(firm, km, np.inf)), km.shape)
+    bearing = (np.degrees(np.arctan2(np.sin(dl[i]) * np.cos(p2[i]),
+                                     np.cos(p1) * np.sin(p2[i]) - np.sin(p1) * np.cos(p2[i]) * np.cos(dl[i]))) + 360) % 360
+    direction = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"][int((bearing + 22.5) // 45) % 8]
+    return {"lat": round(float(LA[i]), 3), "lon": round(float((LO[i] + 180) % 360 - 180), 3),
+            "km": round(float(km[i])), "direction": direction, "ti": round(float(ti[i]))}
+
+
+def landing_relaxed(cube):
+    """Lander limits ('elevation', 'latitude') no spot in this area could meet, so they were not applied."""
+    return _cached(cube, "landing_relaxed", list)
+
+
+def sites_in(cube):
+    """NASA's known sites overlapping this cube, found by location (an area loaded anywhere sees them too)."""
+    def make():
+        seen, out = set(), []
+        for s in (x for lst in NASA_SITES.values() for x in lst):
+            w, so, e, n = s["bounds"] if "bounds" in s else (s["lon"], s["lat"], s["lon"], s["lat"])
+            if s["name"] not in seen and w <= cube.e and e >= cube.w and so <= cube.n and n >= cube.s:
+                seen.add(s["name"])
+                out.append(s)
+        return out
+    return _cached(cube, "sites_in", make)
 
 
 def nasa_sites(cube):
@@ -160,7 +270,7 @@ def nasa_sites(cube):
     def make():
         mask = np.zeros((cube.H, cube.W), bool)
         owner = np.full((cube.H, cube.W), -1, int)
-        sites = NASA_SITES.get(cube.region, [])
+        sites = sites_in(cube)
         for i, s in enumerate(sites):
             if "radius_km" in s:
                 m = _circle_mask(cube, s["lat"], s["lon"], s["radius_km"])
@@ -193,7 +303,7 @@ def nearest_landing(cube, b_rc):
         if d_n[r, c] <= 1.5 * d_any[r, c] + 500:
             rc = (int(idx_n[0][r, c]), int(idx_n[1][r, c]))
             _, owner, _ = nasa_sites(cube)
-            site = NASA_SITES[cube.region][owner[rc]]
+            site = sites_in(cube)[owner[rc]]
             best = dict(rc=rc, dist_m=float(d_n[r, c]), kind="NASA candidate", site=site["name"])
     return best
 
@@ -225,7 +335,12 @@ def _route_layers(cube, v, season, priority, green_only):
     if v["battery_wh"]:
         energy = v["wh_per_km"] / 1000 * (1 + 0.05 * slope) * (1 + 0.5 * v["sand_penalty"] * (1 - firm) ** 2)
     else:                                                            # on foot: oxygen per metre walked
-        energy = SUIT["o2_walk_kg_h"] / 3600 * (1 + 0.04 * slope) / np.maximum(speed, 1e-3)
+        # flat-ground pace (the planner's slope slowdown taken back out) x Minetti's cost of going up and
+        # coming back down this slope, as the resource check charges it (a pixel has no direction)
+        s = np.minimum(slope, 60.0)
+        g = np.tan(np.radians(s))
+        updown = (physics.minetti_cw(g) + physics.minetti_cw(-g)) / (2 * physics.minetti_cw(0.0))
+        energy = SUIT["o2_walk_kg_h"] / 3600 * time * physics.walker_slope_slowdown(s) * updown
     risk = (slope / v["max_slope"]) ** 2 + (1 - firm) ** 2 + 0.3 * rough_n
     w = PRIORITIES[priority]["cost"]
     finite = np.isfinite(time)
@@ -244,34 +359,105 @@ def _route_layers(cube, v, season, priority, green_only):
     return dict(time=time, energy=energy, risk=risk, cost=cost, red=red)
 
 
-def _resources(v, tools, seg_len, rr, cc, L, priority, season):
-    """Round-trip oxygen and/or battery use, reserve, and the turnaround deadline."""
-    out_time_h = float(np.sum(seg_len * L["time"][rr, cc]) / 3600)
+MODEL_SOURCE = ("Walking oxygen: flat-ground pace x Minetti et al. 2002 (J Appl Physiol 93:1039) slope cost ratio, "
+                "x carried load (body + suit + tools); the return leg is the route reversed, so climbs out are "
+                "descents back. Vehicles: drive energy plus m g h for every climb on each leg (a lower bound). "
+                "Same model as the gear page (physics.path_resources).")
+# MISSION_VEHICLES -> config.VEHICLE_POWER entry, where one describes the same kind of vehicle. Only the
+# pressurized buggy has a counterpart (the crew rover, battery recharged 2:1 from sunlight); the scout bike and
+# the open rover have no published power source here, so no recharge time is given for them.
+POWER_MAP = {"buggy": "pressurized_rover"}
+
+
+def _reserve(priority, season):
+    """The priority's reserve (+5 % in dusty seasons), never below the team's contingency rule
+    (config.CONSUMABLE_RESERVE: 15 %, 20 % in the dust-storm season Ls 180-330)."""
+    ls = SEASONS[season]["ls"] % 360
+    lo, hi = CONSUMABLE_RESERVE["dust_season_ls"]
+    floor = CONSUMABLE_RESERVE["dust_season" if lo <= ls <= hi else "normal"]
+    return max(PRIORITIES[priority]["reserve"] + (0.05 if SEASONS[season]["dust_risk"] >= 0.3 else 0.0), floor)
+
+
+def _sunlight(cube, season):
+    """Dust opacity at the region this season and the share of direct sunlight it lets through (cached)."""
+    def make():
+        lat, lon, ls = (cube.s + cube.n) / 2, (cube.w + cube.e) / 2, SEASONS[season]["ls"]
+        tau = physics.dust_opacity(lat, lon, ls)
+        return tau, physics.daily_sunlight_fraction(lat, ls, tau)
+    return _cached(cube, ("sunlight", season), make)
+
+
+def _turn_h(r, step_h, out_h):
+    """Latest time after leaving A to turn back: the furthest point k where the cost out to k plus the cost
+    of walking/driving back from k (the reversed path) plus the site work still fits in the usable supply.
+    Beyond B it is extended at the round trip's average burn per outbound hour (the old formula's meaning)."""
+    cum_c = np.concatenate([[0.0], np.cumsum(r["step"])])
+    cum_t = np.concatenate([[0.0], np.cumsum(step_h)])
+    budget = r["usable"] - r["site"]
+    if budget >= cum_c[-1]:
+        return out_h + (budget - cum_c[-1]) * out_h / max(cum_c[-1], 1e-12)
+    return float(np.interp(budget, cum_c, cum_t)) if budget > 0 else 0.0
+
+
+def _resources(cube, vehicle, v, tools, seg_len, rr, cc, L, priority, season):
+    """Round-trip oxygen and/or battery use, reserve, and the turnaround deadline. The way out and the way back
+    are costed separately (physics.path_resources): the return leg is the outbound route reversed.
+    Each resource also gets "at": the outbound use on reaching every route pixel (for the hover readout)."""
+    n = len(rr) - 1
+    run = seg_len[:n]
+    a, b_ = rr[:n], cc[:n]                                          # the pixel each step leaves from
+    step_h = run * L["time"][a, b_] / 3600
+    t_at = np.concatenate([[0.0], np.cumsum(step_h)])               # hours on reaching each of the len(rr) pixels
+    out_time_h = float(step_h.sum())
     rt_h = 2 * out_time_h + SITE_HOURS
-    reserve = PRIORITIES[priority]["reserve"] + (0.05 if SEASONS[season]["dust_risk"] >= 0.3 else 0.0)
+    reserve = _reserve(priority, season)
+    z = cube.bands["elevation"][rr, cc]
+
+    def arrival(step_out):                                          # outbound use on reaching each pixel
+        return np.concatenate([[0.0], np.cumsum(step_out)])
     res = []
-    load = 1 + tools["kg"] / v["mass_kg"]
+    # O2 or Wh per metre, the same in both directions; slope and climbs are added by path_resources
+    o2_per_m = (SUIT["o2_ride_kg_h"] if v["battery_wh"] else SUIT["o2_walk_kg_h"]) / 3600 * L["time"][a, b_]
     if v["suited"]:
-        if v["battery_wh"]:
-            o2_out = out_time_h * SUIT["o2_ride_kg_h"]
-        else:
-            o2_out = float(np.sum(seg_len * L["energy"][rr, cc])) * load
-        res.append(dict(name="oxygen", unit="kg", cap=SUIT["o2_kg"], out=o2_out, site=SITE_HOURS * SUIT["o2_site_kg_h"],
-                        source=SUIT["source"]))
+        if v["battery_wh"]:                                         # riding: suit O2 by the hour
+            P = physics.path_resources(z, run, o2_per_m)
+            extra = {}
+        else:                                                       # walking: Minetti x carried load
+            load = physics.load_factor(tools["kg"], WALKER["body_kg"], WALKER["suit_kg"])
+            P = physics.path_resources(z, run, o2_per_m * load, walker=True,
+                                       slope_deg=np.nan_to_num(cube.bands["slope"][a, b_], nan=0.0))
+            extra = dict(slope_factor=round(P["slope_factor"], 3), slope_factor_out=round(P["slope_factor_out"], 3),
+                         slope_factor_back=round(P["slope_factor_back"], 3), load_factor=round(load, 3))
+        res.append(dict(name="oxygen", unit="kg", cap=SUIT["o2_kg"], out=P["out"], back=P["back"],
+                        site=SITE_HOURS * SUIT["o2_site_kg_h"], step=P["step_out"] + P["step_back"],
+                        source=SUIT["source"], extra=extra, at=arrival(P["step_out"])))
     if v["battery_wh"]:
-        drive = float(np.sum(seg_len * L["energy"][rr, cc])) * load
-        res.append(dict(name="battery", unit="Wh", cap=v["battery_wh"], out=drive + out_time_h * v["hotel_w"],
-                        site=tools["site_wh"] + SITE_HOURS * v["hotel_w"]))
+        load = 1 + tools["kg"] / v["mass_kg"]                      # tools add to the vehicle's mass
+        wh_per_m = L["energy"][a, b_] * load + v["hotel_w"] * L["time"][a, b_] / 3600
+        P = physics.path_resources(z, run, wh_per_m, mass_kg=v["mass_kg"] + tools["kg"])
+        extra = dict(climb_wh=round(P["climb_wh_out"] + P["climb_wh_back"], 1),
+                     climb_wh_out=round(P["climb_wh_out"], 1), climb_wh_back=round(P["climb_wh_back"], 1))
+        power = VEHICLE_POWER.get(POWER_MAP.get(vehicle, ""), {})
+        tau, frac = _sunlight(cube, season)
+        extra.update(power_source=power.get("source"), dust_opacity=None if tau is None else round(tau, 2),
+                     sunlight_pct=None if frac is None else int(round(100 * frac)), recharge_h=None)
+        if power.get("source") == "battery" and power.get("recharge_ratio") and frac and frac > 1e-6:
+            extra["recharge_h"] = round(power["recharge_ratio"] * 2 * out_time_h / frac, 1)
+        res.append(dict(name="battery", unit="Wh", cap=v["battery_wh"],
+                        out=P["out"] + P["climb_wh_out"], back=P["back"] + P["climb_wh_back"],
+                        site=tools["site_wh"] + SITE_HOURS * v["hotel_w"],
+                        step=P["step_out"] + P["step_back"] + P["climb_out_wh"] + P["climb_back_wh"], extra=extra,
+                        at=arrival(P["step_out"] + P["climb_out_wh"])))     # drive + idle + climbs so far
     for r in res:
-        r["used"] = 2 * r["out"] + r["site"]
+        r["used"] = r["out"] + r["back"] + r["site"]
         r["usable"] = r["cap"] * (1 - reserve)
         r["left"] = 1 - r["used"] / r["cap"]
         r["ok"] = r["used"] <= r["usable"]
-        # latest time to turn back: half of what is left after the site work, at the outbound burn rate
-        r["turn_h"] = (r["usable"] - r["site"]) / 2 / max(r["out"] / max(out_time_h, 1e-6), 1e-9)
+        r["turn_h"] = _turn_h(r, step_h, out_time_h)
     binding = max(res, key=lambda r: r["used"] / r["usable"])
-    return dict(out_h=out_time_h, rt_h=rt_h, reserve=reserve, items=res, binding=binding,
-                ok=all(r["ok"] for r in res), turn_h=min(r["turn_h"] for r in res))
+    return dict(out_h=out_time_h, rt_h=rt_h, reserve=reserve, items=res, binding=binding, t_at=t_at,
+                ok=all(r["ok"] for r in res), turn_h=min(r["turn_h"] for r in res),
+                gain_m=P["gain_m"], loss_m=P["loss_m"])
 
 
 def _score(x, steps):
@@ -287,7 +473,7 @@ def read_goal(goal):
         if llm and llm["criteria"]:
             spec, parser = llm, "ai"
         elif why:
-            notes.append(why)
+            notes.append(f"| {why}")
     return spec, parser, notes
 
 
@@ -309,7 +495,7 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
     ls = SEASONS[season]["ls"]
     sun_e, sun_az = physics.sun_position((cube.s + cube.n) / 2, LOCAL_HOUR, ls)
     illum = physics.illumination(cube.bands["slope"], cube.bands["aspect"], sun_e, sun_az)
-    temp = physics.surface_temp_k(illum, cube.bands.get("firmness"), sun_e)
+    temp = physics.surface_temp_k(illum, cube.bands.get("firmness"), sun_e, cube.bands.get("albedo"))
     L = _route_layers(cube, v, season, priority, green_only)
 
     # 3. destinations ----------------------------------------------------------------------------
@@ -317,17 +503,45 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
     score, parts = search.score_map(ctx, criteria)
     notes += ctx.notes
     if score is None:
-        raise ValueError("None of the goal's features can be mapped here. " + " ".join(notes))
+        plain = "; ".join(n.split(" | ")[0] for n in notes if not n.startswith("| "))
+        detail = " ".join(n.split(" | ", 1)[-1] for n in notes)
+        raise ValueError(f"None of what you asked for can be found in this area ({plain}). Try another part of "
+                         f"Mars. | {detail}")
     safe = ~L["red"] & np.isfinite(L["time"])
     safe[:2, :] = safe[-2:, :] = safe[:, :2] = safe[:, -2:] = False
     nearest_landing(cube, (0, 0))                                   # builds the distance-to-landing maps
     edts = _cached(cube, "landing_edt", dict)
     if "any" not in edts:
-        raise ValueError("No spot in this region passes the landing rules.")
+        raise NoLandingSpot(*no_landing_reason(cube))
+    if "thermal_inertia" not in cube.bands and "themis_night" not in cube.bands:
+        notes.append("We don't know how soft the ground is this far north or south, so watch out for sand and dust. "
+                     "| No thermal data (THEMIS maps stop near 60° latitude): firmness assumed medium (0.5) everywhere.")
+    relaxed = landing_relaxed(cube)
+    if relaxed:
+        R = LANDING_RULES
+        plain = {"elevation": "the ground is so high that the air is too thin for a parachute",
+                 "latitude": "it is so far north or south that sunlight is weak and it is very cold"}
+        tech = {"elevation": f"every spot lies above {R['max_elevation_m']:+.0f} m",
+                "latitude": f"every spot lies poleward of {R['max_abs_lat']:.0f}°"}
+        notes.append("Landing here needs a rocket-powered lander: " + " and ".join(plain[r] for r in relaxed) +
+                     ". | " + "; ".join(tech[r] for r in relaxed) + ", so those lander rules were not applied; "
+                     "landing spots were chosen on slope, roughness and firm ground only.")
     reach = edts["any"][0] <= 0.8 * v["range_km"] * 1000            # routes run ~25 % longer than straight
     if not (safe & reach & (score > 0.05)).any():
-        raise ValueError(f"Nothing matching the goal lies within {v['range_km']:.0f} km of a safe landing spot "
-                         f"for {v['label'].lower()}. Try a vehicle with more range.")
+        loose = float(_loose(cube).mean())
+        if loose > 0.5:
+            raise NoLandingSpot("What you asked for can't be reached on firm ground here: most of this area is soft "
+                                f"dust or sand that no vehicle can cross. | {100 * loose:.0f}% of the area has thermal "
+                                "inertia below 150 (off-limits).", dusty=True)
+        if (safe & (score > 0.05)).any():                          # it exists, just too far from a landing spot
+            raise ValueError(f"Nothing matching the goal lies within {v['range_km']:.0f} km of a safe landing spot "
+                             f"for {v['label'].lower()}. Try a vehicle with more range.")
+        if (score > 0.05).any():
+            raise ValueError(f"What the goal asks for is here only on ground {v['label'].lower()} can't drive "
+                             f"(steeper than {v['max_slope']:.0f}°, loose, or protected). Try another vehicle or "
+                             "another part of Mars.")
+        raise ValueError("Nothing in this area matches the goal. Move the map somewhere that has it (e.g. a crater "
+                         "wall for steep slopes, a valley or delta for clays) and plan again.")
     safe &= reach
     peaks = search.pick_peaks(score, safe, cube.pixel_m, 3, sep_m=3000)
     if not peaks:
@@ -354,7 +568,7 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
         steps = np.hypot(np.diff(rr) * cube.pixel_m[0], np.diff(cc) * cube.pixel_m[1])
         seg_len = np.append(steps, 0.0)                             # length of the step leaving each pixel
         dist_km = float(steps.sum() / 1000)
-        R = _resources(v, tools, seg_len, rr, cc, L, priority, season)
+        R = _resources(cube, vehicle, v, tools, seg_len, rr, cc, L, priority, season)
         slope = cube.bands["slope"][rr, cc]
         ti = _ti(cube)
         loose = (np.nan_to_num(ti[rr, cc], nan=300) < 200) if ti is not None else \
@@ -364,7 +578,16 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
         frac = lambda m: float(np.sum(seg_len * m) / max(steps.sum(), 1e-9))
         risk = np.where(slope > 0.85 * v["max_slope"], 2, np.where((slope > 0.6 * v["max_slope"]) | loose, 1, 0))
         k = max(1, len(rr) // 400)
-        pts = [dict(lat=round(la, 5), lon=round(lo, 5), risk=int(risk[i]), green=bool(on_green[i]))
+        # per point: what the rover would see there (for the hover readout on the map)
+        d_at = np.concatenate([[0.0], np.cumsum(steps)]) / 1000
+        elev, firm_r = cube.bands["elevation"][rr, cc], cube.bands["firmness"][rr, cc]
+        ti_r = ti[rr, cc] if ti is not None else np.full(len(rr), np.nan)
+        num = lambda x, nd=2: None if not np.isfinite(x) else round(float(x), nd)
+        pts = [dict(lat=round(la, 5), lon=round(lo, 5), risk=int(risk[i]), green=bool(on_green[i]),
+                    yellow=bool(on_yellow[i]), d=num(d_at[i], 3), t=num(R["t_at"][i], 3), elev=num(elev[i], 0),
+                    slope=num(slope[i], 1), ti=num(ti_r[i], 0), firm=num(firm_r[i]),
+                    sun=num(max(float(illum[rr[i], cc[i]]), 0.0)), temp=num(temp[rr[i], cc[i]], 0),
+                    used={r["name"]: num(r["at"][i], 3) for r in R["items"]})
                for i in list(range(0, len(rr), k)) + [len(rr) - 1] for la, lo in [cube.latlon(rr[i], cc[i])]]
         # turnaround point: where the deadline falls along the outbound route (B if it comes later)
         t_cum = np.cumsum(seg_len * L["time"][rr, cc]) / 3600
@@ -378,9 +601,14 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
         cand["resources"] = dict(
             reserve_pct=round(100 * R["reserve"]), binding=R["binding"]["name"], ok=R["ok"],
             items=[dict(name=r["name"], unit=r["unit"], capacity=round(r["cap"], 2), used=round(r["used"], 2),
-                        left_pct=round(100 * r["left"]), ok=r["ok"], source=r.get("source", "")) for r in R["items"]],
+                        left_pct=round(100 * r["left"]), ok=r["ok"], source=r.get("source", ""),
+                        out=round(r["out"], 3), back=round(r["back"], 3), site=round(r["site"], 3),
+                        usable=round(r["usable"], 2), **r["extra"]) for r in R["items"]],
             turnaround=dict(h=round(R["turn_h"], 2), lat=round(tlat, 5), lon=round(tlon, 5),
-                            at_B=bool(R["turn_h"] >= R["out_h"])))
+                            at_B=bool(R["turn_h"] >= R["out_h"])),
+            elevation_gain_m=round(R["gain_m"]), elevation_loss_m=round(R["loss_m"]),
+            reserve_rule="priority reserve (+5% in dusty seasons), at least 15% / 20% in the dust-storm season",
+            model="minetti", model_source=MODEL_SOURCE)
         if dist_km > v["range_km"]:
             dropped.append(dict(cand, reason=f"route {dist_km:.1f} km is beyond the {v['range_km']:.0f} km range")); continue
         if not R["ok"]:
@@ -455,7 +683,7 @@ def _card(cube, b_rc, parts, criteria, score, cand, zones, sun_e, illum, temp, s
     inside = [z["name"] for z in zones if z["bounds"][0] <= cand["B"]["lon"] <= z["bounds"][2]
               and z["bounds"][1] <= cand["B"]["lat"] <= z["bounds"][3]]
     return dict(
-        target=targets, confidence=conf,
+        target=targets, target_plain=[search.describe(cr) for cr, _ in parts], confidence=conf,
         terrain=[f"slope {b['slope'][r, c]:.1f}°, roughness {b['roughness'][r, c]:.1f} m, elevation {b['elevation'][r, c]:.0f} m",
                  search.ground_text(cube, r, c)],
         conditions=[f"{SEASONS[season]['label']}, dust risk {SEASONS[season]['dust_risk']:.0%}",
@@ -498,9 +726,9 @@ def _template(res):
     w, s = cands[0], res["settings"]
     r, R = w["route"], w["resources"]
     bind = next(i for i in R["items"] if i["name"] == R["binding"])
-    txt = (f"Route #1 wins with {w['total']}/100: its destination has {w['card']['target'][0]}, "
-           f"{r['distance_km']:.1f} km by route from its {'NASA-candidate' if w['A']['kind'] == 'NASA candidate' else 'tool-found'} "
-           f"landing spot; it ")
+    txt = (f"Route #1 wins with {w['total']}/100: its destination has {' and '.join(w['card']['target_plain'])}, "
+           f"{r['distance_km']:.1f} km by route from its landing spot"
+           f"{' (a NASA landing site)' if w['A']['kind'] == 'NASA candidate' else ''}; it ")
     if res["tracks"] and r["green_km"] > 0:
         txt += f"follows {r['green_km']:.1f} km of {res['tracks']['rover']}'s green track ({r['green_pct']}% of the route), "
     txt += f"stays under {math.ceil(r['max_slope'])}° slope and leaves {bind['left_pct']}% of its {bind['name']}"
@@ -521,7 +749,7 @@ def explain_facts(res):
     def row(c):
         bind = next(i for i in c["resources"]["items"] if i["name"] == c["resources"]["binding"])
         r = c["route"]
-        return {"rank": c["rank"], "total": c["total"], "scores": c["scores"], "target_at_B": c["card"]["target"][0],
+        return {"rank": c["rank"], "total": c["total"], "scores": c["scores"], "target_at_B": " and ".join(c["card"]["target_plain"]),
                 "landing": c["A"]["kind"], "route_km": r["distance_km"], "round_trip_h": r["round_trip_h"],
                 "max_slope_deg": r["max_slope"], "green_track_pct": r["green_pct"], "green_track_km": r["green_km"],
                 f"{bind['name']}_used": bind["used"], f"{bind['name']}_left_pct": bind["left_pct"]}
@@ -533,10 +761,12 @@ def explain_facts(res):
 
 
 EXPLAIN_SYSTEM = (
-    "You explain a Mars traverse plan to an astronaut in 2-3 plain sentences. Rewrite the 'summary' more "
-    "naturally and keep its numbers; you may add one more comparison from the candidates table. Routes #2 and "
-    "#3 are backups, not dropped; only entries under 'dropped' were dropped. Use only numbers given. "
-    "No lists, no markdown.")
+    "You explain a Mars trip plan in 2-3 short, plain sentences that anyone can follow, with no science "
+    "background. Rewrite the 'summary' more naturally and keep its key numbers (distance, hours, how much oxygen "
+    "or battery is left); you may add one more comparison from the candidates table. Routes #2 and #3 are "
+    "backups, not dropped; only entries under 'dropped' were dropped. Use only numbers given. Avoid jargon: no "
+    "'thermal inertia', 'CRISM', 'Ls', 'band depth', 'criterion' or 'decision matrix'; say 'soft sand', 'firm "
+    "ground', 'clay' and so on. No lists, no markdown.")
 
 
 def explain_ai(facts):
