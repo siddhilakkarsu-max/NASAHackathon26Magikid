@@ -11,18 +11,18 @@ one: `README.md`, section "Keeping the docs current". Authors by first name; git
 ### Added
 
 - **Docs rule for every teammate and agent:** README section "Keeping the docs current" (what to update, how to
-  write a changelog entry, which doc covers what, a PR checklist) and a matching section in `AGENTS.md` (this PR,
+  write a changelog entry, which doc covers what, a PR checklist) and a matching section in `AGENTS.md` (#30,
   Gia).
 - `docs/ARCHITECTURE.md` (pipeline, request flows, module map, `config.py` layout, pages, tests), `docs/API.md`
   (every route) and `docs/DATA_SOURCES.md` (every dataset and published figure; our "NASA data used" list)
-  (this PR, Gia).
-- Changelog entries for every merged PR that had none: #2, #4, #6, #7, #13, #17 to #27 and #29 (this PR, Gia).
+  (#30, Gia).
+- Changelog entries for every merged PR that had none: #2, #4, #6, #7, #13, #17 to #27 and #29 (#30, Gia).
 
 ### Fixed
 
 - README drift: "Who owns what" (no `physics.endurance`; gear, mission, weather and radiation owners), the honest
   limits on oxygen and the return leg, the crew rover's numbers, the opening view, the season slider and the
-  sharp-imagery box; the README API table now points to `docs/API.md` (this PR, Gia).
+  sharp-imagery box; the README API table now points to `docs/API.md` (#30, Gia).
 
 ## [Unreleased] - 2026-11-14, radiation layer
 
