@@ -27,7 +27,8 @@ Pick a mission (or plan one), read the briefing, choose route #1, #2 or #3 and a
 | A / D | Strafe |
 | Mouse (click the view first) or left / right arrows | Look around. Touch: drag the view |
 | Shift | Careful pace: slower, no scree strikes, spots soft sand nearby |
-| E / Space / Enter | Interact (start site work at a sampling spot, rock free of sand, mini-game action) |
+| E / Enter | Interact (start site work at a sampling spot, rock free of sand, mini-game action) |
+| Space | Hop in Mars gravity (interacts instead when you stand on a sampling spot) |
 | 1-9, 0 | Use the tool in that belt slot |
 | G, C, O, B, R, F | Radar ping, camera, emergency oxygen bottle, battery pack, radio relay, repair kit |
 | H | Head home (start the return leg) |
@@ -41,6 +42,13 @@ What you see: the planned route is a chevron line on the ground, coloured by the
 with faint dashed lines at the corridor edges. Light pillars mark A (blue), B (orange), sampling spots (cyan),
 shelters (white) and the turn-back point (red). Off-limits ground is hatched red. The pill under the clock shows
 your heading and an arrow to the next point on the route.
+
+The HUD is drawn as augmented reality inside the helmet: the rim of the helmet frames the view, and the panels
+(vitals left, clock and heading top, map right, radio lower left, tool belt bottom) are stacked so they do not
+overlap. A small green light floats on the route 38 m ahead as the thing to walk towards, and one plain-language
+hint at a time appears above the tool belt (what to press when stuck, breached, off the line, out of signal).
+The visor reacts: a red flash and cracks with damage, a red pulse under 20 % oxygen, dust on the glass in a
+storm, frost in the cold, and flickering panels when the signal is lost. Each mission starts facing down the route.
 
 **Win:** return to A with at least one sealed sample. Three samples, photos, resources left, time against the plan
 and integrity raise the score (grades S to D, weighted by the plan's decision-matrix weights).
@@ -194,3 +202,6 @@ node docs/game/smoke_test.js http://127.0.0.1:8000        # 14/14 routes, needs 
 - In the 3D view, clicking the ground for point values is not available (the mouse looks around); use `view=2d`
   for that. Rover tracks and backup routes are drawn as ground lines only.
 - The 3D view was checked in headless Chrome only: not on a phone, and mouse capture was not exercised by hand.
+- The hop is visual only: it does not clear obstacles or change the simulation.
+- Models (lander, science station, rover, bike, cabin, gloves) are built from flat-shaded boxes, beams and
+  cylinders in code; they are recognisable, not detailed.

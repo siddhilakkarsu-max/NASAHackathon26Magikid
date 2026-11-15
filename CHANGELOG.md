@@ -17,6 +17,13 @@ Branch `feat/Gk`.
 - **Lighter dialogue.** Blocking Houston cutscenes are cut to one or two lines around the mission and become radio
   calls during it; the intro plays from its button only. `?story=1` restores the full scripts.
 
+- **Helmet AR HUD.** The helmet rim frames the view and the HUD panels sit inside it, stacked so they do not
+  overlap. The visor reacts to damage, low oxygen, storms, cold and lost signal.
+- **Easier to pick up.** Missions start facing down the route, the path arrows point the way you travel, a guide
+  light floats ahead on the route, one plain-language hint shows at a time, and Space hops in Mars gravity.
+- **Models.** Lander with legs, ladder, hatch and solar wings; science station at B; rover with wheels, fenders,
+  console, dish and camera; bike handlebars and front wheel; cabin window frame and dash; suit forearms and gloves.
+
 ### Added
 
 - URL params `view=2d` (top-down renderer, also the fallback without WebGL), `story=1`, `gq=low`.
