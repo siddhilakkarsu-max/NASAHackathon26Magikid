@@ -38,3 +38,4 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#32](PR-032-feat-jason-chen10-marsmap.md) | Update planner UI, fix map controls, and integrate selected-route game | `siddhilakkarsu-max/feat/jason-chen10-marsmap` | 2026-11-14 | 4 file(s) |
 | [#33](PR-033-feat-siddhi.md) | Feat/siddhi | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#34](PR-034-feat-siddhi.md) | docs: one changelog file per merged PR, with merge conflicts; team ru… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#35](PR-035-feat-siddhi.md) | regions: list 22 named places in the Region menu and load them on dem… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
