@@ -1,6 +1,6 @@
-// Rusty: a tiny pixel astronaut who floats beside the planner assistant and reacts to what is going on.
+// Helmut: a tiny pixel astronaut who floats beside the planner assistant and reacts to what is going on.
 //
-// Self-contained (frontend/mascot.js + frontend/mascot.css). Rusty only *watches* the page: the assistant chat
+// Self-contained (frontend/mascot.js + frontend/mascot.css). Helmut only *watches* the page: the assistant chat
 // (#gmChat, built by maps_ui.js), the planner status, route playback, Walker's view, the layer / hour / season /
 // region controls, the `mission` and `viewer` globals, and the user's own activity. It never changes app state, and
 // every hook is optional: if an element is missing, that reaction simply never fires.
@@ -10,7 +10,7 @@
   "use strict";
   if (window.marsMascot) return;
 
-  const NAME = "Rusty";
+  const NAME = "Helmut";
   const UNIT = 3.5;                                   // CSS px per sprite pixel; the sprite is 16 x 18 pixels
   const W = 16 * UNIT, H = 18 * UNIT;
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -19,8 +19,8 @@
   const pick = (list) => list[Math.floor(Math.random() * list.length)];
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
   const store = {
-    get(k, d) { try { const v = localStorage.getItem("rusty." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
-    set(k, v) { try { localStorage.setItem("rusty." + k, JSON.stringify(v)); } catch { /* private mode: forget */ } },
+    get(k, d) { try { const v = localStorage.getItem("helmut." + k); return v == null ? d : JSON.parse(v); } catch { return d; } },
+    set(k, v) { try { localStorage.setItem("helmut." + k, JSON.stringify(v)); } catch { /* private mode: forget */ } },
   };
   // index.html declares these with top-level let/const, so they are shared globals but not window properties
   /* global mission, viewer */
@@ -109,18 +109,18 @@
 
   // -------------------------------------------------------------------------------------------------- DOM ----
   const root = document.createElement("div");
-  root.id = "rusty";
+  root.id = "helmut";
   root.hidden = true;
   root.setAttribute("aria-hidden", "true");          // decorative: the chat itself carries all the information
-  root.innerHTML = `<div class="rusty-fig" title="${NAME}: boop me, drag me, double-click to send me home">${svg}</div>` +
-                   `<div class="rusty-bubble"></div>`;
+  root.innerHTML = `<div class="helmut-fig" title="${NAME}: boop me, drag me, double-click to send me home">${svg}</div>` +
+                   `<div class="helmut-bubble"></div>`;
   document.body.append(root);
-  const fig = root.querySelector(".rusty-fig");
+  const fig = root.querySelector(".helmut-fig");
   const eyesG = root.querySelector(".eyes");
-  const bubble = root.querySelector(".rusty-bubble");
+  const bubble = root.querySelector(".helmut-bubble");
 
   // ------------------------------------------------------------------------------------------- mood state ----
-  // base: what Rusty is doing for a while (idle, listen, think, plan, ride, sleep).
+  // base: what Helmut is doing for a while (idle, listen, think, plan, ride, sleep).
   // react: a short reaction that overrides the base, then fades back to it.
   // flags: independent looks that stack on top (night lamp, radiation glow, cold, hot, flag, talking...).
   const EYE_FOR = { idle: "normal", listen: "normal", think: "normal", plan: "scan", ride: "happy", sleep: "closed",
@@ -133,7 +133,7 @@
 
   function render() {
     const mood = react || base;
-    fig.className = "rusty-fig m-" + mood + [...flags].map(f => " f-" + f).join("");
+    fig.className = "helmut-fig m-" + mood + [...flags].map(f => " f-" + f).join("");
     const eyes = eyeOverride || EYE_FOR[mood] || "normal";
     if (eyesG.dataset.k !== eyes) { eyesG.dataset.k = eyes; eyesG.innerHTML = EYES[eyes]; }
   }
@@ -142,7 +142,7 @@
     clearTimeout(reactTimer);
     react = mood;
     // restart the CSS animation even when the same reaction repeats
-    fig.className = "rusty-fig"; void fig.offsetWidth;
+    fig.className = "helmut-fig"; void fig.offsetWidth;
     render();
     reactTimer = setTimeout(() => { react = null; render(); }, ms);
   }
@@ -169,7 +169,7 @@
     if (!force && now() - lastQuip < 5000) return false;
     lastQuip = now();
     thinkBubble = false;
-    bubble.className = "rusty-bubble";
+    bubble.className = "helmut-bubble";
     bubble.textContent = text;
     void bubble.offsetWidth;
     bubble.classList.add("on");
@@ -188,7 +188,7 @@
     const want = visible && base === "think";
     if (want && !bubble.classList.contains("on")) {
       thinkBubble = true;
-      bubble.className = "rusty-bubble think on";
+      bubble.className = "helmut-bubble think on";
       bubble.innerHTML = "<i></i><i></i><i></i>";
     } else if (!want && thinkBubble) {
       thinkBubble = false;
@@ -201,7 +201,7 @@
     if (reduced || !visible) return;
     for (let i = 0; i < n; i++) {
       const p = document.createElement("span");
-      p.className = "rusty-p " + kind;
+      p.className = "helmut-p " + kind;
       if (kind === "confetti") {
         p.style.setProperty("--dx", (Math.random() * 120 - 60).toFixed(0) + "px");
         p.style.setProperty("--dy", (-40 - Math.random() * 60).toFixed(0) + "px");
@@ -248,7 +248,7 @@
       if (Math.abs(x - pos.x) > 0.5 || Math.abs(y - pos.y) > 0.5) {
         pos = { x, y };
         root.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
-        // the bubble opens away from the chat: rightwards when Rusty floats beside it and there is room
+        // the bubble opens away from the chat: rightwards when Helmut floats beside it and there is room
         root.classList.toggle("bubble-left", (a.side === "right" && x + 210 < innerWidth) || x < 200);
       }
     }
@@ -282,7 +282,7 @@
   function hide() {
     if (!visible || leaving) return;
     leaving = true;
-    say(line(["Over and out!", "Rusty out!", "See you up there!"]), { force: true, ms: 900 });
+    say(line(["Over and out!", "Helmut out!", "See you up there!"]), { force: true, ms: 900 });
     setTimeout(() => {
       if (!leaving) return;
       root.classList.add("leave");
@@ -419,7 +419,7 @@
     } else if (/^(No safe route|I couldn't find|That layer isn't available|The planner says)/i.test(text)) {
       after(() => { reactTo("sad", 2000); say(line(["Aw, no luck. Try another spot?", "Hmm, that didn't work.", "Mars is tricky sometimes."])); });
     } else if (/^Found \d+ route/i.test(text)) {
-      // the mission watcher celebrates; here Rusty just looks pleased while "speaking"
+      // the mission watcher celebrates; here Helmut just looks pleased while "speaking"
       after(() => reactTo("proud", 1200));
     } else if (/dust storm|storm/i.test(text)) {
       after(() => { reactTo("scared", 1600); say(line(["Storms? Eek.", "Hope my visor's sealed…"])); });
@@ -527,7 +527,7 @@
     else if (/unavailable/i.test(t)) reactTo("sad", 1500);
   });
 
-  // layers: Rusty has opinions about all of them
+  // layers: Helmut has opinions about all of them
   const LAYERS = [
     [/radiation|dose|gcr/i, () => { reactTo("scared", 1600); say(line(["Yikes, radiation! Good thing I've got a helmet.", "Glowing in all the wrong ways…"])); }],
     [/dust/i, () => { reactTo("cough", 1300); burst("puff", 4); say(line(["*cough* Dusty out there!", "Achoo! Mars dust."])); }],
@@ -593,7 +593,7 @@
   wasStormSeason = (() => { const ls = +($("ls")?.value ?? 90); return ls >= 180 && ls <= 330; })();
   syncAmbient();
 
-  // the globe: long camera flights make Rusty hold onto his helmet
+  // the globe: long camera flights make Helmut hold onto his helmet
   $("wholeMars")?.addEventListener("click", () => { if (visible) { reactTo("whoa", 1500); say(line(["Look at it all!", "Whole planet. Wow."])); } });
   (function watchCamera(tries = 0) {
     const v = globe();
@@ -613,7 +613,7 @@
     });
   })();
 
-  // the autoplay tour has its own captions; Rusty steps aside while it runs
+  // the autoplay tour has its own captions; Helmut steps aside while it runs
   new MutationObserver(() => root.classList.toggle("touring", document.body.classList.contains("touring")))
     .observe(document.body, { attributes: true, attributeFilter: ["class"] });
 
