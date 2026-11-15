@@ -31,17 +31,21 @@ CRATERS = ("https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/"
            "Mars_Nomenclature_Mountains/FeatureServer/7")
 CALTECH_CA = ROOT / "certs" / "InCommon_RSA_OV_SSL_CA_3.pem"
 MARS_R = 3396190.0
+TERRAIN_MAX_LEVEL = 7
 UA = {"User-Agent": "Mozilla/5.0 (compatible; mars-cube-builder)"}
 
 # The viewer's layers, in its order. "default" = shown by default on the Murray Lab page.
 LAYERS = [
     dict(id="ctx", kind="tiles", title="CTX mosaic, 5 m (Murray Lab)", default=True, max_level=17,
          url=f"{ESRI}/CTX1/MapServer/tile/{{z}}/{{y}}/{{x}}", credit="Imagery: NASA, JPL, MSSS, Caltech/Murray Lab, Esri"),
-    dict(id="mola", kind="tiles", title="MOLA topography (colour shaded relief)", default=False, max_level=17,
+    # These global products have usable cached tiles through level 7. The service's
+    # generic image metadata lists finer levels, but their level-8 tile requests fail.
+    # Let Cesium magnify the native imagery instead of requesting nonexistent tiles.
+    dict(id="mola", kind="tiles", title="MOLA topography (colour shaded relief)", default=False, max_level=7,
          url=f"{ESRI}/MColorDEM/MapServer/tile/{{z}}/{{y}}/{{x}}", credit="USGS Astrogeology, NASA, JPL, ESA, DLR, Esri"),
-    dict(id="viking", kind="tiles", title="Viking MDIM 2.1 mosaic", default=False, max_level=17,
+    dict(id="viking", kind="tiles", title="Viking MDIM 2.1 mosaic", default=False, max_level=7,
          url=f"{ESRI}/MDIM/MapServer/tile/{{z}}/{{y}}/{{x}}", credit="USGS Astrogeology, NASA, JPL, MSSS, Caltech/Murray Lab, Esri"),
-    dict(id="terrain", kind="terrain", title="3D terrain (MOLA/HRSC 200 m)", default=True,
+    dict(id="terrain", kind="terrain", title="3D terrain (MOLA/HRSC 200 m)", default=True, max_level=TERRAIN_MAX_LEVEL,
          url="/murray/elevation/", credit="Topography: NASA GSFC, DLR, USGS Astrogeology, JPL, Esri"),
     dict(id="m2020", kind="geojson", title="Mars 2020 traverse (through sol 678)", default=True,
          url="/murray/features/m2020.geojson", style="line", color="#3ad6ff", credit="NASA/JPL/M2020"),
@@ -86,7 +90,8 @@ def _raw(name):
         tmp = path.with_name(path.name + ".part")
         tmp.write_bytes(_fetch(f"{FEATURES}/{name}.geojson"))
         tmp.rename(path)
-    return json.loads(path.read_text())
+    # The source uses UTF-8 (including IAU names/origins outside Windows' default code page).
+    return json.loads(path.read_text(encoding="utf-8"))
 
 
 def _lon(lon):
@@ -177,7 +182,7 @@ def murray_features(name: str):
             except Exception as e:
                 raise HTTPException(502, f"could not download {name}: {e}")
             path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(json.dumps(data, separators=(",", ":")))
+            path.write_text(json.dumps(data, separators=(",", ":")), encoding="utf-8")
     return Response(path.read_bytes(), media_type="application/geo+json",
                     headers={"Cache-Control": "public, max-age=86400"})
 
@@ -194,7 +199,7 @@ def place_name(lat, lon):
     if _places is None:
         try:
             murray_features("names")                     # downloads and caches names.geojson once
-            feats = json.loads((CACHE / "names.geojson").read_text())["features"]
+            feats = json.loads((CACHE / "names.geojson").read_text(encoding="utf-8"))["features"]
         except Exception:
             return None
         rows = []
@@ -206,11 +211,14 @@ def place_name(lat, lon):
             name = p["name"] + (" crater" if kind.startswith("Crater") else "")
             lo, la = f["geometry"]["coordinates"]
             rows.append((la, lo, max(float(p.get("diameter_km") or 0), 1.0) / 2, name))
+        if not rows:
+            return None
         _places = (np.array([r[0] for r in rows]), np.array([r[1] for r in rows]), np.array([r[2] for r in rows]),
                    [r[3] for r in rows])
     la, lo, rad, names = _places
     p1, p2, dl = math.radians(lat), np.radians(la), np.radians(lo - lon)
-    km = 2 * MARS_R / 1000 * np.arcsin(np.sqrt(np.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * np.cos(p2) * np.sin(dl / 2) ** 2))
+    hav = np.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * np.cos(p2) * np.sin(dl / 2) ** 2
+    km = 2 * MARS_R / 1000 * np.arcsin(np.sqrt(np.clip(hav, 0, 1)))
     inside = np.flatnonzero(km <= rad)
     if inside.size:
         return names[int(inside[np.argmin(rad[inside])])]
@@ -259,23 +267,66 @@ def _hirise_feature(ix, i):
             "properties": {"name": ob, "link": f"https://www.uahirise.org/{ob}" if ob else None}}
 
 
+def _footprint_contains(ring, lat, lon):
+    """Test the published footprint polygon, including its boundary, in local lon/lat.
+
+    Unwrap longitudes about the point so ordinary footprints across +/-180 still
+    work. A bounding-box hit alone does not establish that an image covers a point.
+    """
+    points = np.asarray(ring, dtype=float)
+    if len(points) < 3:
+        return False
+    xs = np.degrees(np.unwrap(np.radians(points[:, 0])))
+    xs -= lon + 360 * round((float(xs.mean()) - lon) / 360)
+    ys = points[:, 1] - lat
+    inside = False
+    x1, y1 = xs[-1], ys[-1]
+    for x2, y2 in zip(xs, ys):
+        cross = x1 * y2 - x2 * y1
+        if abs(cross) < 1e-10 and min(x1, x2) - 1e-10 <= 0 <= max(x1, x2) + 1e-10 and min(y1, y2) - 1e-10 <= 0 <= max(y1, y2) + 1e-10:
+            return True
+        if (y1 > 0) != (y2 > 0) and x1 + (x2 - x1) * (-y1) / (y2 - y1) > 0:
+            inside = not inside
+        x1, y1 = x2, y2
+    return inside
+
+
 @router.get("/murray/hirise")
 def murray_hirise(west: float, south: float, east: float, north: float, limit: int = 1500):
     """HiRISE footprints overlapping a box (the page asks for the current view)."""
+    if (not all(math.isfinite(v) for v in (west, south, east, north))
+            or not (-180 <= west <= 180 and -180 <= east <= 180 and -90 <= south <= north <= 90)
+            or not 1 <= limit <= 1500):
+        raise HTTPException(422, "Use a valid Mars bounding box and a limit between 1 and 1500.")
     ix = _hirise_index()
     b = ix["boxes"]
-    hit = np.nonzero((b[:, 0] <= east) & (b[:, 2] >= west) & (b[:, 1] <= north) & (b[:, 3] >= south))[0]
+    # A view crossing +/-180 has west > east. It covers either side of the dateline,
+    # not an empty interval. Keep the index in its original -180..180 coordinate range.
+    longitude = ((b[:, 0] <= east) & (b[:, 2] >= west)) if west <= east else ((b[:, 2] >= west) | (b[:, 0] <= east))
+    # A narrow polygon straddling the dateline has a misleading ~360-degree cached
+    # box. Test its unwrapped longitude extent instead, including both map edges.
+    for i in np.flatnonzero((b[:, 2] - b[:, 0] > 180) & (b[:, 1] <= north) & (b[:, 3] >= south)):
+        ring = ix["coords"][ix["starts"][i]:ix["starts"][i + 1]]
+        xs = np.degrees(np.unwrap(np.radians(ring[:, 0])))
+        ranges = [(west, east)] if west <= east else [(west, 180), (-180, east)]
+        longitude[i] = any(xs.min() <= e + shift and xs.max() >= w + shift
+                           for w, e in ranges for shift in (-360, 0, 360))
+    hit = np.nonzero(longitude & (b[:, 1] <= north) & (b[:, 3] >= south))[0]
     return {"type": "FeatureCollection", "total": int(hit.size), "truncated": bool(hit.size > limit),
             "features": [_hirise_feature(ix, i) for i in hit[:limit]]}
 
 
 @router.get("/murray/hirise/at")
 def murray_hirise_at(lat: float, lon: float):
-    """HiRISE observations whose footprint box contains a point (for the clicked-point panel)."""
+    """HiRISE observations whose published footprint contains the clicked point."""
+    if not (math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(422, "Use latitude -90..90 and longitude -180..180.")
     ix = _hirise_index()
     b = ix["boxes"]
-    hit = np.nonzero((b[:, 0] <= lon) & (b[:, 2] >= lon) & (b[:, 1] <= lat) & (b[:, 3] >= lat))[0]
-    return {"observations": [_hirise_feature(ix, i)["properties"] for i in hit[:20]], "total": int(hit.size)}
+    longitude = ((b[:, 0] <= lon) & (b[:, 2] >= lon)) | ((b[:, 2] - b[:, 0]) > 180)
+    candidates = np.nonzero(longitude & (b[:, 1] <= lat) & (b[:, 3] >= lat))[0]
+    hit = [i for i in candidates if _footprint_contains(ix["coords"][ix["starts"][i]:ix["starts"][i + 1]], lat, lon)]
+    return {"observations": [_hirise_feature(ix, i)["properties"] for i in hit[:20]], "total": len(hit)}
 
 
 _quad_boxes = None
@@ -287,7 +338,7 @@ def murray_quad_at(lat: float, lon: float):
     global _quad_boxes
     if _quad_boxes is None:
         murray_features("quads")                       # make sure the cache exists
-        feats = json.loads((CACHE / "quads.geojson").read_text())["features"]
+        feats = json.loads((CACHE / "quads.geojson").read_text(encoding="utf-8"))["features"]
         _quad_boxes = [(min(x for x, _ in f["geometry"]["coordinates"][0]), min(y for _, y in f["geometry"]["coordinates"][0]),
                         max(x for x, _ in f["geometry"]["coordinates"][0]), max(y for _, y in f["geometry"]["coordinates"][0]),
                         f["properties"]) for f in feats]
@@ -321,6 +372,10 @@ def murray_elevation_meta():
 
 def elevation_tile_bytes(z, y, x):
     """One LERC tile of the 3D terrain (MDEM200M), cached on disk. Shared by the globe and the cube builder."""
+    if (not all(isinstance(v, (int, np.integer)) for v in (z, y, x))
+            or not 0 <= z <= TERRAIN_MAX_LEVEL
+            or not (0 <= y < 2 ** z and 0 <= x < 2 ** (z + 1))):
+        raise ValueError("elevation tile outside the published level-0..7 geographic grid")
     path = CACHE / "elevation" / f"{z}_{y}_{x}.lerc"
     if not path.exists():
         data = _fetch(f"{ESRI}/MDEM200M/ImageServer/tile/{z}/{y}/{x}", timeout=60)
