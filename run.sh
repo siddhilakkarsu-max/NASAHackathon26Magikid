@@ -178,5 +178,5 @@ trap 'exit 130' INT TERM
 
 STATUS=0
 # shellcheck disable=SC2086  # $RELOAD is empty or a single flag
-"$PY" -m uvicorn gear_server:server --host 127.0.0.1 --port "$PORT" $RELOAD || STATUS=$?
+"$PY" -m uvicorn app:app --host 127.0.0.1 --port "$PORT" $RELOAD || STATUS=$?
 exit "$STATUS"
