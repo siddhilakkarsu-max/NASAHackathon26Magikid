@@ -307,8 +307,9 @@
       <label>End sol <input id="endSol" type="number" step="1" required></label>
     </div>
     <button id="playTimeline" class="secondary" type="button">Play timeline</button>
-    <label id="timelineReadout" for="timelinePosition">Timeline position</label>
-    <input id="timelinePosition" type="range" step="1">
+    <!-- the season slider in the Mission section is the only one; weather_timeline.js still drives these -->
+    <label id="timelineReadout" for="timelinePosition" style="display:none">Timeline position</label>
+    <input id="timelinePosition" type="range" step="1" style="display:none">
     <div class="small" id="timelineMessage" role="status"></div>
   </section>
   <p class="small"><a href="/api/weather/sources" target="_blank" rel="noopener">Weather data and source inventory</a></p>
@@ -500,13 +501,21 @@ function conditions() {
   return { region: regionId(), vehicle: $("vehicle").value || "astronaut", local_hour: +$("hour").value,
            ls: +$("ls").value, budget_hours: +$("budget").value };
 }
+let seasonCalendar = null;                        // {sols, ls}: one Mars year, sol by sol (from /api/weather/calendar)
+function solForLs(ls) {
+  if (!seasonCalendar) return null;
+  let best = 0;
+  seasonCalendar.ls.forEach((v, i) => { if (Math.abs(v - ls) < Math.abs(seasonCalendar.ls[best] - ls)) best = i; });
+  return seasonCalendar.sols[best];
+}
 function labels() {
   const h = +$("hour").value;
   $("hourVal").textContent = `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, "0")}`;
   const ls = +$("ls").value;                        // plain season name; the exact solar longitude in advanced mode
   $("lsVal").replaceChildren(document.createTextNode(
     ["northern spring", "northern summer", "northern autumn", "northern winter"][Math.min(3, Math.floor(ls / 90))] +
-    (ls >= 180 && ls < 330 ? " (dust-storm season)" : "")), el("span", { className: "adv", textContent: `Ls ${ls}°` }));
+    (ls >= 180 && ls < 330 ? " (dust-storm season)" : "") + (solForLs(ls) != null ? ` · sol ${solForLs(ls)}` : "")),
+    el("span", { className: "adv", textContent: `Ls ${ls}°` }));
   $("budgetVal").textContent = $("budget").value;
   syncGlobeLighting();
 }
@@ -1949,6 +1958,7 @@ function showRegionInfo() {
 }
 labels();
 api("/api/weather/calendar").then(calendar => {
+  seasonCalendar = calendar; labels();             // the season slider shows the sol from now on
   timeline = createWeatherTimeline({
     calendar,
     controls: { group: $("timeline"), start: $("startSol"), end: $("endSol"),
