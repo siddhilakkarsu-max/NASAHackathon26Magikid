@@ -25,20 +25,22 @@ async function open() {
   p.on('request', request => {
     const match = new URL(request.url()).pathname.match(/^\/murray\/elevation\/tile\/(\d+)\/(\d+)\/(\d+)$/);
     if (match) terrainRequests.push({ level: +match[1], y: +match[2], x: +match[3] });
-    const photo = new URL(request.url()).pathname.match(/\/OnMars\/CTX1\/MapServer\/tile\/(\d+)\/(\d+)\/(\d+)$/);
+    const photo = new URL(request.url()).pathname.match(/(?:\/OnMars\/CTX1\/MapServer\/tile|\/murray\/ctx)\/(\d+)\/(\d+)\/(\d+)$/);
     if (photo) photoRequests.push({ level: +photo[1], y: +photo[2], x: +photo[3] });
   });
   await p.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await p.locator('#startExploring').click();
   await p.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight &&
     document.querySelector('#globalLayer option[value="map:ctx"]'));
-  await p.evaluate(() => {
+  await p.evaluate(scale => {
+    viewer.resolutionScale = scale;
+    setTerrainScale(1); // This baseline audit checks true-scale navigation; relief has its own audit.
     window.terrainRenderErrors = [];
     viewer.scene.renderError.addEventListener((scene, error) => window.terrainRenderErrors.push(String(error)));
     // Keep the test image evenly lit; this does not affect the terrain geometry.
     document.querySelector('#globeLighting').checked = false;
     document.querySelector('#globeLighting').dispatchEvent(new Event('change'));
-  });
+  }, Number(process.env.MARSWALK_RENDER_SCALE || 1));
   return p;
 }
 async function choose(value) {

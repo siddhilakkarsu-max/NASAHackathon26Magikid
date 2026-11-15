@@ -121,6 +121,7 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
         allowPicking: false, minimumPixelSize: 76, maximumScale: 1600,
         distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 120000),
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+        enableVerticalExaggeration: false,
       });
       if (current !== route) {
         model.destroy();

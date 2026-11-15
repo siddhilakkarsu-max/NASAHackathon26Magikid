@@ -12,6 +12,7 @@
 <script src="/temperature_view.js"></script>
 <script src="/mars_lighting.js"></script>
 <script src="/route_playback.js"></script>
+<script src="/regional_terrain.js"></script>
 <script src="/planner_layout.js"></script>
 <script src="/game-launch.js" defer></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
@@ -332,6 +333,15 @@
     <p class="small">Choose one planet-wide view. Add names, rover tracks and photo outlines below.</p>
     <label for="globalLayer">Map view (choose one)</label>
     <select id="globalLayer"><option value="">The planner's own map</option></select>
+    <div id="terrainDisplayControls" hidden>
+      <label for="terrainScale">Terrain height: <b id="terrainScaleValue">2.7× (enhanced)</b></label>
+      <input id="terrainScale" type="range" min="1" max="8" step="0.1" value="2.7" aria-describedby="terrainScaleNote" />
+      <div class="small" id="terrainScaleNote">Display exaggeration only. 1× shows true proportions; measured heights and planning calculations stay unchanged.</div>
+      <div class="row"><button id="terrainAngledView" class="secondary" type="button">Angled terrain view</button>
+        <button id="terrainTrueScale" class="secondary" type="button">True scale (1×)</button></div>
+      <button id="terrainJezero" class="secondary" type="button">Explore Jezero in 3D</button>
+      <div class="small" id="terrainResolutionNote"></div>
+    </div>
   <div id="radiationControls" hidden>
     <label for="radiationSolar">Solar activity scenario</label>
     <select id="radiationSolar">
@@ -370,7 +380,7 @@
     <label for="regionalLayer">Regional data layer</label>
     <select id="regionalLayer"><option value="">No regional data layer</option></select>
   <h2>Sharp photos &amp; 3D terrain</h2>
-  <p class="small">5 m photos over 200 m elevation data. Zoom loads finer available tiles; heights stay at true scale. Right-drag to tilt and turn; scroll to zoom.</p>
+  <p class="small">Photos follow measured terrain. Zoom loads finer available tiles. Right-drag to tilt and turn; scroll to zoom.</p>
   <div class="row">
     <button id="boxBtn" class="secondary" type="button">Box a sharp area</button>
     <button id="clearBox" class="secondary" type="button">Clear</button>
@@ -378,6 +388,14 @@
   <div class="small" id="boxInfo">Click "Box a sharp area", then click two corners on the map.</div>
   <div class="small" id="sharpTerrainStatus" role="status" hidden></div>
   <button id="sharpTerrainRetry" class="secondary" type="button" hidden>Retry 3D terrain</button>
+  <div id="sharpTerrainDisplayControls" hidden>
+    <label for="sharpTerrainScale">Terrain height: <b id="sharpTerrainScaleValue">2.7× (enhanced)</b></label>
+    <input id="sharpTerrainScale" type="range" min="1" max="8" step="0.1" value="2.7" aria-describedby="sharpTerrainScaleNote" />
+    <div class="small" id="sharpTerrainScaleNote">Display exaggeration only. Measured heights and planning values stay unchanged.</div>
+    <div class="row"><button id="sharpTerrainAngledView" class="secondary" type="button">Angled terrain view</button>
+      <button id="sharpTerrainTrueScale" class="secondary" type="button">True scale (1×)</button></div>
+    <div class="small" id="sharpTerrainResolutionNote"></div>
+  </div>
 
   <label class="check"><input type="checkbox" id="showTracks" /> Show rover tracks</label>
   <div id="trackInfo" class="small"></div>
@@ -434,6 +452,7 @@
     <p><a href="/api/weather/sources" target="_blank" rel="noopener">Weather data and source inventory</a></p>
     <p><a href="/api/radiation/method" target="_blank" rel="noopener">Radiation method, assumptions and sources</a></p>
     <p><a href="https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html" target="_blank" rel="noopener">Murray Lab CTX viewer and global map catalogue</a></p>
+    <p><a href="https://astrogeology.usgs.gov/search/map/mars_2020_science_investigation_ctx_dem_mosaic" target="_blank" rel="noopener">USGS / NASA-JPL Mars 2020 Jezero elevation survey (20 m)</a> · <a href="/api/terrain/jezero" target="_blank" rel="noopener">Local coverage and processing details</a></p>
     <div id="layerSources"></div>
     <h2>Global map credits</h2>
     <ul id="mapSources"></ul>
@@ -482,10 +501,13 @@ const viewer = new Cesium.Viewer("map", {
 });
 const trekLayer = viewer.imageryLayers.addImageryProvider(marsTiles);
 // Stream only visible tiles, refining the measured terrain and photos as they
-// occupy more screen pixels. Keep real elevations at 1x, without invented relief.
+// occupy more screen pixels. Height amplification is a labeled display setting;
+// providers and planning calculations always retain the original measured values.
 viewer.scene.globe.maximumScreenSpaceError = 1;
 viewer.scene.globe.tileCacheSize = 256;
-viewer.scene.verticalExaggeration = 1;
+let terrainScale = 2.7;
+viewer.scene.verticalExaggeration = terrainScale;
+viewer.scene.verticalExaggerationRelativeHeight = 0;
 const cameraControls = viewer.scene.screenSpaceCameraController;
 cameraControls.tiltEventTypes = [Cesium.CameraEventType.RIGHT_DRAG, Cesium.CameraEventType.MIDDLE_DRAG,
   Cesium.CameraEventType.PINCH,
@@ -514,6 +536,7 @@ function syncSharpBoxOrder() {
     viewer.imageryLayers.raiseToTop(ctxLayer);
   }
 }
+function mapTileUrl(url) { return url.startsWith("/") ? API + url : url; }
 // Later weather detail tiles must not cover a deliberately pinned photo area.
 viewer.imageryLayers.layerAdded.addEventListener(() => queueMicrotask(syncSharpBoxOrder));
 function setSharpBox(r, { persistent = false } = {}) { // degrees; east < west crosses the dateline
@@ -524,18 +547,19 @@ function setSharpBox(r, { persistent = false } = {}) { // degrees; east < west c
   sharpBoxPinned = !!r && persistent;
   if (!r) { applyGlobalMap(); return; }
   const rect = Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north);
-  // The Murray Lab "Detailed photos (black and white)" map (CTX mosaic, 5 m, straight from Esri's OnMars tiles),
-  // clipped to the box.
+  // Murray Lab CTX photos, validated by our tile proxy and clipped to the box.
   const ctxDef = murray.defs.find((d) => d.id === "ctx");
   ctxLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-    url: ctxDef ? ctxDef.url : "https://astro.arcgis.com/arcgis/rest/services/OnMars/CTX1/MapServer/tile/{z}/{y}/{x}",
+    url: mapTileUrl(ctxDef ? ctxDef.url : "/murray/ctx/{z}/{y}/{x}"),
     tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
     tileWidth: 512, tileHeight: 512, maximumLevel: ctxDef ? ctxDef.max_level : 12, rectangle: rect,
     credit: ctxDef ? ctxDef.credit : "Imagery: NASA, JPL, MSSS, Caltech/Murray Lab, Esri",
   }));                                              // above every background map...
-  ctxLayer.imageryProvider.errorEvent.addEventListener(error => {
-    error.retry = false;
-    if (sharpBoxPinned) $("boxInfo").textContent = "Some sharp-area photos could not load. Redraw the area to retry. Terrain remains available independently.";
+  const sharpLayer = ctxLayer;
+  sharpLayer.imageryProvider.errorEvent.addEventListener(error => {
+    const current = ctxLayer === sharpLayer;
+    error.retry = current && error.timesRetried === 0; // one bounded retry for a transient image failure
+    if (current && sharpBoxPinned && !error.retry) $("boxInfo").textContent = "Some sharp-area photos could not load. Redraw the area to retry. Terrain remains available independently.";
   });
   for (const l of overlay) if (viewer.imageryLayers.contains(l)) viewer.imageryLayers.raiseToTop(l);   // ...below data
   boxEntity = viewer.entities.add({ polyline: {
@@ -1672,11 +1696,111 @@ $("mVehicle").addEventListener("change", () => { if ($("showTracks").checked) sh
 
 
 // ------------------------------------------------------- Murray Lab maps ----
-// Every map from the Murray Lab CTX viewer (murray.py on the server). Tiles come straight from Esri's OnMars
-// services; terrain, traverses, names, craters, the CTX tile index and HiRISE footprints come via our server.
+// Murray Lab CTX viewer sources (murray.py). CTX photos are validated by our
+// server; other imagery uses Esri directly. Terrain and annotations use our server.
 const murray = { defs: [], state: {}, selectedMap: null };
 const flatTerrain = new Cesium.EllipsoidTerrainProvider({ ellipsoid: MARS });
 const murrayOn = (id) => !!(murray.state[id] && murray.state[id].on);
+let terrainViewRequest = 0, terrainFlight = false, terrainClearanceRemove = null;
+function terrainResolutionText() {
+  const provider = murray.state.terrain?.provider;
+  return provider?.regionalMetadata?.available
+    ? "Elevation: 20 m within the Jezero survey; 200 m elsewhere. Survey edges blend into the global terrain. Photos: up to 5 m."
+    : "Elevation: global 200 m grid. Photos: up to 5 m. The finer Jezero survey is not loaded.";
+}
+function syncTerrainControls() {
+  const on = murrayOn("terrain") || sharpBoxPinned;
+  $("terrainDisplayControls").hidden = !on;
+  $("sharpTerrainDisplayControls").hidden = !sharpBoxPinned;
+  for (const prefix of ["terrain", "sharpTerrain"]) {
+    $(prefix + "Scale").value = terrainScale;
+    $(prefix + "ScaleValue").textContent = terrainScale === 1 ? "1× (true scale)" : `${terrainScale.toFixed(1)}× (enhanced)`;
+    $(prefix + "ResolutionNote").textContent = terrainResolutionText();
+  }
+}
+function setTerrainScale(value) {
+  const next = Math.round(Math.min(8, Math.max(1, Number(value))) * 10) / 10;
+  if (!Number.isFinite(next)) return;
+  ++terrainViewRequest;
+  if (terrainFlight) viewer.camera.cancelFlight();
+  terrainScale = next;
+  viewer.scene.verticalExaggeration = next;
+  // Read the newly rendered surface, not a stale mesh from before a rapid slider
+  // gesture. Cesium also keeps collision detection enabled while tiles refine.
+  terrainClearanceRemove?.();
+  terrainClearanceRemove = viewer.scene.postRender.addEventListener(() => {
+    terrainClearanceRemove?.(); terrainClearanceRemove = null;
+    const camera = viewer.camera, location = camera.positionCartographic;
+    const ground = viewer.scene.globe.getHeight(location);
+    if (Number.isFinite(ground) && location.height < ground + 50) {
+      camera.setView({ destination: Cesium.Cartesian3.fromRadians(location.longitude, location.latitude, ground + 50, MARS),
+        orientation: { heading: camera.heading, pitch: camera.pitch, roll: camera.roll } });
+      viewer.scene.requestRender();
+    }
+  });
+  syncTerrainControls();
+  viewer.scene.requestRender();
+}
+for (const prefix of ["terrain", "sharpTerrain"]) {
+  $(prefix + "Scale").oninput = event => setTerrainScale(event.target.value);
+  $(prefix + "Scale").addEventListener("dragstart", event => event.preventDefault());
+  $(prefix + "TrueScale").onclick = () => setTerrainScale(1);
+  $(prefix + "AngledView").onclick = () => angledTerrainView(sharpBoxPinned ? sharpBox : null);
+}
+async function angledTerrainView(rect = null, headingDegrees = 0) {
+  const request = ++terrainViewRequest;
+  const selected = murray.state.terrain;
+  if (!selected?.on) return;
+  const camera = viewer.camera;
+  const rectangle = rect && Cesium.Rectangle.fromDegrees(rect.west, rect.south, rect.east, rect.north);
+  const center = rectangle ? Cesium.Rectangle.center(rectangle) : (() => {
+    const p = viewCenter();
+    return p ? Cesium.Cartographic.fromDegrees(p.lon, p.lat) : Cesium.Cartographic.clone(camera.positionCartographic);
+  })();
+  if (!center) return;
+  const range = rectangle
+    ? Math.max(3500, MARS.maximumRadius * Math.max(rectangle.width * Math.cos(center.latitude), rectangle.height) * 1.05)
+    : Math.max(12000, Math.min(750000, Math.abs(camera.positionCartographic.height) * 1.35));
+  try { if (selected.loading) await selected.loading; } catch (_) { return; }
+  if (request !== terrainViewRequest || !murrayOn("terrain")) return;
+  let displayHeight;
+  const meta = selected.provider?.regionalMetadata;
+  const within = meta?.available && Cesium.Rectangle.contains(Cesium.Rectangle.fromDegrees(
+    meta.rectangle.west, meta.rectangle.south, meta.rectangle.east, meta.rectangle.north), center);
+  try {
+    // A just-switched globe can still report its previous flat mesh's height.
+    // Sample the selected source before aiming a close view into a deep crater.
+    const [sample] = await Cesium.sampleTerrain(selected.provider, within ? meta.maximum_level : 7,
+      [Cesium.Cartographic.clone(center)]);
+    displayHeight = sample.height * terrainScale;
+  } catch (_) { /* Retain a usable camera view if the source cannot be sampled. */ }
+  if (!Number.isFinite(displayHeight)) displayHeight = viewer.scene.globe.getHeight(center);
+  if (request !== terrainViewRequest || !murrayOn("terrain")) return;
+  const point = Cesium.Cartesian3.fromRadians(center.longitude, center.latitude,
+    Number.isFinite(displayHeight) ? displayHeight : 0, MARS);
+  camera.cancelFlight();
+  terrainFlight = true;
+  camera.flyToBoundingSphere(new Cesium.BoundingSphere(point, 0), {
+    offset: new Cesium.HeadingPitchRange(Cesium.Math.toRadians(headingDegrees), Cesium.Math.toRadians(-28), range),
+    duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.2,
+    complete: () => { terrainFlight = false; }, cancel: () => { terrainFlight = false; },
+  });
+}
+async function showJezeroTerrain() {
+  const select = $("globalLayer");
+  select.value = "map:ctx";
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  $("globalMaps").open = true;
+  const request = terrainViewRequest, selected = murray.state.terrain;
+  try { if (selected?.loading) await selected.loading; } catch (_) { return; }
+  if (request !== terrainViewRequest || !murrayOn("terrain")) return;
+  // Frame the full survey, including the high terrain east of the crater,
+  // instead of cropping those mountains out of a small landing-site box.
+  const rect = selected?.provider?.regionalMetadata?.rectangle ||
+    { west: 77.0, south: 17.58, east: 78.58, north: 19.29 };
+  await angledTerrainView(rect, 270);
+}
+$("terrainJezero").onclick = showJezeroTerrain;
 
 function murrayLine(ds, ring, color, width, maxDist) {
   if (ring.length < 2) return;
@@ -1886,11 +2010,19 @@ async function murrayToggle(def, on) {
     if (def.kind === "tiles") {
       if (on && !st.layer) {                                   // above every base map, below the data overlays
         st.layer = coll.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-          url: def.url, tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
+          url: mapTileUrl(def.url), tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
           tileWidth: 512, tileHeight: 512, maximumLevel: def.max_level, credit: def.credit }));
-        st.layer.imageryProvider.errorEvent.addEventListener(error => {
-          error.retry = false;
-          if (st.on) murrayStatus(def.id, "Some image tiles could not load. Choose another background or retry this map.");
+        const activeLayer = st.layer;
+        activeLayer.imageryProvider.errorEvent.addEventListener(error => {
+          const current = st.on && st.layer === activeLayer;
+          if (current) {
+            st.imageErrors ||= [];
+            st.imageErrors.push({ x: error.x, y: error.y, level: error.level, message: error.message,
+              detail: error.error?.message || String(error.error || ""), attempts: error.timesRetried });
+            if (st.imageErrors.length > 8) st.imageErrors.shift();
+          }
+          error.retry = current && error.timesRetried === 0;
+          if (current && !error.retry) murrayStatus(def.id, "Some image tiles could not load. Choose another background or retry this map.");
         });
         for (const l of overlay) if (coll.contains(l)) coll.raiseToTop(l);
       }
@@ -1898,12 +2030,13 @@ async function murrayToggle(def, on) {
     } else if (def.kind === "terrain") {
       if (on && !st.provider) {
         st.loading ||= Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(API + def.url, { ellipsoid: MARS })
-          .then(provider => {
+          .then(async provider => {
             provider.errorEvent.addEventListener(error => {
               error.retry = false;
-              if (st.on && st.provider === provider) murrayStatus(def.id, "Some 3D terrain tiles could not load. Use Retry 3D terrain to reload the elevation service.");
+              if (st.on && (st.provider === provider || st.provider?.baseProvider === provider))
+                murrayStatus(def.id, "Some 3D terrain tiles could not load. Use Retry 3D terrain to reload the elevation service.");
             });
-            return st.provider = limitTerrainLevels(provider, def.max_level);
+            return st.provider = await createRegionalTerrainProvider(Cesium, limitTerrainLevels(provider, def.max_level), { api: API });
           }).finally(() => { st.loading = null; });
         await st.loading;
       }
@@ -1911,6 +2044,7 @@ async function murrayToggle(def, on) {
       const provider = on ? st.provider : flatTerrain;
       if (viewer.terrainProvider !== provider) viewer.terrainProvider = provider;
       viewer.scene.globe.depthTestAgainstTerrain = on;
+      syncTerrainControls();
       // Crater floors can lie below the reference sphere. Switching to a flat
       // map must not leave the camera inside that newly restored sphere.
       if (!on && viewer.camera.positionCartographic.height < 25) {
@@ -1950,8 +2084,8 @@ async function murrayToggle(def, on) {
     if (!latest()) return;
     if (focus) focus.disabled = false;
     if (on && def.kind !== "bbox" && def.id !== "names") murrayStatus(def.id,
-      def.kind === "terrain" ? "3D terrain is on. Right-drag to tilt and turn; scroll to zoom. Elevation grid: 200 m, at true scale."
-      : def.id === "ctx" ? "Black-and-white photos: 5 m/pixel over 200 m elevation data. Zoom loads finer available tiles; right-drag to see the relief."
+      def.kind === "terrain" ? "3D terrain is on. Use Angled terrain view to see the relief, or right-drag to tilt. The height control changes display proportions only."
+      : def.id === "ctx" ? "Black-and-white photos: up to 5 m/pixel over measured elevation. Damaged image tiles use valid coarser photos. Use the height control to make relief easier to see."
       : st.routePoints ? `${def.title}. Archived route, not a live rover position.`
       : `${MURRAY_PLAIN[def.id] || def.title} is on.`);
   } catch (e) {
@@ -2005,6 +2139,7 @@ const MURRAY_PLAIN = { ctx: "Detailed photos (black and white)", mola: "Height m
   msl: "Curiosity rover's path", names: "Place names", craters: "Crater names",
   quads: "Photo tile grid (with download links)", hirise: "Where close-up photos exist" };
 function applyGlobalMap() {
+  ++terrainViewRequest;
   const choice = plannerLayout.globalChoice();
   const id = choice.startsWith("map:") ? choice.slice(4) : null;
   const def = murray.defs.find(layer => layer.id === id);
@@ -2018,14 +2153,18 @@ function applyGlobalMap() {
       murrayToggle(layer, false);
     }
   }
-  if (!terrainWanted) murrayStatus("terrain", "");
+  if (!terrainWanted) {
+    if (terrainFlight) viewer.camera.cancelFlight();
+    murrayStatus("terrain", "");
+  }
   syncBasemapVisibility();
   if (def && !murrayOn(def.id)) murrayToggle(def, true);
   const terrain = murray.defs.find(layer => layer.kind === "terrain");
   if (terrainWanted && terrain && !murrayOn(terrain.id)) murrayToggle(terrain, true);
+  syncTerrainControls();
   syncSharpBoxOrder();
 }
-api("/api/murray/layers").then((d) => {
+const murrayCatalogueReady = api("/api/murray/layers").then((d) => {
   murray.defs = d.layers;
   plannerLayout.mapCredits(d.layers);
   plannerLayout.setGlobalMaps(d.layers.filter(def => ["tiles", "terrain"].includes(def.kind))
@@ -2065,6 +2204,7 @@ const ROVER_HEADING_OFFSET = 0;                   // the model faces +X, which C
 const roverEntity = viewer.entities.add({ id: "hoverRover", show: false,
   position: Cesium.Cartesian3.fromDegrees(0, 0, 0, MARS),
   model: { uri: "rover.glb", minimumPixelSize: 64, maximumScale: 20000,
+           enableVerticalExaggeration: false,
            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
            silhouetteColor: Cesium.Color.fromCssColorString("#e0703a"), silhouetteSize: 1.5 } });
 
@@ -2472,6 +2612,10 @@ api("/api/weather/calendar").then(calendar => {
     } else $("status").textContent = "Move the globe anywhere on Mars and plan: the area loads from the 3D terrain.";
     refreshLayer();
     $("region").onchange();
+    if (new URLSearchParams(location.search).get("view") === "jezero3d") {
+      await murrayCatalogueReady;
+      if (murray.defs.length) await showJezeroTerrain();
+    }
   } catch (e) {
     $("status").textContent = "Regional layers could not load: " + e.message;
     if (globalLayerSelected()) refreshLayer();

@@ -9,11 +9,16 @@ Choosing a regional data layer restores the planner background.
 ## Detailed photos and terrain
 
 The detailed black-and-white map combines Murray Lab CTX imagery with the
-MOLA/HRSC global elevation model served by Esri. Image and elevation tiles refine
+MOLA/HRSC global elevation model served by Esri and the USGS 20 m Jezero survey
+where it is installed. Image and elevation tiles refine
 as the camera approaches the surface. Only visible tiles and the renderer's
 bounded cache are needed; the entire full-resolution planet is not downloaded.
-Right-drag tilts and rotates the terrain view; the mouse wheel zooms. Heights
-use a 1x scale, so the terrain is not vertically exaggerated.
+Right-drag tilts and rotates the terrain view; the mouse wheel zooms. The labeled
+height control defaults to 2.7x display exaggeration and spans 1x–8x. **True scale**
+restores 1x. These settings change the display only: elevation samples and mission
+calculations retain their physical values. Rover and astronaut proportions are
+not stretched. **Angled terrain view** frames the visible surface or pinned box;
+**Explore Jezero in 3D** frames the crater. `?view=jezero3d` opens that view directly.
 
 **Box a sharp area** pins the selected area's CTX imagery and terrain. The box
 stays visible when zooming out; camera distance does not fade it away. **Clear**
@@ -25,9 +30,35 @@ continues to fade at distant camera positions. A small box can occupy less than 
 far away, and fine features become visible as it fills more of the screen.
 
 The source imagery is approximately **5 m/pixel**, while the global elevation
-grid is **200 m/pixel**. Zooming closer magnifies the best available samples;
+grid is **200 m/pixel**, with **20 m/pixel elevation inside the Jezero survey**.
+Zooming closer magnifies the best available samples;
 it does not reveal measured small-object heights absent from the elevation
 source. No relief is inferred from the light and dark parts of the photograph.
+CTX photo tiles pass through a local validator. Some upstream PNGs return HTTP
+200 but are truncated and cannot be decoded. A damaged tile uses the correctly
+cropped portion of a valid coarser parent photo until finer valid tiles load;
+no missing pixels are synthesized. This fallback can temporarily reduce image
+detail but does not alter elevation. Sources and response headers retain the
+fallback resolution information.
+
+Install the verified regional survey once per checkout (about 86 MiB):
+
+```sh
+python jezero_terrain.py --download
+```
+
+The source and validity mask live in ignored `data/`; they are not committed to
+Git. When the source is missing or unavailable, the app retains global terrain
+and labels the missing regional detail. Requests do not initiate large downloads.
+`/api/terrain/jezero` reports actual availability, coverage, native resolution,
+elevation range, source link and processing details.
+
+Regional terrain uses geographic 257-by-257 vertex grids at levels 8–11, reaching
+approximately 20 m sample spacing. The USGS CTX heights are MOLA controlled.
+Within 1 km of survey edges or no-data holes, display tiles blend the two real
+elevation products; the measured CTX heights remain unmodified in the interior.
+Shared tile-edge samples are identical. Global heights outside the survey retain
+the original source; no procedural mountains or craters are added.
 
 Source references:
 
@@ -38,6 +69,10 @@ Source references:
   promise a particular imagery release beyond this served source.
 - [USGS global elevation inventory](https://fdp.astrogeology.usgs.gov/fdp/mars/)
   documents the 200 m MOLA/HRSC blend.
+- [USGS Mars 2020 CTX elevation mosaic](https://astrogeology.usgs.gov/search/map/mars_2020_science_investigation_ctx_dem_mosaic)
+  documents the Jezero 20 m stereo-derived elevation product. Its original
+  [GeoTIFF](https://planetarymaps.usgs.gov/mosaic/mars2020_trn/CTX/ScienceInvestigationMaps_JPL/M20_JezeroCrater_CTXDEM_20m.tif)
+  supplies the regional terrain.
 - [Esri's official Mars example](https://developers.arcgis.com/javascript/latest/sample-code/mars/)
   uses the same MDEM200M elevation service, credited to NASA, ESA, HRSC,
   Goddard Space Flight Center, USGS Astrogeology and Esri.
@@ -70,6 +105,7 @@ then run these scripts sequentially:
 node docs/planner/map_selection_test.mjs
 node docs/planner/terrain_navigation_test.mjs
 node docs/planner/terrain_failure_test.mjs
+node docs/planner/terrain_relief_test.mjs
 node docs/planner/time_slider_test.mjs
 ```
 
@@ -77,9 +113,9 @@ Set `MARSWALK_TEST_URL` for another app URL, `CHROME` for an existing Chrome
 executable, or `PLAYWRIGHT_MODULE` for an importable Playwright module URL.
 Reports and screenshots go to a temporary directory printed by each script;
 `MARSWALK_AUDIT_DIR` selects a specific output directory.
-`MARSWALK_RENDER_SCALE=0.5` reduces raster resolution in the map-selection and
-failure audits on software-rendered machines; it does not change the app default
-or terrain coordinates. The navigation audit uses the app's full raster resolution.
+`MARSWALK_RENDER_SCALE=0.5` reduces raster resolution in the map-selection,
+navigation, relief and failure audits on software-rendered machines; it does not
+change the app default or terrain coordinates. Omit it for full raster resolution.
 
 The map test checks every enabled view, retained annotations, regional transitions,
 and late weather/terrain responses. The slider test uses real Control+A selection,
@@ -92,6 +128,11 @@ and records the actual requested source levels and rendering errors.
 The failure test intercepts elevation metadata to check visible errors, retry,
 and clearing a box while terrain loads. Set `MARSWALK_TERRAIN_WEATHER=1` to also
 check pinned-photo ordering over real pressure data and clearing back to weather.
+The relief audit compares rendered height amplification with unchanged physical
+DEM samples, checks scale synchronization and camera clearance, and captures
+Jezero, Olympus Mons and Gale. `node docs/planner/regional_terrain_test.cjs` checks
+the hybrid provider's child masks, throttling, cache buffers and missing-data
+fallback. `tests/test_jezero_terrain.py` checks the regional backend and tile edges.
 
 Backend map-source and dateline checks are in `tests/test_murray.py`. Game handoff,
 region, season and route checks are documented in `docs/game/README.md`.

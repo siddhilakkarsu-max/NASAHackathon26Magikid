@@ -31,7 +31,8 @@ class MurrayServices(unittest.TestCase):
         layers = {layer["id"]: layer for layer in murray.murray_layers()["layers"]}
         ctx = layers["ctx"]
         self.assertEqual(ctx["max_level"], 12)
-        self.assertIn("/CTX1/MapServer/tile/", ctx["url"])
+        self.assertEqual(ctx["url"], "/murray/ctx/{z}/{y}/{x}")
+        self.assertIn("/CTX1/MapServer/tile/", ctx["source_url"])
         meters_per_pixel = 2 * math.pi * murray.MARS_R / (512 * 2 ** (ctx["max_level"] + 1))
         self.assertAlmostEqual(meters_per_pixel, 5.0875, delta=0.01)
         self.assertEqual(layers["terrain"]["max_level"], 7)

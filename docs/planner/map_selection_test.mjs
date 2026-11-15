@@ -18,8 +18,8 @@ async function open() {
   const p = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   p.setDefaultTimeout(45000);
   p.on('pageerror', e => pageErrors.push(String(e)));
-  p.on('response', r => { if (r.status() >= 400 && r.url().includes('/OnMars/')) sourceFailures.push({url:r.url(), status:r.status()}); });
-  p.on('requestfailed', r => { if (r.url().includes('/OnMars/')) sourceFailures.push({url:r.url(), error:r.failure()?.errorText}); });
+  p.on('response', r => { if (r.status() >= 400 && /\/OnMars\/|\/murray\/ctx\//.test(r.url())) sourceFailures.push({url:r.url(), status:r.status()}); });
+  p.on('requestfailed', r => { if (/\/OnMars\/|\/murray\/ctx\//.test(r.url())) sourceFailures.push({url:r.url(), error:r.failure()?.errorText}); });
   await p.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await p.locator('#startExploring').click();
   await p.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight && document.querySelector('#globalLayer option[value="map:terrain"]'));
