@@ -29,6 +29,7 @@ import physics
 import search
 from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
                     PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, VEHICLES)
+from gear.api import router as gear_router
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
 from surface_temperature import temperature_overlay
 from thermal_detail import DETAIL_STEP, detail_overlay, detail_sample
@@ -965,6 +966,9 @@ def trek_tile(layer: str, z: int, y: int, x: int):
             _tile_cache.pop(next(iter(_tile_cache)))
     return Response(_tile_cache[key], media_type="image/jpeg",
                     headers={"Cache-Control": "public, max-age=86400"})
+
+
+app.include_router(gear_router)
 
 
 # ------------------------------------- global 5 m CTX mosaic, colourised ----

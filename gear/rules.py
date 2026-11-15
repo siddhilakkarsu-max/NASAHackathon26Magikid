@@ -31,6 +31,12 @@ THRESHOLDS = {
     "pressurized_rover_slope_deg": (15.0, "deg", "P", ("nasa_moonbase",), "NASA lunar page for a pressurized rover"),
     "loose_firmness": (0.3, "0-1", "I", (), "The planner's own 'loose sand or dust' cut-off (app.py)"),
     "loose_fraction": (0.2, "share", "I", (), "My threshold: a fifth of the route on loose ground"),
+    "ti_dust": (150, "TI", "P", ("putzig_ti", "mashal_ez"),
+                "Thermal inertia below this is fine dust (low TI is unconsolidated material; team planning table); "
+                "NASA exploration-zone screening masks below 100 and 140"),
+    "ti_sand": (300, "TI", "P", ("putzig_ti",),
+                "Thermal inertia 150 to 300 is sand, loose or moderately packed (team planning table); above 300 is "
+                "coarse sand, crust or rock"),
     "roughness_ratio": (1.5, "x p95", "I", (), "My threshold: route roughness 1.5 times the cube's 95th percentile"),
     "cold_surface_k": (210.0, "K", "I", ("sbir_mars_plss",), "Below Jezero's mean air temperature of about 218 K; no published suit threshold"),
     "min_sun_elevation_deg": (10.0, "deg", "I", (), "The planner's default minimum sun elevation"),
@@ -106,8 +112,27 @@ def max_slope(r: Resolved):
     return None
 
 
+MIN_TI_SAMPLES = 3  # fewer measured thermal inertia pixels than this and the night-IR firmness is used instead
+
+
+def has_ti(r: Resolved):
+    t = r.terrain
+    return bool(t and t.ti_samples and t.ti_samples >= MIN_TI_SAMPLES)
+
+
+def loose_basis(r: Resolved):
+    """(share of the route on loose ground, what it was judged by). Measured thermal inertia wins over firmness."""
+    if not r.terrain:
+        return None, None
+    if has_ti(r) and r.terrain.ti_loose_fraction is not None:
+        return r.terrain.ti_loose_fraction, "by thermal inertia"
+    if r.terrain.loose_fraction is not None:
+        return r.terrain.loose_fraction, "by night-IR firmness"
+    return None, None
+
+
 def loose_fraction(r: Resolved):
-    return r.terrain.loose_fraction if r.terrain else None
+    return loose_basis(r)[0]
 
 
 def distance_km(r: Resolved):
@@ -296,20 +321,22 @@ def _s5(r):
 
 # =============================================================== TERRAIN
 @rule("T1", "terrain", "Steep ground on loose material", "E",
-      evidence=["slope_loose_deg", "loose_fraction", "loose_firmness"], srcs=("golombek_slopes", "purgatory_dune"),
+      evidence=["slope_loose_deg", "loose_fraction", "ti_sand", "loose_firmness"],
+      srcs=("golombek_slopes", "purgatory_dune", "putzig_ti"),
       explain="Rovers are limited to about 15 degrees on unconsolidated ground and about 30 on rock. There is no "
-              "published equivalent for suited walkers.")
+              "published equivalent for suited walkers. Loose ground is judged by measured thermal inertia where the "
+              "cube has it, otherwise by the night-IR firmness proxy.")
 def _t1(r):
     s = max_slope(r)
     if s is None or s <= THRESHOLDS["slope_loose_deg"][0] or s > THRESHOLDS["slope_rock_deg"][0]:
         return None
-    lf = loose_fraction(r)
+    lf, basis = loose_basis(r)
     if lf is not None and lf < THRESHOLDS["loose_fraction"][0]:
         return None
     adds = [A("m_probe", "Check footing before committing"), A("m_tether_lines", "Link the team on slope")]
     if not on_foot(r):
         adds += [A("m_recovery_gear", "Self-recovery if a wheel digs in"), A("m_traction_aids", "Cross a short soft patch")]
-    seen = f"{n(lf * 100, 0)}% loose" if lf is not None else "firmness not checked"
+    seen = f"{n(lf * 100, 0)}% loose {basis}" if lf is not None else "firmness not checked"
     return Hit(f"Max slope {n(s)} degrees; {seen}", adds,
                observed=f"{n(s)} deg", threshold="15 deg on loose ground")
 
@@ -341,17 +368,19 @@ def _t3(r):
 
 
 @rule("T4", "terrain", "Loose sand or dust on the route", "I",
-      evidence=["loose_fraction", "loose_firmness"], srcs=("jpl_spirit_trap", "purgatory_dune"),
-      explain="Spirit and Opportunity were both lost to soft ground that looked fine from above.")
+      evidence=["loose_fraction", "ti_sand", "loose_firmness"], srcs=("jpl_spirit_trap", "purgatory_dune", "putzig_ti"),
+      explain="Spirit and Opportunity were both lost to soft ground that looked fine from above. Loose means thermal "
+              "inertia below 300 where the cube measures it, otherwise night-IR firmness below 0.3.")
 def _t4(r):
-    lf = loose_fraction(r)
+    lf, basis = loose_basis(r)
     if lf is None or lf < THRESHOLDS["loose_fraction"][0]:
         return None
     adds = [A("m_probe", "Test a crust before crossing it")]
     if not on_foot(r):
         adds += [A("m_traction_aids", "Cross a short soft patch"), A("m_recovery_gear", "Self-recovery")]
-    return Hit(f"{n(lf * 100, 0)}% of the route is loose ground", adds,
-               observed=f"{n(lf * 100, 0)}% loose", threshold="20%")
+    cut = "TI below 300" if basis == "by thermal inertia" else "firmness below 0.3"
+    return Hit(f"{n(lf * 100, 0)}% of the route is loose ground {basis} ({cut})", adds,
+               observed=f"{n(lf * 100, 0)}% loose {basis}", threshold="20%")
 
 
 @rule("T5", "terrain", "Rough, rocky ground", "I",
@@ -454,6 +483,29 @@ def _t12(r):
                                              A("p_array_cleaning", "Restore output afterwards")],
                warnings=["The 2018 global dust storm ended Opportunity's mission. No published threshold for standing down EVAs."],
                observed="season flag", threshold="hazard flag")
+
+
+@rule("T13", "terrain", "Fine dust along the route", "I",
+      evidence=["ti_dust", "loose_fraction"], srcs=("putzig_ti", "mashal_ez", "nasa_dust_pel", "insight_dust"),
+      explain="Thermal inertia below 150 is fine dust. A fifth of the route on it means more dust carried back "
+              "on suits and vehicles.")
+def _t13(r):
+    df = r.terrain.dust_fraction if has_ti(r) else None
+    if df is None or df < THRESHOLDS["loose_fraction"][0]:
+        return None
+    adds = [A("suit_dust_removal", "Clean suits after crossing dusty ground"),
+            A("h_hepa", "Fine dust under 5 micrometres is not cleared by the lungs"),
+            A("i_air_monitor", "Check the cabin against the dust limit after dusty EVAs")]
+    if not on_foot(r):
+        try:
+            from config import VEHICLE_POWER
+            solar = VEHICLE_POWER.get(r.vehicle, {}).get("source") == "solar"
+        except Exception:
+            solar = False
+        if solar:
+            adds.append(A("p_array_cleaning", "Dust raised on the route settles on the vehicle's arrays"))
+    return Hit(f"{n(df * 100, 0)}% of the route is fine dust by thermal inertia (TI below 150)", adds,
+               observed=f"{n(df * 100, 0)}% dust", threshold="20% below TI 150")
 
 
 # =============================================================== SCIENCE

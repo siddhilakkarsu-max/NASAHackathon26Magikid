@@ -88,6 +88,8 @@ SOURCES = {
                         "https://www.jpl.nasa.gov/news/nasa-to-begin-attempts-to-free-sand-trapped-mars-rover/"),
     "purgatory_dune": ("NASA, looking back at Purgatory Dune", "https://mars.nasa.gov/resources/5855/looking-back-at-purgatory-dune/"),
     "jpl_curiosity_wheels": ("JPL, breaks observed in Curiosity wheel treads", "https://jpl.nasa.gov/news/breaks-observed-in-rover-wheel-treads"),
+    "putzig_ti": ("Putzig et al. 2005, global thermal inertia and surface properties of Mars from MGS TES",
+                  "https://www.sciencedirect.com/science/article/abs/pii/S0019103504002957"),
     "golombek_slopes": ("Golombek et al., rover slope limits from landing-site work", "https://mars.asu.edu/christensen/docs/golombek_mersites_jgr.pdf"),
     "cushing_skylights": ("Cushing et al. 2007, possible cave skylights on Mars", "https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2007GL030709"),
     # --- science tools

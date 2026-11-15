@@ -4,7 +4,10 @@
 "use strict";
 
 (function () {
-  const LANDING = [18.4447, 77.4508], DELTA = [18.50, 77.40], NEAR = [18.452, 77.444];
+  const LANDING = [18.4447, 77.4508], DELTA = [18.50, 77.40];
+  // MER scenarios: one map pixel (about 110 m) west of the landing site, the shortest drive the
+  // planner's grid can show. MER was built to drive about 100 m a sol, so this fits one sol.
+  const MER_SOL = [18.4439, 77.4482];
   const route = (vehicle, target, ls, extra = {}) => ({ region: "jezero", vehicle, base: LANDING, target, hour: 11, budget: 8, ls, ...extra });
 
   const PRESETS = [
@@ -18,11 +21,15 @@
       route: route("pressurized_rover", DELTA, 90),
       caption: "The same trip in a pressurized rover: battery energy replaces suit oxygen and the oxygen warnings clear." },
     { id: "opportunity", label: "Opportunity's dust storm", archetype: "traverse", power: "solar", hazards: ["dust_storm_season"],
-      route: route("mer", NEAR, 250),
-      caption: "Dust cuts solar charging. A global dust storm ended Opportunity in 2018." },
+      route: route("mer", MER_SOL, 250),
+      caption: "MER rovers were built to drive about 100 m a sol. This 110 m drive and back uses under half a sol's " +
+        "energy, but at Ls 250 dust cuts the sunlight so recharging takes about 3 sols instead of half a sol. " +
+        "A global dust storm ended Opportunity in 2018." },
     { id: "spirit", label: "Spirit's sand trap", archetype: "traverse", power: "solar", hazards: ["dunes"],
-      route: route("mer", NEAR, 90),
-      caption: "Soft ground brings probes, traction aids and recovery gear. Spirit was lost in soft sand in 2009." },
+      route: route("mer", MER_SOL, 90),
+      caption: "MER rovers were built to drive about 100 m a sol; in soft sand this 110 m drive and back fills " +
+        "most of a sol's drive window. Soft ground brings probes, traction aids and recovery gear. " +
+        "Spirit was lost in soft sand in 2009." },
     { id: "cave", label: "Lava-tube scouting", archetype: "cave", route: null,
       caption: "A pit adds vertical-access gear. No crewed procedure for pits is published, so the kit is a proposal." },
     { id: "long-base", label: "Long-stay base", archetype: "long_stay", crew: 4, stay: 500, power: "fission",

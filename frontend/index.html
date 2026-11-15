@@ -318,6 +318,7 @@
   <select id="targets"><option value="">…or pick a science target</option></select>
   <button id="plan">Plan route</button>
   <div id="warn"></div>
+  <p class="small"><a id="gearLink" href="kit.html" target="_blank" rel="noopener">Gear for this route</a></p>
 
   <h2>Consumables</h2>
   <div id="consumes" class="cons small"></div>
@@ -794,6 +795,12 @@ $("prefetchBtn").onclick = async () => {
 };
 $("setBase").onclick = () => { mode = "base"; $("setBase").classList.add("active"); };
 $("setTarget").onclick = () => { mode = "target"; $("setTarget").classList.add("active"); };
+$("gearLink").onclick = () => {
+  const q = new URLSearchParams({ archetype: "traverse", region: $("region").value || "jezero", vehicle: $("vehicle").value || "astronaut" });
+  if (base) q.set("base", `${base.lat},${base.lon}`);
+  if (target) q.set("target", `${target.lat},${target.lon}`);
+  $("gearLink").href = "kit.html?" + q;
+};
 $("targets").onchange = () => {
   const t = current.targets[+$("targets").value]; if (!t) return;
   target = { lat: t.lat, lon: t.lon }; pin("target", target, Cesium.Color.ORANGE, t.name);

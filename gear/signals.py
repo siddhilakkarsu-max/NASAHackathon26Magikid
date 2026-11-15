@@ -11,6 +11,8 @@ import physics
 from .context import RouteRequest, RouteStats, TerrainSignals
 
 LOOSE_FIRMNESS = 0.3  # same cut-off app.py uses for "loose sand/dust - slip risk"
+TI_DUST = 150.0       # thermal inertia classes, same cut-offs as search.ti_class()
+TI_SAND = 300.0
 
 
 def run_route(req: RouteRequest):
@@ -71,6 +73,17 @@ def terrain_along(req: RouteRequest, route_points):
             out.mean_firmness = float(f.mean())
             out.min_firmness = float(f.min())
             out.loose_fraction = float((f < LOOSE_FIRMNESS).mean())
+    ti = cube.bands.get("thermal_inertia")
+    if ti is not None:
+        t = ti[rr, cc]
+        t = t[np.isfinite(t)]
+        out.ti_samples = int(t.size)
+        if t.size:
+            out.ti_mean = float(t.mean())
+            out.ti_min = float(t.min())
+            out.dust_fraction = float((t < TI_DUST).mean())
+            out.sand_fraction = float(((t >= TI_DUST) & (t < TI_SAND)).mean())
+            out.ti_loose_fraction = float((t < TI_SAND).mean())
     if rough is not None:
         p95 = float(np.nanpercentile(rough, 95))
         peak = stat(rough, np.max)
