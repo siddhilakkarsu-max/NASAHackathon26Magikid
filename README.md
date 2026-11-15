@@ -8,6 +8,49 @@ a cost map, a safe route, a walk-back zone and a time-to-shelter map.
 build_cube.py  ──►  cubes/<region>.npz  ──►  app.py (FastAPI, all the math)  ──►  frontend/index.html (Cesium globe)
 ```
 
+## Keeping the docs current (every teammate and every AI agent)
+
+**Rule:** a change that alters behaviour, an API, a config number, a data source, a run command or the UI updates,
+in the **same PR**:
+
+1. `CHANGELOG.md`: add an entry (add the missing ones too, if you notice earlier work without one);
+2. every doc the change makes wrong: the README section, the `docs/` page, `gear/README.md` for gear changes,
+   `docs/API.md` for routes and fields, `docs/DATA_SOURCES.md` for data and published figures.
+
+A PR that changes behaviour without these is not finished. Pure refactors and test-only changes need no entry.
+
+**Writing a CHANGELOG entry.** Newest first, at the top of `CHANGELOG.md`. Put it under today's section
+(`## [Unreleased] - YYYY-MM-DD, <topic>`; start one if there isn't one), in `### Added`, `### Changed`, `### Fixed`
+or `### Removed`. One or two plain lines: what changed for the user, the PR number and the author. Example:
+
+```markdown
+### Changed
+
+- **Crew rover numbers from NASA's Mars pressurized rover study:** 60 kWh, 1.85 kW idle, 0.80 kWh/km,
+  replacing the 20 kWh estimate (#26, Gia).
+```
+
+**Which doc covers what**
+
+| Doc | Covers |
+|---|---|
+| `README.md` | How to run it, what each feature does, honest limits |
+| [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) | Data pipeline, request flow, module map, `config.py` layout, front-end pages, tests |
+| [`docs/API.md`](docs/API.md) | Every HTTP route, its request and response fields |
+| [`docs/DATA_SOURCES.md`](docs/DATA_SOURCES.md) | Every dataset and published figure, with links (our "NASA data used" list) |
+| [`gear/README.md`](gear/README.md) | The gear system, its agent tools and the gear page |
+| [`CHANGELOG.md`](CHANGELOG.md) | What changed, PR by PR |
+| [`AGENTS.md`](AGENTS.md) | Git and docs workflow for AI agents |
+
+**PR checklist** (paste into the PR description):
+
+```markdown
+- [ ] CHANGELOG.md entry added (PR number, author)
+- [ ] README / docs/ pages / gear/README.md updated where this PR makes them wrong
+- [ ] New or changed routes in docs/API.md; new data or figures in docs/DATA_SOURCES.md
+- [ ] Tests pass: python -m unittest discover -s tests
+```
+
 ## Quick start (one command)
 Double-click `run.bat` on Windows, or run `./run.sh` on macOS/Linux. It finds Python 3.10+, creates `.venv`,
 installs `requirements.txt` (again only when it changes), starts the server and opens http://localhost:8000.
@@ -25,7 +68,8 @@ pip install -r requirements.txt
 python make_demo_cube.py          # only without cubes/jezero.npz: FAKE terrain, overwrites the real cube
 uvicorn app:app --reload --port 8000
 ```
-Open http://localhost:8000 → the globe starts on the global temperature layer. Use **Zoom to region** for Jezero. Open **Manual planning** to set a base and a target, then press **Plan route**.
+Open http://localhost:8000 → press **Start exploring**; the globe shows the whole of Mars with no overlay (pick one
+under **Map layer**). Use **Zoom to region** for Jezero. Open **Manual planning** to set a base and a target, then press **Plan route**.
 The gear page is at http://localhost:8000/kit.html; **Gear for this route** under Manual planning opens it for the
 planned route (see `gear/README.md`).
 
@@ -85,9 +129,9 @@ Datasets in the Jezero cube (all fetched automatically by `build_cube.py`; downl
   >600 bedrock (log scale, 150 → 0 ... 600 → 1), plus local THEMIS night-IR detail; night IR alone where TI is missing.
 - **Mission suitability** layer = 0.45 × safety (slope + firmness) + 0.35 × science (CRISM detections)
   + 0.20 × radiation shielding (`suitability()` in `app.py`).
-- **Sharp imagery (5 m)**: the global CTX mosaic (Murray Lab, Caltech), coloured with the Viking colour mosaic
-  by `/ctxtiles`, loads inside the selected region or any box you draw ("Box a sharp area"); "Pre-load box"
-  caches the tiles before a demo. Clicking outside every cube does a live global lookup (`/api/point`).
+- **Sharp imagery (5 m)**: the global CTX mosaic (Murray Lab, Caltech), black and white straight from Esri's
+  OnMars tiles, loads inside the selected region or any box you draw ("Box a sharp area"). "Pre-load box" caches
+  the Viking-coloured copy served by `/ctxtiles`, which the page no longer displays. Clicking outside every cube does a live global lookup (`/api/point`).
 - **Murray Lab maps** (panel section, all off by default): every map from the
   [Murray Lab CTX viewer](https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html) -
   CTX 5 m mosaic, MOLA colour topography and Viking MDIM tiles (straight from Esri's OnMars services),
@@ -104,7 +148,8 @@ pixel panel. To use it in the route cost, edit `cost_seconds_per_meter()` in `ph
 
 ## 5. Plan a mission (main panel)
 Type a goal (**sample clay where water once flowed**, **olivine**, **carbonate in a valley**), pick the vehicle
-(on foot, 2-wheel, 4-wheel, pressurized buggy), season and priority (safety / speed / energy), press **Plan mission**.
+(on foot, 2-wheel, 4-wheel, pressurized buggy), the season (the **Season** slider, Ls) and priority (safety / speed /
+energy), press **Plan mission**.
 `mission.py` then:
 1. reads the goal into target features (keywords, else the AI model) and lists the **tools** (by goal + essentials,
    total kg and W);
@@ -131,7 +176,8 @@ sunlight, and oxygen/battery used so far, plus what would be left if you turned 
 
 Rover tracks: `python fetch_tracks.py jezero` downloads Perseverance's real traverse (NASA/JPL mission maps).
 All vehicle, suit, tool and landing numbers live in `config.py` (`MISSION_VEHICLES`, `SUIT`, `TOOLS`,
-`LANDING_RULES`, `SEASONS`, `PRIORITIES`) and are first-order assumptions; tune them there.
+`LANDING_RULES`, `SEASONS`, `PRIORITIES`) and are first-order assumptions; tune them there. `on_foot`, `four_wheel`
+and `buggy` take their numbers (and sources) from the route planner's `VEHICLES`, so change those there.
 
 ### Planning anywhere on Mars
 The region menu starts on **Anywhere on Mars (where you're looking)**: move the globe anywhere and press **Plan
@@ -175,41 +221,33 @@ from within the EVA budget rank first.
   throughout); give Ollama at least an 8k context (`OLLAMA_CONTEXT_LENGTH=8192`) so the thinking fits.
 
 ## Who owns what
+From the git history (author `Gk` is Gia). Module details: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 | File / function | Owner | What to improve |
 |---|---|---|
-| `physics.py` → `slip_fraction`, `speed_kmh`, `cost_seconds_per_meter` | Victoria, Gia | Slip table, metabolic/O₂ cost, weights |
+| `physics.py` → `slip_fraction`, `speed_kmh`, `cost_seconds_per_meter` | Victoria, Gia | Slip table, weights |
 | `physics.py` → `sun_position`, `illumination`, `surface_temp_k` | Jason | Replace the approximate temperature with the thermal model |
-| `physics.py` → `shelter_seeds`, walk-back in `app.py` | Gia, Siddhi | Real shelter locations, O₂ budget instead of hours |
-| `config.py` → `SOURCES`, `SCIENCE_TARGETS`, `VEHICLES` | Siddhi, Darren | Real data paths, CRISM targets, vehicle limits |
-| `physics.py` → `endurance`, `config.py` → `consumables`, `CONSUMABLE_SOURCES` | Gk | Real EVA and cabin O₂ loads, rover power curves |
-| `app.py` → `explanation` text | Darren, Jason | Hook an LLM in here for richer route reasoning |
-| `frontend/index.html` | Gia, Victoria, Olivia | All styling and layout |
+| `physics.py` → `shelter_seeds`, walk-back (`_walkback_round_trip` in `app.py`) | Gia, Siddhi | Real shelter locations |
+| `config.py` → `SOURCES`, `SCIENCE_TARGETS`, `SITES`, `MISSION_VEHICLES` | Siddhi, Darren | Real data paths, CRISM targets, vehicle limits |
+| `app.py` → `consumables_block`; `physics.py` → `route_profile`, `round_trip_walk`, `path_resources`, `load_factor`, `climb_energy_kwh`; `config.py` → `VEHICLES`, `VEHICLE_POWER`, `CONSUMABLE_SOURCES` | Gia | Cabin O₂ for the crew rover, rover power curves |
+| `gear/`, `frontend/kit*` | Gia | Catalog masses, more sourced rules |
+| `mission.py`, `search.py`, `murray.py`, `build_cube.py`, `fetch_tracks.py` | Darren | Mission planner, AI reading and explanations, map layers, cube building |
+| `mars_weather.py`, `surface_temperature.py`, `thermal_detail.py`, `build_weather.py`, `mars_radiation.py`, weather and lighting scripts in `frontend/` | Jason | Weather, temperature and radiation layers |
+| `frontend/index.html` | Darren, Jason, Gia; Victoria, Olivia (styling) | All styling and layout |
 
 ## API (for the front end team)
+Every route, with its request and response fields, is in **[docs/API.md](docs/API.md)** (planner, weather,
+radiation, sites, tiles, Murray Lab maps and `/api/gear/*`). The main ones:
+
 | Call | Returns |
 |---|---|
 | `GET /api/regions` | regions, bounds, bands, vehicles, science targets, `vehicle_specs` (rated hours + consumable limits) |
-| `GET /api/pixel?lat=&lon=&region=` | every value stored in that pixel + ground type + confidence |
-| `POST /api/layer/{slope|firmness|cost|illumination|temperature|shelter|elevation}` | PNG overlay + bounds + legend |
-| `POST /api/plan` | route (lat/lon list), stats (distance, time, slope, **O₂/energy vs capacity**, max range), warnings, explanation, walk-back zone PNG |
+| `POST /api/layer/{name}` | PNG overlay + bounds + legend for a band, a computed layer, a weather layer or `radiation_dose` |
+| `POST /api/plan` | route, stats (distance, time, slope, **O₂/energy vs capacity**, max range), warnings, explanation, walk-back zone PNG |
 | `POST /api/find` | best target spots for a text description (`"query": "valley with clay"`), why each matched, match heatmap PNG |
-| `GET /api/mission/options` | vehicles, seasons, priorities, decision-matrix criteria and default weights |
-| `POST /api/mission` | `{"goal", "vehicle", "season", "priority", "green_only"}` → settings, tools, 3 candidates (A, B, card, route, resources, scores), dropped, decision matrix totals, template explanation, science + off-limits PNGs, `id` |
-| `POST /api/mission/stream` | the same plan as server-sent events with the AI's thinking live: `status`, `ai` (`phase`: goal / explain, `kind`: reasoning / content, `text`), `result` (the full plan), `explanation`, `done` |
-| `POST /api/mission/{id}/explain` | the AI-written explanation for that plan (slower; falls back to the template) |
-| `GET /api/tracks?region=&vehicle=` | rover drive segments classed green / yellow, km of each, red off-limits PNG for the vehicle |
-| `POST /api/sites/build` | `{"lat", "lon"}` (or `{"site": "gale"}`): load the area there (reuses a loaded one that covers it) → `region`, `status` (terrain / minerals / done / failed), `ready` |
-| `GET /api/sites/build/{region}` | build progress: `status`, `ready`, seconds, CRISM observations done / total |
-| `GET /api/sites` | named places in `config.SITES` and whether each is loaded |
-| `GET /api/point?lat=&lon=` | live lookup anywhere on Mars (global elevation, slope, albedo, THEMIS), no cube needed |
-| `GET /api/imagery/{region}` | hi-res photo overlay made by `build_cube.py <region> --imagery`, if present |
-| `GET /ctxtiles/{z}/{y}/{x}.jpg` | 5 m CTX mosaic tile coloured with Viking colours (cached in `cubes/tilecache/`) |
-| `POST /api/prefetch` / `GET /api/prefetch` | download every CTX tile in a box (levels 8–12) / progress |
-| `GET /api/murray/layers` | the Murray Lab viewer's layers (tiles, terrain, GeoJSON, HiRISE) |
-| `GET /murray/features/{m2020,msl,names,craters,quads}.geojson` | slimmed, cached feature layers |
-| `GET /murray/hirise?west=&south=&east=&north=` · `GET /murray/hirise/at?lat=&lon=` | HiRISE footprints in a box / at a point |
-| `GET /murray/quad/at?lat=&lon=` | the CTX mosaic tile at a point, with its download page |
-| `GET /murray/elevation/` · `/murray/elevation/tile/{z}/{y}/{x}` | 3D terrain relay (MOLA/HRSC 200 m) for Cesium |
+| `POST /api/mission/stream` | goal → 3 candidate missions and the recommendation, as server-sent events with the AI's thinking live |
+| `POST /api/sites/build` | load the area around a point anywhere on Mars |
+| `POST /api/gear/kit` | the gear manifest for a mission (see `gear/README.md`) |
 
 Body for POST calls: `{"region":"jezero","vehicle":"astronaut","local_hour":11,"ls":90,"budget_hours":4}`
 (+ `"base":{"lat":..,"lon":..}, "target":{...}` for `/api/plan`).
@@ -223,7 +261,7 @@ Every plan is costed as a **round trip** over the planned route and compared wit
 | Traveller | Quantity | Rate | Carried | Basis |
 |---|---|---|---|---|
 | Astronaut on foot | O₂ | 0.114 kg/h on flat ground, adjusted for slope | 0.912 kg | NASA Mars suit design basis, see below |
-| Pressurized crew rover | Energy | 1.5 kW idle + 0.12 kWh/km + climbing | 20 kWh | **estimate**, see below |
+| Pressurized crew rover | Energy | 1.85 kW idle + 0.80 kWh/km + climbing | 60 kWh | NASA Mars pressurized rover study, see below |
 | Curiosity-class rover | Energy | 0.15 kW idle + 3.33 kWh/km + climbing | 2.5 kWh | MMRTG figures, see below |
 
 **How the terrain is charged** (`consumables_block` in `app.py`, helpers in `physics.py`):
@@ -257,8 +295,9 @@ Every plan is costed as a **round trip** over the planned route and compared wit
   at least 150 W whenever awake, up to 500 W while driving (JPL), which at this profile's 0.15 km/h works out
   at ~3.3 kWh/km. So a sol of MMRTG output is genuinely about 0.3 km out-and-back — the rover is meant to
   look limited next to the crew rover, not broken.
-- **Energy, pressurized crew rover** — a **labelled engineering estimate**; no published NASA figure was found
-  for these loads. It is the "estimate" entry in `CONSUMABLE_SOURCES` in `config.py` and should be tuned.
+- **Energy, pressurized crew rover** — NASA's Mars pressurized rover study (Chappell, Hoffman and Bekdash 2022,
+  NTRS 20210022250): 5,193 kg, 60 kWh of batteries, a 1.85 kW hotel load and 0.80 kWh/km of rolling resistance
+  (`mars_pr_battery` in `CONSUMABLE_SOURCES`). Its terrain penalties and the 2:1 recharge ratio are the team's.
 
 Rules the planner applies:
 
@@ -290,10 +329,15 @@ at the top of the `<script>` in `frontend/index.html`.
 - Areas loaded outside Jezero use the 200 m terrain (Jezero uses the CTX 20 m model), so slopes there are smoother
   than reality at the ~100 m scale. THEMIS stops near ±60° latitude: beyond it ground firmness is unknown (assumed
   medium, and the plan says so).
-- Walk-back and consumables estimates assume the return trip costs the same as the way out.
-- O₂ is modeled at a flat rate. Uphill terrain increases time and therefore oxygen use.
+- The return leg is the outbound route reversed, so climbs out are descents back. Walking O₂ starts from NASA's
+  0.114 kg/h sizing average and is scaled by Minetti et al. 2002 for slope and by carried mass; Minetti measured
+  unsuited people in Earth gravity, so only its ratio to flat ground is used. Riding an open rover and time spent
+  sampling use the flat rate. Body mass (80 kg) is an assumption.
+- Vehicle climbing energy (m g h) is a lower bound: motor losses add to it. Sunlight through dust counts direct
+  light only, so recharge times are the pessimistic end.
 - The oxygen budget applies to the astronaut’s suit supply. The crew rover’s cabin oxygen is outside the model.
-- Pressurized-rover loads are engineering estimates.
+- Pressurized-rover battery, idle load and energy per km come from NASA's Mars pressurized rover study; its terrain
+  penalties and the 2:1 recharge ratio are team figures. The 2-wheel scout bike is a team estimate.
 - Shelter denotes terrain near steep slopes. Confirm that a site can provide actual cover with higher-resolution imagery.
 - At roughly 110 m per pixel, the regional slope map smooths out meter-scale hazards.
 - Rover track colors are a proxy: green = Perseverance drove there; yellow = the rover recorded ≥12° tilt or the

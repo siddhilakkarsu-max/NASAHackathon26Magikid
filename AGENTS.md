@@ -142,3 +142,22 @@ Before we stop, remind me to:
    git push origin feat/DEVELOPER_NAME
    ```
 3. Tell teammates: what you built, what's merged, what's still on your branch.
+4. Check that `CHANGELOG.md` and the affected docs describe what was built (see "Docs and changelog" below).
+
+---
+
+## 📝 Docs and changelog - every session
+
+The full rule is in `README.md`, section "Keeping the docs current". In short:
+
+1. **Before every commit that changes behaviour** (an API route or field, a config number, a data source, a run
+   command, the UI), update in the same commit or PR:
+   - `CHANGELOG.md`: newest first, under today's `## [Unreleased] - YYYY-MM-DD, <topic>` section, in
+     `### Added` / `### Changed` / `### Fixed` / `### Removed`, one or two plain lines with the PR number and author;
+   - every doc the change makes wrong: the `README.md` section, `docs/ARCHITECTURE.md`, `docs/API.md` (routes and
+     fields), `docs/DATA_SOURCES.md` (datasets and published figures), `gear/README.md` (gear).
+2. **Before finishing work**, re-read the docs for the files you touched and fix anything now untrue.
+3. **Never leave a merged change undocumented.** If you notice earlier work with no changelog entry, add one
+   (check `git log --merges` and the PR's commits), even if it was someone else's PR.
+4. Pure refactors and test-only changes need no changelog entry.
+5. Put the PR checklist from the README into every PR description.
