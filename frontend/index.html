@@ -12,10 +12,14 @@
 <script src="/temperature_view.js"></script>
 <script src="/mars_lighting.js"></script>
 <script src="/mars_sky.js"></script>
+<script src="/mars_visibility.js"></script>
+<script src="/mars_moons.js"></script>
+<script src="/mars_overview.js"></script>
 <script src="/route_playback.js"></script>
 <script src="/regional_terrain.js"></script>
 <script src="/planner_layout.js"></script>
 <script src="/game-launch.js" defer></script>
+<script src="/juice.js" defer></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
 <link href="/map_help.css" rel="stylesheet" />
 <link href="/maps_ui.css" rel="stylesheet" />
@@ -191,6 +195,15 @@
   .chip { background: #ffffff1a; }
   #routeHover, #weatherHover { font-family: var(--ui-font); border-radius: 8px; }
 
+  /* The map drawer replaces the older stacked mobile grid. Keep its map in
+     the nonzero column when the viewport becomes narrow. */
+  body.gm { grid-template-rows: minmax(0, 1fr); }
+  body.gm #map { grid-area: 1 / 2; }
+  #overviewBar { position: absolute; left: 14px; bottom: 38px; z-index: 4; display: flex;
+    flex-wrap: wrap; align-items: center; gap: 8px; max-width: calc(100% - 84px); }
+  #overviewToggle { width: auto; margin: 0; border-radius: 999px; padding: 8px 14px; }
+  #overviewReadout { max-width: 360px; padding: 5px 8px; border-radius: 6px; color: var(--fg); background: var(--navy); }
+  body.touring #overviewBar { display: none; }
   /* landing page */
   #landing { position: fixed; inset: 0; z-index: 1000; background: var(--navy); display: grid; place-items: center;
              transition: opacity .6s ease, visibility .6s; font-family: var(--ui-font); }
@@ -279,6 +292,7 @@
 </div>
 <div id="map">
   <div id="marsSun" aria-hidden="true" hidden></div>
+  <div id="overviewBar"><button id="overviewToggle" class="secondary" type="button" aria-pressed="false">Play overview</button><span id="overviewReadout" class="small"></span></div>
   <div id="weatherHover" aria-hidden="true" hidden></div>
   <div id="routePlayback" hidden>
     <button id="playRoute" type="button">Play route</button>
@@ -364,8 +378,23 @@
   <label for="hour">Local solar time: <b id="hourVal"></b></label>
   <input type="range" id="hour" min="0" max="24" step="0.25" value="11" />
   <label class="check"><input type="checkbox" id="globeLighting" checked aria-describedby="lightingNote" /> Sunlight and atmosphere</label>
-  <div class="small" id="lightingNote">Move your mouse over the night side to reveal the map. Globe lighting follows the selected region’s solar time.</div>
+  <div class="small" id="lightingNote">Move your mouse over the night side to reveal the map. The opening overview uses its UTC clock; editing these planning controls restores the selected region’s solar time.</div>
   <label class="check"><input type="checkbox" id="showStars" checked /> Star background</label>
+  <details id="moonControls">
+    <summary>Phobos &amp; Deimos</summary>
+    <label class="check"><input type="checkbox" id="showMoons" checked /> Show Mars's moons</label>
+    <button id="moonSystemView" type="button" class="secondary">Mars and moons</button>
+    <div class="row"><button id="moonPhobos" type="button" class="secondary" disabled>View Phobos</button><button id="moonDeimos" type="button" class="secondary" disabled>View Deimos</button></div>
+    <label for="moonDate">Moon time (UTC)</label>
+    <input id="moonDate" type="datetime-local" step="1" min="1995-01-02T00:00:00" max="2049-12-30T23:59:59" required />
+    <div class="row"><button id="moonApply" type="button" class="secondary">Set moon time</button><button id="moonNow" type="button" class="secondary">Now</button></div>
+    <label for="moonSpeed">Orbit playback</label>
+    <select id="moonSpeed"><option value="0">Paused</option><option value="1" selected>Real time (1×)</option><option value="60">60× faster</option><option value="600">600× faster</option><option value="3600">3,600× (one hour per second)</option></select>
+    <div id="moonReadout" class="small"></div>
+    <p class="small" id="moonSyncNote">Time/season edits match the nearest season to the moon UTC date and local solar time at the region center. Distances and sizes stay to scale.</p>
+    <div id="moonStatus" class="small" role="status"></div>
+    <button id="moonRetry" type="button" class="secondary">Retry moon data</button>
+  </details>
   <label class="check"><input type="checkbox" id="showDustHaze" aria-describedby="dustHazeNote" /> Seasonal dust haze</label>
   <div class="small" id="dustHazeNote">Illustrative haze from seasonal dust data at the view center. It does not locate individual clouds or show live storms.</div>
   <div class="small" id="dustHazeStatus" role="status" hidden></div>
@@ -497,6 +526,7 @@
   <button id="sourcesButton" class="secondary" type="button" aria-expanded="false" aria-controls="sourcesPanel">Sources &amp; model information</button>
   <div id="sourcesPanel" class="small" hidden>
     <h2>Data sources</h2>
+    <p><a href="/api/moons/sources" target="_blank" rel="noopener">Mars moons: NASA models, JPL ephemerides and method</a>. NASA/JPL-Caltech texture colors are preserved. Model orientation and lighting are illustrative; this is not a moon-phase or eclipse predictor.</p>
     <p><a href="/api/weather/sources" target="_blank" rel="noopener">Weather data and source inventory</a></p>
     <p><a href="/api/radiation/method" target="_blank" rel="noopener">Radiation method, assumptions and sources</a></p>
     <p><a href="https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html" target="_blank" rel="noopener">Murray Lab CTX viewer and global map catalogue</a></p>
@@ -591,6 +621,7 @@ viewer.scene.backgroundColor = Cesium.Color.BLACK;
 viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#171b21");
 const globeLighting = createMarsLighting(viewer, MARS, $("marsSun"));
 let marsSky = null;
+let marsOverview = null;
 const routePlayback = createRoutePlayback({ viewer, ellipsoid: MARS, controls: {
   panel: $("routePlayback"), button: $("playRoute"), status: $("routePlaybackStatus"),
   walk: $("walkerView"), walkNav: $("walkerNav"), walkPrev: $("walkerPrev"), walkNext: $("walkerNext"),
@@ -712,6 +743,12 @@ marsSky = createMarsSky({ viewer, ellipsoid: MARS, api: API,
 });
 $("showStars").onchange = () => marsSky.setStarsEnabled($("showStars").checked);
 $("showDustHaze").onchange = () => marsSky.setDustEnabled($("showDustHaze").checked);
+const marsMoons = createMarsMoons({ viewer, ellipsoid: MARS, api: API, controls: {
+  enabled: $("showMoons"), date: $("moonDate"), speed: $("moonSpeed"), readout: $("moonReadout"), status: $("moonStatus"), syncNote: $("moonSyncNote"),
+  system: $("moonSystemView"), phobos: $("moonPhobos"), deimos: $("moonDeimos"), apply: $("moonApply"), now: $("moonNow"), retry: $("moonRetry"),
+} });
+for (const id of ["region", "jumpTo", "globalLayer", "regionalLayer"]) $(id).addEventListener("change", () => marsMoons.stopTracking(), true);
+$("wholeMars").addEventListener("click", () => marsMoons.stopTracking(), true);
 const marks = viewer.entities;
 // Map labels are drawn onto the 3D canvas, so they don't follow the page's CSS font. They use Electrolize too;
 // labels drawn before the web font arrives are redrawn once it has (under a new font string, so Cesium doesn't
@@ -791,12 +828,19 @@ function labels() {
   syncGlobeLighting();
 }
 function syncGlobeLighting() {
+  if (marsMoons.planningLinked()) syncPlanningMoons();
+  if (marsOverview?.controlsLighting()) return;
+  globeLighting.update(+$("hour").value, +$("ls").value, planningLongitude());
+  marsSky?.refresh();
+}
+function planningLongitude() {
   const rectangle = current?.rect;
-  const longitude = rectangle ? Cesium.Math.toDegrees(Cesium.Rectangle.center(
+  return rectangle ? Cesium.Math.toDegrees(Cesium.Rectangle.center(
     Cesium.Rectangle.fromDegrees(rectangle.west, rectangle.south, rectangle.east, rectangle.north)
   ).longitude) : 0;
-  globeLighting.update(+$("hour").value, +$("ls").value, longitude);
-  marsSky?.refresh();
+}
+function syncPlanningMoons() {
+  marsMoons.syncPlanning({ hour: +$("hour").value, ls: +$("ls").value, longitude: planningLongitude() });
 }
 
 async function api(path, body, signal) {
@@ -1985,9 +2029,11 @@ function murrayLine(ds, ring, color, width, maxDist) {
     distanceDisplayCondition: maxDist ? new Cesium.DistanceDisplayCondition(0, maxDist) : undefined } });
 }
 function murrayLabel(ds, lon, lat, text, maxDist, color = Cesium.Color.WHITE) {
-  return ds.entities.add({ position: Cesium.Cartesian3.fromDegrees(lon, lat, 0, MARS), label: { text,
+  const position = Cesium.Cartesian3.fromDegrees(lon, lat, 0, MARS);
+  return ds.entities.add({ position, label: { text,
+    show: marsSurfaceLabelVisibility(viewer, MARS, position),
     font: mapFont(12), fillColor: color, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
-    style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: 1e9,
+    style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: 0,
     heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
     distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, maxDist) } });
 }
@@ -2568,6 +2614,7 @@ function startExploring() {
   const l = $("landing");
   if (l.classList.contains("gone")) return;
   l.classList.add("gone");
+  marsOverview?.enter();
   setTimeout(() => viewer.resize(), 50);
 }
 $("startExploring").onclick = startExploring;
@@ -2890,6 +2937,7 @@ $("jumpTo").onchange = () => {
   // the slider after one step. Keep the browser's range gesture in control.
   $(id).addEventListener("dragstart", event => event.preventDefault());
 });
+["hour", "ls"].forEach(id => $(id).addEventListener("input", syncPlanningMoons));
 ["hour", "ls", "vehicle"].forEach((id) => $(id).addEventListener("change", () => {
   if (id === "vehicle") applyVehicleLimits();
   invalidatePlan();
@@ -2948,6 +2996,18 @@ function showRegionInfo() {
     `bands: ${current.bands.join(", ")}`;
 }
 labels();
+marsOverview = createMarsOverview({ viewer, ellipsoid: MARS, moons: marsMoons, lighting: globeLighting,
+  controls: { button: $("overviewToggle"), readout: $("overviewReadout") },
+  eligible: !initialLayer && !["terrain", "jezero3d"].includes(new URLSearchParams(location.search).get("view")),
+  isPlanner: () => plannerLayout.globalChoice() === '',
+  selectPlanner: () => {
+    $("globalLayer").value = "";
+    $("globalLayer").dispatchEvent(new Event("change", { bubbles: true }));
+    $("showMoons").checked = true;
+    $("globeLighting").checked = true; globeLighting.setEnabled(true);
+  },
+  restorePlanningLight: syncGlobeLighting,
+});
 api("/api/weather/calendar").then(calendar => {
   seasonCalendar = calendar; labels();             // the season slider shows the sol from now on
   timeline = createWeatherTimeline({
@@ -2986,6 +3046,7 @@ api("/api/weather/calendar").then(calendar => {
     renderConsumables();
     if (current) {
       showRegionInfo(); syncGlobeLighting(); setSharpBox(current.rect);
+      if (initialLayer && !globalLayerSelected()) flyTo(current.rect);
     } else $("status").textContent = "Move the globe anywhere on Mars and plan: the area loads from the 3D terrain.";
     refreshLayer();
     $("region").onchange();

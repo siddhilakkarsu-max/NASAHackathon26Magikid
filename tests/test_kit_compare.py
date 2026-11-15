@@ -33,8 +33,8 @@ class KitComparePage(unittest.TestCase):
 
     def test_page_loads_compare_files(self):
         html = self.c.get("/kit.html").text
-        self.assertIn('src="kit-compare.js"', html)
-        self.assertIn('href="kit-compare.css"', html)
+        self.assertRegex(html, r'src="kit-compare\.js(?:\?v=[a-f0-9]{16})?"')
+        self.assertRegex(html, r'href="kit-compare\.css(?:\?v=[a-f0-9]{16})?"')
         for f in ("/kit-compare.js", "/kit-compare.css"):
             self.assertEqual(self.c.get(f).status_code, 200, f)
 
