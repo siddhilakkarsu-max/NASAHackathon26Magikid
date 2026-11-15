@@ -6,6 +6,35 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-15, game: complete vehicle models
+
+Branch `feat/Gk`.
+
+### Fixed
+
+- **Half the rover was missing while riding** (`frontend/game.html`). The riding view used a separate front-only
+  "cockpit" model, so there were no seats or rear, and it did not match the parked vehicle. Each vehicle is now one
+  complete model (`g3VehModel`) drawn around the driver's eye when riding and placed on the ground when parked.
+
+### Changed
+
+- Open rover: four wheels with hubs and fenders, two seats, console with display and hand controller, foot rest,
+  headlights, TV camera, tool pallet; the dish moved behind the driver, out of the forward view.
+- Bike: frame, fork, handlebar with grips and levers, display, headlight, fenders, seat, battery, panniers.
+- Pressurised rover: six wheels, nose, cabin with window frame, dash, yoke and two seats, rear module, roof gear.
+- Ground rings are thinner and their fill fainter; the parked vehicle has a ring and label but no light pillar.
+- Test hook `window.__MW.look(yawDeg, pitchDeg)`. 1 test.
+
+### Verification
+
+- Headless Chrome screenshots: riding view forward, down, left and right for all three vehicles; the parked rover
+  and bike from three sides. Autopilot completes all 14 baked routes.
+
+### Limits
+
+- Models are flat-shaded boxes, beams and cylinders built in code. Wheels do not turn and the steering does not
+  move. The pressurised rover cannot be left, so it is never seen from outside.
+
 ## [Unreleased] - 2026-11-15, game: leaderboard, callsigns and a "mission ready" button
 
 Branch `feat/Gk`.
