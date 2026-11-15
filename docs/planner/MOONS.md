@@ -2,14 +2,45 @@
 
 Open **Time → Phobos & Deimos**. **Mars and moons** frames the whole system;
 **View Phobos** and **View Deimos** follow the individual bodies. Choosing a
-region or another map releases moon tracking. Real time is the default. The
-explicit 60× and 600× controls accelerate the moon clock; **Paused** freezes it.
+region or another map releases moon tracking. The opening overview selects
+3,600× (one simulated hour per real second). The explicit 1×, 60×, 600× and
+3,600× controls set the moon clock; **Paused** freezes it.
 **Now** restores current UTC and real-time speed.
 
 Moon time is a separate UTC clock. The planner's local solar time and season
 are scenarios without a unique Earth date/year; changing them must not silently
-invent a new absolute orbital phase. The surface lighting still follows those
-planner settings.
+invent a new absolute orbital phase. During the opening overview, surface
+lighting uses the Sun position on this same UTC clock. Leaving the overview
+for planning restores lighting from the planning settings.
+
+## Opening overview
+
+**Start exploring** opens the planner's own Viking imagery with no weather or
+terrain overlay and automatically plays the system at 3,600×. The view fits
+both physical moon orbits; moons are very small at this distance, so locator
+dots identify them. **Pause motion** freezes the UTC clock and camera. Dragging
+or scrolling also pauses it. **Play overview** returns to the planner background
+and resumes the animation. Existing region, map, moon-following, tour and
+planning controls take priority over the automatic view.
+
+The camera circles Mars by half the changing subsolar longitude, showing
+surface rotation, moon motion and the Sun moving through the sky. This is a
+presentation camera, not a claimed spacecraft orbit or an inertial observer.
+The physical moon and Sun vectors are not moved to fit the picture. The Sun
+marker is illustrative and is hidden behind Mars or outside the camera's view.
+Its direction and distance come from the DE440 Sun states bundled in MAR099s,
+using the same geometric Mars-centered frame and UTC epochs as the moons.
+The initial camera latitude follows the seasonal Sun plane so a fixed tilt
+does not accidentally keep the Sun off-screen for the whole animation.
+
+The overview does not advance mission/weather season or solar-time inputs.
+It pauses on source failure and offers retry rather than showing invented
+positions. The next UTC day is prefetched for fast playback. Hidden tabs
+suspend the overview clock; returning does not jump forward through hidden
+time. A reduced-motion preference starts paused and can be overridden with
+the explicit Play button. Explicit terrain and layer links keep their selected
+view. Late regional metadata never replaces the default whole-system view
+with an unsolicited Jezero flight.
 
 ## Positions, timing and scale
 
@@ -88,6 +119,7 @@ With the app running on port 8001:
 python -m pytest tests/test_mars_moons.py -q
 node docs/planner/mars_visibility_test.cjs
 node docs/planner/moons_browser_test.mjs
+node docs/planner/overview_browser_test.mjs
 ```
 
 The browser audit checks actual NASA model rendering, physical scale, following
@@ -95,3 +127,8 @@ and releasing a moon, horizon occlusion during rotation, accelerated/paused
 time, delayed responses and unavailable data. Failures/delays are explicit test
 fixtures, not substituted scientific data. Reports and screenshots use
 `MARSWALK_AUDIT_DIR`; see the planner README for Playwright/Chrome settings.
+The overview audit additionally checks synchronized Sun direction, entry map,
+pause/resume, delayed metadata, midnight, source failure/retry, hidden tabs,
+reduced motion, portrait layout and preserved terrain links. Sun interpolation
+is checked against direct SPICE direction; microsecond-rounded API timestamps
+do not imply metre-level solar ranging accuracy.

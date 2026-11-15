@@ -7,6 +7,13 @@ Detailed photos and Elevation colours are overhead views. Names, crater outlines
 rover tracks, the photo tile grid and HiRISE footprints are independent overlays.
 Choosing a regional data layer restores the planner background.
 
+On normal entry, **Start exploring** opens the planner imagery and an animated
+overview at **3,600×** (one hour per second). **Pause motion** or dragging the
+map stops the clock and camera; **Play overview** returns to this view.
+The overview shares one UTC clock for sunlight and moons, and leaves mission
+time/season untouched. Reduced-motion preferences start it paused. Explicit
+terrain/layer links preserve their intended view.
+
 Phobos and Deimos are available under **Time → Phobos & Deimos**. See
 [Mars moons](MOONS.md) for controls, NASA/JPL sources, physical scale and model
 limitations. Place labels hide behind Mars while the camera moves.

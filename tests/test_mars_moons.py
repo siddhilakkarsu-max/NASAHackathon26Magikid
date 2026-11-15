@@ -58,6 +58,27 @@ class MoonServiceTests(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_KERNELS, 'Download the verified NAIF kernels to run physical ephemeris checks')
 class MoonPhysicsTests(unittest.TestCase):
+    def test_sun_uses_same_epoch_units_and_rotating_frame_as_moons(self):
+        data = moons.ephemeris('2026-11-15')
+        with moons.LOCK:
+            s = moons._spice()
+            epochs = np.array([s.str2et(t.rstrip('Z')) for t in data['times']])
+            states = np.array(data['sun']['samples'])
+            self.assertEqual(states.shape, (len(epochs), 6))
+            spline = CubicHermiteSpline(epochs - epochs[0], states[:, :3], states[:, 3:6])
+            for i in [0, 144, len(epochs)-1]:
+                expected = s.spkezr('SUN', epochs[i], 'IAU_MARS', 'NONE', 'MARS')[0] * 1000
+                # Published UTC is rounded to microseconds. At solar distances,
+                # Mars-frame rotation turns that rounding into several metres.
+                np.testing.assert_allclose(states[i, :3], expected[:3], atol=20, rtol=0)
+                np.testing.assert_allclose(states[i, 3:], expected[3:], atol=.002, rtol=0)
+            for et in (epochs[1:] + epochs[:-1]) / 2:
+                actual = s.spkezr('SUN', et, 'IAU_MARS', 'NONE', 'MARS')[0][:3] * 1000
+                interpolated = spline(et - epochs[0])
+                # Angular Sun direction, not metre-level solar ranging accuracy.
+                self.assertLess(np.linalg.norm(actual / np.linalg.norm(actual) -
+                                               interpolated / np.linalg.norm(interpolated)), 1e-7)
+
     def test_independent_horizons_reference_and_frame_units(self):
         fixture = json.loads((Path(__file__).parent / 'fixtures/mars_moons_horizons.json').read_text())
         with moons.LOCK:

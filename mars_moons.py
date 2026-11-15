@@ -100,6 +100,10 @@ def _daily(day):
         # Sample in TDB, publish UTC including leap seconds. The browser uses
         # JulianDate/TAI elapsed seconds, not JavaScript's leap-blind Date arithmetic.
         times = [spice.et2utc(et, 'ISOC', 6) + 'Z' for et in epochs]
+        # DE440 Sun states are included in MAR099s. Use the same UTC samples,
+        # rotating frame and derivative convention as the moons for the overview.
+        sun_samples = [[round(float(v) * 1000, 6) for v in
+                        spice.spkezr('SUN', et, 'IAU_MARS', 'NONE', 'MARS')[0]] for et in epochs]
         moons = []
         for name in ['Phobos', 'Deimos']:
             samples = []
@@ -115,7 +119,8 @@ def _daily(day):
                 'ephemeris': 'JPL MAR099', 'aberration': 'NONE (geometric positions)',
                 'orientation': 'IAU rotational models from pck00011.tpc',
                 'units': {'position': 'm', 'velocity': 'm/s', 'quaternion': 'x,y,z,w'},
-                'times': times, 'step_seconds': STEP_SECONDS, 'moons': moons}
+                'times': times, 'step_seconds': STEP_SECONDS, 'moons': moons,
+                'sun': {'ephemeris': 'DE440 via MAR099s', 'samples': sun_samples}}
 
 
 @router.get('/ephemeris')
@@ -140,6 +145,7 @@ def sources():
                             'https://science.nasa.gov/resource/deimos-mars-moon-3d-model/'],
             'method': 'SPICE geometric center-of-mass positions and velocities, transformed into rotating IAU_MARS; cubic Hermite interpolation of 300-second samples.',
             'limits': ['Positions are ephemeris predictions, not live observations or a spacecraft navigation product.',
+                       'The animated overview uses DE440 Sun positions on the moon UTC clock. Its orbiting camera is a presentation choice; the Sun marker is not to scale.',
                        'Moon time is UTC and independent of the planner season and local solar time.',
                        'NASA model textures are visualization assets, not calibrated natural-color photometry. No false-color overlay is applied.',
                        'Model axes are aligned approximately to the IAU body frame; feature-level attitude and photometric phases/eclipses are not modeled.',

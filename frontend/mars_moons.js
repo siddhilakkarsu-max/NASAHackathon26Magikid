@@ -7,7 +7,9 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
   let enabled = true, destroyed = false, speed = 1, generation = 0, controller = null;
   let anchor = now(), anchorWall = performance.now(), current = C.JulianDate.clone(anchor);
   let pendingDay = null, failedDay = null, lastReadout = 0, currentTable = null, lastError = '';
+  let prefetchController = null, prefetchedDay = null;
   const cache = new Map(), records = new Map();
+  const system = { time: current, speed, available: false, error: '', sunPosition: new C.Cartesian3() };
   const dateOf = time => C.JulianDate.toIso8601(time).slice(0, 10);
   const allowed = day => day >= '1995-01-02' && day <= '2049-12-30';
   const modelAdjustments = {
@@ -67,6 +69,15 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     const times = data.times.map(t => C.JulianDate.fromIso8601(t));
     for (let i = 1; i < times.length; i++) if (C.JulianDate.compare(times[i], times[i - 1]) <= 0) throw new Error('Unordered moon samples');
     const table = { start: times[0], end: times.at(-1), date: data.date, moons: new Map() };
+    if (data.sun) {
+      if (data.sun.samples?.length !== times.length) throw new Error('Invalid Sun samples');
+      table.sun = new C.SampledPositionProperty(C.ReferenceFrame.FIXED, 1);
+      table.sun.setInterpolationOptions({ interpolationDegree: 3, interpolationAlgorithm: C.HermitePolynomialApproximation });
+      data.sun.samples.forEach((row, i) => {
+        if (row.length !== 6 || !row.every(Number.isFinite)) throw new Error('Invalid Sun state vector');
+        table.sun.addSample(times[i], C.Cartesian3.fromArray(row), [C.Cartesian3.fromArray(row, 3)]);
+      });
+    }
     for (const moon of data.moons) {
       if (!records.has(moon.id) || table.moons.has(moon.id) || moon.samples?.length !== times.length) throw new Error('Invalid moon samples');
       const positions = new C.SampledPositionProperty(C.ReferenceFrame.FIXED, 1);
@@ -106,6 +117,20 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
       if (request === generation && !destroyed) { pendingDay = null; update(); report(); scene.requestRender(); }
     }
   }
+  async function prefetch(day) {
+    if (!allowed(day) || cache.has(day) || prefetchedDay === day) return;
+    prefetchedDay = day;
+    prefetchController?.abort();
+    const abort = prefetchController = new AbortController(), request = generation;
+    try {
+      const response = await fetch(api + '/api/moons/ephemeris?date=' + encodeURIComponent(day), { signal: abort.signal });
+      if (!response.ok) return; // The normal loader supplies the visible retry/error state.
+      const table = prepare(await response.json());
+      if (destroyed || !enabled || request !== generation || abort.signal.aborted) return;
+      cache.set(day, table);
+      while (cache.size > 3) cache.delete(cache.keys().next().value);
+    } catch (error) { /* No substituted orbit; normal loading handles an unavailable day. */ }
+  }
   function update() {
     if (destroyed) return;
     C.JulianDate.addSeconds(anchor, (performance.now() - anchorWall) / 1000 * speed, current);
@@ -113,6 +138,12 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     if (enabled && (!currentTable || currentTable.date !== day)) void load(day);
     const available = enabled && currentTable && C.JulianDate.compare(current, currentTable.start) >= 0 &&
       C.JulianDate.compare(current, currentTable.end) <= 0;
+    system.available = !!(available && currentTable.sun?.getValue(current, system.sunPosition));
+    system.speed = speed;
+    system.error = lastError;
+    if (available && speed >= 600 && C.JulianDate.secondsDifference(currentTable.end, current) < speed * 5) {
+      void prefetch(dateOf(C.JulianDate.addSeconds(currentTable.end, 1, new C.JulianDate())));
+    }
     for (const record of records.values()) {
       const sample = available && currentTable.moons.get(record.id);
       record.valid = !!(sample && sample.positions.getValue(current, record.position) &&
@@ -127,18 +158,20 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     anchor = time; C.JulianDate.clone(time, current); anchorWall = performance.now();
     failedDay = null; lastError = '';
     // Invalidate a late request even when the new date is already cached.
-    generation++; controller?.abort(); pendingDay = null;
+    generation++; controller?.abort(); prefetchController?.abort(); prefetchedDay = null; pendingDay = null;
     currentTable = cache.get(dateOf(time)) || null;
     update(); report(); scene.requestRender();
   }
   function setSpeed(value) {
-    if (![0, 1, 60, 600].includes(value)) throw new Error('Unsupported moon playback speed');
+    if (![0, 1, 60, 600, 3600].includes(value)) throw new Error('Unsupported moon playback speed');
     update(); anchor = C.JulianDate.clone(current); anchorWall = performance.now(); speed = value;
+    system.speed = speed;
+    if (controls) controls.speed.value = String(speed);
     report(); scene.requestRender();
   }
   function setEnabled(value) {
     enabled = !!value; dataSource.show = enabled;
-    if (!enabled) { generation++; controller?.abort(); pendingDay = null; stopTracking(); }
+    if (!enabled) { generation++; controller?.abort(); prefetchController?.abort(); prefetchedDay = null; pendingDay = null; stopTracking(); }
     else { failedDay = null; lastError = ''; }
     update(); report(); scene.requestRender();
   }
@@ -168,11 +201,13 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
   }
   update(); report();
   return { setTime, setSpeed, setEnabled, systemView, focus, stopTracking,
+    // Read-only live frame, updated before the overview's scene listener.
+    systemFrame: () => system,
     state: () => ({ enabled, speed, utc: C.JulianDate.toIso8601(current), pendingDay, error: lastError,
       moons: [...records.values()].map(r => ({ id: r.id, valid: r.valid, position: C.Cartesian3.clone(r.position),
         markerVisible: r.entity.label.show.getValue(viewer.clock.currentTime), scale: 1000 })) }),
     destroy() {
-      destroyed = true; generation++; controller?.abort(); removeUpdate(); stopTracking();
+      destroyed = true; generation++; controller?.abort(); prefetchController?.abort(); removeUpdate(); stopTracking();
       for (const r of records.values()) r.entity.model.customShader.getValue()?.destroy();
       viewer.dataSources.remove(dataSource, true); cache.clear();
     },
