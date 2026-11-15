@@ -263,7 +263,7 @@
     <option value="illumination">Sunlight on slopes</option>
     <option value="temperature">Regional simulated surface temperature</option>
     <optgroup id="globalWeather" label="Global weather">
-      <option value="global_temperature" selected>Global simulated surface temperature</option>
+      <option value="global_temperature">Global simulated surface temperature</option>
       <option value="openmars_surface_temperature">OpenMARS ground temperature reference</option>
       <option value="air_temperature">Near-surface air temperature</option>
       <option value="surface_pressure">Surface pressure</option>
@@ -1899,13 +1899,7 @@ function globalLayerSelected() {
 }
 let wasGlobal = globalLayerSelected();
 showWholeMars();
-$("wholeMars").onclick = () => {
-  $("layer").value = "global_temperature";
-  wasGlobal = true;
-  showWholeMars();
-  timeline?.setEnabled(true);
-  refreshLayer();
-};
+$("wholeMars").onclick = () => showWholeMars();   // just the view: weather layers only when picked in the menu
 $("zoomRegion").onclick = () => { if (current) flyTo(current.rect); };
 ["hour", "ls", "budget"].forEach((id) => $(id).addEventListener("input", labels));
 ["hour", "ls", "vehicle"].forEach((id) => $(id).addEventListener("change", () => {
