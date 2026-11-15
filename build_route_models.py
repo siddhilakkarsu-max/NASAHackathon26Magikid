@@ -258,8 +258,6 @@ def astronaut():
     carrier = asset.node("Pressure suit", (0, 0, 0), 0)
     body("Hard upper torso", "sphere", "white", (0, 1.39, 0), (.65, .58, .48), carrier)
     body("Waist garment", "sphere", "white", (0, 1.10, 0), (.50, .30, .42), carrier)
-    for y in (1.12, 1.15, 1.18):
-        body("Waist pleat", "cylinder", "metal", (0, y, 0), (.48, .012, .43), carrier)
     body("Life support backpack", "box", "white", (0, 1.45, -.32), (.52, .68, .28), carrier)
     body("Backpack padded cover", "sphere", "white", (0, 1.47, -.420), (.56, .75, .18), carrier)
     body("Backpack vent frame", "box", "metal", (0, 1.48, -.508), (.31, .25, .031), carrier)
@@ -290,7 +288,7 @@ def astronaut():
         body("Thigh pocket", "box", "white", (side * .099, -.24, .09), (.118, .147, .13), hip)
         knee = asset.node(f"{limb} knee bearing", (0, -.49, 0), hip)
         for y in (-.02, .013, .046):
-            body("Knee flex ring", "cylinder", "metal", (0, y, 0), (.225, .020, .25), knee)
+            body("Knee flex ring", "cylinder", "metal", (0, y, 0), (.18, .012, .20), knee)
         body("Knee guard", "sphere", "white", (0, 0, .104), (.204, .19, .109), knee)
         body("Shin garment", "sphere", "white", (0, -.20, 0), (.222, .448, .236), knee)
         body("Ankle cuff", "cylinder", "blue", (0, -.376, .006), (.223, .040, .245), knee)
@@ -306,7 +304,7 @@ def astronaut():
         body("Upper sleeve", "sphere", "white", (side * .057, -.20, 0), (.232, .35, .248), shoulder)
         elbow = asset.node(f"{limb} elbow bearing", (side * .068, -.333, 0), shoulder)
         for y in (-.02, .011, .042):
-            body("Elbow flex ring", "cylinder", "metal", (0, y, 0), (.196, .017, .200), elbow)
+            body("Elbow flex ring", "cylinder", "metal", (0, y, 0), (.145, .010, .148), elbow)
         body("Forearm garment", "sphere", "white", (0, -.145, .01), (.202, .30, .220), elbow)
         body("Glove locking ring", "cylinder", "metal", (0, -.268, .02), (.176, .054, .186), elbow)
         body("Glove", "sphere", "white", (0, -.341, .025), (.152, .155, .159), elbow)
@@ -331,8 +329,6 @@ def astronaut():
         asset.animate(foot, "rotation", times, [rotation(AXLE, angle) for angle in ankles])
         asset.animate(shoulder, "rotation", times, [rotation(AXLE, -angle * .74) for angle in hips])
         asset.animate(elbow, "rotation", times, [rotation(AXLE, -.22 + angle * .14) for angle in hips])
-    for y in (1.22, 1.29, 1.36):
-        body("Torso fabric seam", "cylinder", "metal", (0, y, .246), (.39, .012, .34), carrier)
     for side in (-1, 1):
         rover_strut(asset, "Life support hose", (side * .24, 1.49, -.31),
                     (side * .34, 1.08, -.30), .035, "dark", carrier)
