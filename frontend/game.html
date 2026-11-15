@@ -11,7 +11,8 @@
   You ARE the astronaut executing the plan the Marswalk AI planner generated: follow A -> B, do the science, get back alive.
   ONLINE  (served by the app at /game.html): plans live missions, samples weather / pixels / imagery / rover tracks.
   OFFLINE (file:// or API unreachable): baked-in real missions + embedded Jezero weather tables + procedural terrain.
-  URL params: baked, cand, seed, autopilot, speed, skip, mute, difficulty, touch, src=planner, goal, vehicle, season, priority, green_only, region.
+  First-person 3D (WebGL, section 12b); view=2d gives the top-down renderer, story=1 the full Houston scripts.
+  URL params: baked, cand, seed, autopilot, speed, skip, mute, difficulty, touch, view, story, src=planner, goal, vehicle, season, priority, green_only, region.
 -->
 <style>
 :root{--bg:rgba(18,12,10,.88);--fg:#f3e7dd;--accent:#e0703a;--muted:#b9a79a;--line:#3d2f29;--ok:#8fd18f;--bad:#ff8a7a;--warn:#ffcc66;
@@ -22,6 +23,15 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b0705;col
 [hidden]{display:none!important}
 canvas{display:block}
 #cv{position:fixed;inset:0;width:100%;height:100%;touch-action:none}
+#gl{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:none}
+body.v3d #gl{display:block} body.v3d #cv{display:none}
+#visor{position:fixed;inset:0;pointer-events:none;z-index:5;background:radial-gradient(ellipse 78% 82% at 50% 46%,rgba(0,0,0,0) 62%,rgba(8,5,4,.38) 84%,rgba(4,2,2,.86) 100%),linear-gradient(115deg,rgba(255,255,255,.035) 0%,rgba(255,255,255,0) 28%)}
+#wl{position:fixed;inset:0;pointer-events:none;z-index:6;overflow:hidden}
+.wl{position:absolute;left:0;top:0;font:600 11px/1 var(--mono);letter-spacing:.08em;color:#fff;padding:4px 7px;border-radius:4px;background:rgba(18,12,10,.62);border:1px solid rgba(255,255,255,.28);white-space:nowrap;will-change:transform}
+#cmp{position:fixed;left:50%;top:104px;transform:translateX(-50%);z-index:20;display:flex;gap:9px;align-items:center;padding:5px 12px;border-radius:999px;background:var(--bg);border:1px solid var(--line);font:600 11px/1 var(--mono);letter-spacing:.06em;color:var(--fg);white-space:nowrap;pointer-events:none}
+#cmp.bad{border-color:var(--bad);color:var(--bad)}
+#cmpA{display:inline-block;color:var(--ok);font-size:15px;transition:transform .12s linear} #cmpA.off{color:var(--warn)}
+#lookHint{position:fixed;left:50%;bottom:118px;transform:translateX(-50%);z-index:20;padding:7px 14px;border-radius:6px;background:var(--bg);border:1px solid var(--line);font-size:12px;color:var(--fg);pointer-events:none;white-space:nowrap}
 button{font:inherit;color:#fff;background:var(--accent);border:0;border-radius:6px;padding:7px 12px;cursor:pointer}
 button.secondary{background:#4a3a33}
 button:disabled{opacity:.5;cursor:progress}
@@ -231,7 +241,12 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
 </style>
 </head>
 <body>
+<canvas id="gl" aria-label="Mars surface, first-person view"></canvas>
 <canvas id="cv" aria-label="Mars surface view"></canvas>
+<div id="visor" hidden></div>
+<div id="wl" aria-hidden="true"></div>
+<div id="cmp" hidden><span id="cmpA">▲</span><span id="cmpT"></span></div>
+<div id="lookHint" hidden>Click to look around · WASD move · Shift careful · E interact · H head home</div>
 
 <div id="hud" hidden>
   <div id="hudTL" class="hb">
@@ -317,7 +332,7 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
       </div>
     </div>
     <div class="foot">
-      <span><span class="kbd">WASD</span>/<span class="kbd">arrows</span> move · <span class="kbd">Shift</span> careful · <span class="kbd">E</span> interact · <span class="kbd">1</span>–<span class="kbd">0</span> tools · <span class="kbd">Tab</span> planner data · <span class="kbd">P</span> pause</span>
+      <span><span class="kbd">WASD</span> move · <span class="kbd">mouse</span>/<span class="kbd">←→</span> look · <span class="kbd">Shift</span> careful · <span class="kbd">E</span> interact · <span class="kbd">1</span>–<span class="kbd">0</span> tools · <span class="kbd">Tab</span> planner data · <span class="kbd">P</span> pause</span>
       <a href="index.html">Back to the Marswalk Planner</a>
       <button id="btnIntro" type="button" class="secondary">Replay intro</button>
     </div>
@@ -2287,9 +2302,19 @@ function call(key, arg) {
   const m = CALLS[key](R, arg); if (!m) return;
   radio(m[0], m[1], !!m[2], !!m[3]);
 }
+const STORY = new URLSearchParams(location.search).get('story') === '1';
+const SCENE_SKIP = { briefing: 1, loadout: 1 }, SCENE_RADIO = { storm: 1, arrival: 1, objective: 1, abandon: 1 }, SCENE_MAX = { intro: 3, landing: 1 };
 function scene(key, arg, onDone) {
   const R = G.R, f = SCENES[key];
-  const lines = f ? f(R, arg) : null;
+  let lines = f ? f(R, arg) : null;
+  if (!STORY && lines && lines.length) {
+    if (SCENE_SKIP[key]) lines = null;
+    else if (SCENE_RADIO[key] && R && !R.over) { radio(lines[0].who === 'NARR' ? 'CAPCOM' : lines[0].who, lines[0].text.split('. ').slice(0, 2).join('. ').replace(/\.?$/, '.'), false, true); lines = null; }
+    else if (key === 'landing') lines = [{ who: 'CAPCOM', text: 'EVA-1, Houston. Follow the line to B, ' + fx(R.W.C.route.distance_km, 2) + ' km. Turn back by T+' + fmtHM(R.W.turn.h) + '. Good luck.' }];
+    else if (key === 'intro') lines = [lines[0], lines[1], lines[4]];
+    else if (lines.length > 2) lines = [lines[0], lines[lines.length - 1]];
+  }
+  if (!lines || !lines.length) { if (onDone) onDone(); return; }
   playCut(lines, { onDone: onDone, delayMin: R ? R.W.ev.delayMin : 0, garble: !!(R && !R.comms && !R.over), title: SCENE_TITLE[key] || '', solid: !R });
 }
 function radioTick(dt) {
@@ -2517,6 +2542,7 @@ function resize() {
   const w = Math.max(1, Math.floor(W_.innerWidth * V.dpr)), hh = Math.max(1, Math.floor(W_.innerHeight * V.dpr));
   if (cv.width !== w || cv.height !== hh) { cv.width = w; cv.height = hh; }
   V.w = w; V.h = hh; G.miniDirty = true; G.hudDirty = true;
+  g3Resize();
 }
 function spriteInit() {
   const mkS = (stops) => { const c = D.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d'), g = x.createRadialGradient(128, 128, 0, 128, 128, 128);
@@ -2630,6 +2656,7 @@ function marker(sx, sy, col, label, r, sub) {
     cx.fillStyle = 'rgba(18,12,10,0.82)'; cx.fillRect(sx - tw / 2, sy + r + 4 * V.dpr, tw, 15 * V.dpr); cx.fillStyle = '#f3e7dd'; cx.fillText(sub, sx, sy + r + 12 * V.dpr); }
 }
 function render(dt) {
+  if (G3.on) { render3d(dt); return; }
   const play = G.screen === 'play' || G.screen === 'end', W = play ? G.W : G.attract, R = play ? G.R : null, cam = G.cam;
   V.time += dt;
   cx.setTransform(1, 0, 0, 1, 0, 0); cx.globalAlpha = 1; cx.globalCompositeOperation = 'source-over';
@@ -2833,6 +2860,480 @@ function render(dt) {
 }
 const ATTRACT_ENV = { hour: 11, elev: 70, az: 120, wind: 5, to: 300, tauVis: 0.3, tau: 0.1 };
 const LAYENV = { elev: 60, az: 180, dT: 0, key: '' };
+
+// =====================================================================================================================
+// 12b. render3d — first-person WebGL view of the same world. No libraries. The simulation is unchanged: the camera
+//      stands at the player's (x, y) on a height field derived from the game's own slope / firmness fields.
+//      World axes: X = east, Y = up, Z = -north. Yaw is a compass bearing (0 = north, clockwise).
+//      Falls back to the 2D renderer when WebGL is missing or ?view=2d.
+// =====================================================================================================================
+const G3 = { on: false, gl: null, yaw: 0, pitch: -0.06, roll: 0, eye: 1.7, eyeY: 0, bob: 0, lastX: 0, lastY: 0, fov: 70, W: null, layerKey: '', hint: 0,
+  lv: [], prog: {}, buf: {}, tex: {}, vp: new Float32Array(16), view: new Float32Array(16), proj: new Float32Array(16), cam: [0, 0, 0], f: [0, 0, -1], r: [1, 0, 0], u: [0, 1, 0],
+  rockKey: '', rockN: 0, objN: 0, ribN: 0, fxN: 0, cockN: {}, cockO: {}, labels: [], locked: false, drag: null, w: 1, h: 1, time: 0 };
+const G3C = { N: 96, CELLS: [2.5, 10, 40, 160], DROP: [0, 0.25, 0.9, 3.2], FAR: 9000, NEAR: 0.25, DPR: 1.5, ROCK_CELL: 16, ROCK_R: 6, PARTS: 700,
+  EYE: { on_foot: 1.7, two_wheel: 1.45, four_wheel: 1.65, buggy: 2.25 } };          // [G] presentation values
+
+function h3(W, x, y) {                      // terrain height (m). Calls fieldAt: never call from inside the simulation step.
+  fieldAt(W, x, y);
+  const sd = W.seed, w = F.w, rug = Math.min(1.35, F.slope / W.vmax);
+  let h = (fbm2(x / 1100 + 3.1, y / 1100 - 1.7, sd + 201) - 0.5) * 70;                    // regional swell: the corridor rides it
+  h += (fbm2(x / 150 - 9.2, y / 150 + 4.4, sd + 211) - 0.5) * 12 * (0.12 + 0.88 * w);      // hills, flattened along the corridor
+  h += Math.abs(fbm2(x / 70 + 1.3, y / 70 - 6.6, sd + 223) - 0.5) * 2 * rug * rug * 20 * w;   // crags where the game's slope field is steep (off-limits)
+  h += (vnoise(x / 9, y / 9, sd + 229) - 0.5) * 0.7 * (0.25 + 0.75 * w);
+  h += (1 - F.firm) * w * 2.4 * (0.5 + 0.5 * Math.sin((x * 0.55 - y * 0.83) / 9 + 4 * vnoise(x / 120, y / 120, sd + 241)));      // dunes on loose ground off the corridor
+  if (w > 0.02) {                                                                         // impact craters, one candidate per 220 m cell, never on the corridor
+    const ci = Math.floor(x / 220), cj = Math.floor(y / 220); let hh = (Math.imul(ci, 374761393) + Math.imul(cj, 668265263) + Math.imul(sd, 1274126177)) | 0;
+    hh = Math.imul(hh ^ (hh >>> 13), 1274126177); hh = (hh ^ (hh >>> 16)) >>> 0;
+    if ((hh & 255) < 105) { const cr = 14 + ((hh >>> 8) & 255) / 255 * 46, cx0 = (ci + 0.3 + ((hh >>> 16) & 255) / 255 * 0.4) * 220, cy0 = (cj + 0.3 + ((hh >>> 24) & 255) / 255 * 0.4) * 220, t = Math.hypot(x - cx0, y - cy0) / cr;
+      if (t < 1.7) { const bowl = t < 1 ? -(1 - t * t) * (1 - t * t) : 0, rim = Math.exp(-((t - 1) / 0.2) * ((t - 1) / 0.2)); h += cr * (0.2 * bowl + 0.07 * rim) * w; } }
+  }
+  h += (1 - F.firm) * 0.16 * Math.sin((x * 0.8 + y * 0.6) / 1.6 + 5 * vnoise(x / 34, y / 34, sd + 233));   // ripples on loose ground
+  return h;
+}
+
+// ---- tiny matrix helpers (column-major)
+function m4persp(o, fovy, asp, n, f) { const t = 1 / Math.tan(fovy / 2); o.fill(0); o[0] = t / asp; o[5] = t; o[10] = (f + n) / (n - f); o[11] = -1; o[14] = 2 * f * n / (n - f); }
+function m4mul(o, a, b) { for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]; }
+
+const G3S = {
+  skyV: 'attribute vec2 a_p;varying vec2 v_p;void main(){v_p=a_p;gl_Position=vec4(a_p,0.9999,1.0);}',
+  common: 'precision highp float;uniform vec3 u_sun;uniform vec3 u_cam;uniform vec4 u_env;uniform float u_time;' +        // u_env: day(0..1), storm, tau, night
+    'vec3 skyCol(vec3 d){float day=u_env.x,st=u_env.y;float h=clamp(d.y,-0.2,1.0);' +
+    'vec3 hor=mix(vec3(0.05,0.045,0.06),vec3(0.86,0.66,0.47),day);vec3 zen=mix(vec3(0.008,0.009,0.02),vec3(0.50,0.36,0.27),day);' +
+    'vec3 c=mix(hor,zen,pow(max(h,0.0),0.45));float sd=max(dot(d,u_sun),0.0);float low=1.0-smoothstep(0.0,0.45,u_sun.y);' +
+    'c+=vec3(0.30,0.46,0.70)*pow(sd,6.0)*low*day*0.9;c+=vec3(1.0,0.86,0.66)*pow(sd,48.0)*0.35*day;' +
+    'c=mix(c,vec3(0.40,0.25,0.15)*(0.35+0.65*day),clamp(st*0.92+u_env.z*0.06,0.0,0.95));return c;}' +
+    'vec3 fogged(vec3 col,vec3 P){vec3 dv=P-u_cam;float d=length(dv);float dens=0.00030+0.00040*u_env.z+0.03*u_env.y*u_env.y;' +
+    'float f=1.0-exp(-pow(d*dens,1.35));vec3 fc=skyCol(normalize(vec3(dv.x,max(dv.y,0.0)*0.25+0.02*d,dv.z)));return mix(col,fc,clamp(f,0.0,1.0));}',
+  skyF: 'varying vec2 v_p;uniform vec3 u_f;uniform vec3 u_r;uniform vec3 u_u;' +
+    'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}' +
+    'void main(){vec3 d=normalize(u_f+u_r*v_p.x+u_u*v_p.y);vec3 c=skyCol(d);float sd=max(dot(d,u_sun),0.0);' +
+    'c+=vec3(1.0,0.95,0.86)*smoothstep(0.99975,0.99992,sd)*u_env.x*(1.0-u_env.y);' +
+    'float night=u_env.w*(1.0-u_env.y);if(night>0.01&&d.y>0.0){vec2 g=floor(d.xz/(d.y+0.35)*90.0);float s=hash(g);c+=vec3(0.9,0.92,1.0)*step(0.992,s)*night*(0.5+0.5*sin(u_time*2.0+s*90.0));}' +
+    'gl_FragColor=vec4(c,1.0);}',
+  terV: 'attribute vec3 a_pos;attribute vec3 a_nrm;attribute vec4 a_mat;uniform mat4 u_vp;uniform float u_drop;varying vec3 v_pos;varying vec3 v_n;varying vec4 v_mat;' +
+    'void main(){v_pos=a_pos;v_n=a_nrm;v_mat=a_mat;gl_Position=u_vp*vec4(a_pos.x,a_pos.y-u_drop,a_pos.z,1.0);}',
+  terF: 'varying vec3 v_pos;varying vec3 v_n;varying vec4 v_mat;uniform sampler2D u_noise;uniform sampler2D u_lut;uniform vec3 u_opt;uniform vec3 u_fwd;' +      // u_opt: red overlay, layer on, headlamp
+    'void main(){vec3 P=v_pos;float d=length(P-u_cam);float near=1.0-smoothstep(25.0,110.0,d);' +
+    'vec4 na=texture2D(u_noise,P.xz*0.071);vec4 nb=texture2D(u_noise,P.xz*0.83);vec4 nc=texture2D(u_noise,P.xz*0.0093);' +
+    'vec3 N=normalize(v_n);float e=0.012;float bx=texture2D(u_noise,P.xz*0.83+vec2(e,0.0)).r-nb.r;float bz=texture2D(u_noise,P.xz*0.83+vec2(0.0,e)).r-nb.r;' +
+    'N=normalize(N+vec3(-bx,0.0,-bz)*2.6*near+vec3(na.g-0.5,0.0,na.b-0.5)*0.22);' +
+    'float firm=v_mat.y;vec3 sand=vec3(0.70,0.47,0.31),dust=vec3(0.58,0.34,0.22),rock=vec3(0.30,0.19,0.15);' +
+    'vec3 alb=mix(sand,dust,smoothstep(0.12,0.5,firm+(nc.r-0.5)*0.3));alb=mix(alb,rock,smoothstep(0.58,0.9,firm+(nc.g-0.5)*0.5));' +
+    'alb*=0.70+0.60*na.r;alb*=1.0-0.30*near*(nb.g-0.4);alb*=1.0-0.45*near*smoothstep(0.66,0.72,nb.b)*smoothstep(0.5,0.62,na.a);alb*=0.82+0.36*nc.b;float steep=1.0-normalize(v_n).y;alb=mix(alb,rock*0.78,smoothstep(0.05,0.22,steep));' +
+    'alb=mix(alb,alb*1.10+vec3(0.025,0.02,0.012),(1.0-v_mat.x)*0.5);' +
+    'float day=u_env.x;float ndl=max(dot(N,u_sun),0.0);float dim=exp(-1.6*u_env.y)*day;' +
+    'vec3 lit=alb*(vec3(1.18,1.0,0.82)*ndl*dim*smoothstep(-0.02,0.12,u_sun.y)+mix(vec3(0.035,0.04,0.065),vec3(0.42,0.33,0.27),day)*(0.55+0.45*N.y));' +
+    'if(u_opt.z>0.0){vec3 vd=normalize(P-u_cam);float sp=pow(max(dot(vd,u_fwd),0.0),14.0);lit+=alb*vec3(1.0,0.96,0.85)*sp*u_opt.z*9.0/(1.0+d*d*0.012);}' +
+    'if(u_opt.y>0.5){vec3 lc=texture2D(u_lut,vec2(clamp(v_mat.w,0.004,0.996),0.5)).rgb;lit=mix(lit,lc*(0.45+0.55*(0.4+0.6*ndl)),0.72*(1.0-smoothstep(500.0,1600.0,d)));}' +
+    'if(u_opt.x>0.0&&v_mat.z>0.35){float st=step(0.5,fract((P.x+P.z)*0.16+u_time*0.25));float k=smoothstep(0.35,0.6,v_mat.z)*(1.0-smoothstep(260.0,700.0,d))*u_opt.x;' +
+    'lit=mix(lit,vec3(0.95,0.16,0.10)*(0.55+0.45*day),k*(0.22+0.26*st));}' +
+    'gl_FragColor=vec4(fogged(lit,P),1.0);}',
+  objV: 'attribute vec3 a_pos;attribute vec3 a_nrm;attribute vec3 a_col;uniform mat4 u_vp;varying vec3 v_pos;varying vec3 v_n;varying vec3 v_c;' +
+    'void main(){v_pos=a_pos;v_n=a_nrm;v_c=a_col;gl_Position=u_vp*vec4(a_pos,1.0);}',
+  objF: 'varying vec3 v_pos;varying vec3 v_n;varying vec3 v_c;uniform vec3 u_opt;uniform vec3 u_fwd;' +      // u_opt.x: 1 = view-space cockpit (no fog)
+    'void main(){vec3 N=normalize(v_n);float day=u_env.x;vec3 L=u_opt.x>0.5?normalize(vec3(0.3,0.8,0.5)):u_sun;float ndl=max(dot(N,L),0.0);float dim=exp(-1.6*u_env.y)*day;' +
+    'vec3 lit=v_c*(vec3(1.15,1.0,0.84)*ndl*dim+mix(vec3(0.05,0.055,0.08),vec3(0.40,0.33,0.28),day)*(0.6+0.4*N.y));' +
+    'if(u_opt.x>0.5){lit+=v_c*0.10*u_opt.z;gl_FragColor=vec4(lit,1.0);}else{float d=length(v_pos-u_cam);' +
+    'if(u_opt.z>0.0){vec3 vd=normalize(v_pos-u_cam);lit+=v_c*vec3(1.0,0.96,0.85)*pow(max(dot(vd,u_fwd),0.0),14.0)*u_opt.z*9.0/(1.0+d*d*0.012);}gl_FragColor=vec4(fogged(lit,v_pos),1.0);}}',
+  ribV: 'attribute vec3 a_pos;attribute vec4 a_dat;uniform mat4 u_vp;varying vec3 v_pos;varying vec4 v_d;void main(){v_pos=a_pos;v_d=a_dat;gl_Position=u_vp*vec4(a_pos,1.0);gl_Position.z-=0.0012*gl_Position.w;}',
+  ribF: 'varying vec3 v_pos;varying vec4 v_d;uniform float u_dir;uniform float u_vis;' +                       // v_d: s, side, colour index, kind
+    'void main(){float d=length(v_pos-u_cam);float s=v_d.x,side=v_d.y,kind=v_d.w;vec3 c=v_d.z<0.5?vec3(0.30,0.92,0.42):v_d.z<1.5?vec3(1.0,0.80,0.05):v_d.z<2.5?vec3(1.0,0.26,0.18):v_d.z<3.5?vec3(0.75,0.85,1.0):vec3(0.62,0.62,0.62);' +
+    'float a;if(kind<0.5){float ch=fract(s*u_dir/6.0-u_time*0.5-abs(side)*0.5);float arrow=smoothstep(0.0,0.05,ch)*(1.0-smoothstep(0.17,0.23,ch));' +
+    'float edge=smoothstep(0.74,0.95,abs(side));a=min(1.0,arrow*0.9+edge*0.85+0.05);c=c*1.15+vec3(0.35)*arrow;a*=mix(1.0,0.6,smoothstep(80.0,400.0,d));}' +
+    'else if(kind<1.5){a=step(0.5,fract(s/5.0))*0.34*(1.0-smoothstep(90.0,260.0,d));}else if(kind<2.5){a=step(0.45,fract(s/2.4-u_time*0.3))*0.7;}else if(kind<3.5){a=0.42*(1.0-smoothstep(300.0,900.0,d));}else{a=(1.0-abs(side))*0.38*smoothstep(50.0,240.0,d)*(1.0-smoothstep(1500.0,4000.0,d));}' +
+    'a*=u_vis;vec3 col=fogged(c*1.15,v_pos);gl_FragColor=vec4(col,a*(1.0-0.75*u_env.y));}',
+  fxV: 'attribute vec3 a_base;attribute vec2 a_uv;attribute vec4 a_col;attribute vec2 a_size;uniform mat4 u_vp;uniform vec3 u_camR;varying vec2 v_uv;varying vec4 v_c;varying float v_d;' +
+    'void main(){vec3 p=a_base;if(a_col.a<0.5){p+=u_camR*a_uv.x*a_size.x;p.y+=a_uv.y*a_size.y;}else{p.x+=a_uv.x*a_size.x;p.z+=a_uv.y*a_size.x;p.y+=0.18;}v_uv=a_uv;v_c=a_col;gl_Position=u_vp*vec4(p,1.0);gl_Position.z-=0.0016*gl_Position.w;v_d=gl_Position.w;}',
+  fxF: 'precision highp float;varying vec2 v_uv;varying vec4 v_c;varying float v_d;uniform float u_time;uniform float u_storm;' +
+    'void main(){float a;if(v_c.a<0.5){float x=1.0-abs(v_uv.x);a=x*x*pow(1.0-v_uv.y,1.6)*(0.55+0.12*sin(u_time*2.4+v_uv.y*9.0))+pow(x,10.0)*(1.0-v_uv.y)*0.5;a*=smoothstep(1.5,9.0,v_d);}' +
+    'else{float r=length(v_uv);a=(smoothstep(0.80,0.90,r)*(1.0-smoothstep(0.94,1.0,r))+0.10*(1.0-smoothstep(0.0,1.0,r)))*(0.75+0.25*sin(u_time*3.0-r*6.0));}' +
+    'gl_FragColor=vec4(v_c.rgb*a*(1.0-0.7*u_storm),1.0);}',
+  ptV: 'attribute vec4 a_seed;uniform mat4 u_vp;uniform vec3 u_cam;uniform vec3 u_off;uniform vec4 u_p;varying float v_a;' +      // u_p: box, size, visible fraction, alpha
+    'void main(){vec3 q=fract(a_seed.xyz+u_off/u_p.x)-0.5;vec3 p=u_cam+q*vec3(u_p.x,u_p.x*0.45,u_p.x);gl_Position=u_vp*vec4(p,1.0);' +
+    'float keep=step(a_seed.w,u_p.z);gl_PointSize=keep*u_p.y*(0.5+a_seed.w)*60.0/max(gl_Position.w,0.6);v_a=keep*u_p.w*(1.0-smoothstep(0.38,0.5,max(abs(q.x),abs(q.z))));}',
+  ptF: 'precision mediump float;varying float v_a;uniform vec3 u_col;void main(){vec2 c=gl_PointCoord-0.5;float a=(1.0-smoothstep(0.05,0.5,length(c)))*v_a;gl_FragColor=vec4(u_col*a,a);}'
+};
+
+function g3Program(gl, vs, fs) {
+  const mk = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o) || 'shader'); return o; };
+  const p = gl.createProgram(); gl.attachShader(p, mk(gl.VERTEX_SHADER, vs)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) || 'link');
+  const o = { p: p, u: {}, a: {} };
+  for (let i = 0, n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i < n; i++) { const nm = gl.getActiveUniform(p, i).name; o.u[nm] = gl.getUniformLocation(p, nm); }
+  for (let i = 0, n = gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES); i < n; i++) { const nm = gl.getActiveAttrib(p, i).name; o.a[nm] = gl.getAttribLocation(p, nm); }
+  return o;
+}
+
+const ICO = (() => { const t = (1 + Math.sqrt(5)) / 2, v = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map((p) => { const l = Math.hypot(p[0], p[1], p[2]); return [p[0] / l, p[1] / l, p[2] / l]; });
+  return { v: v, f: [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]] }; })();
+const ICOV = new Float32Array(36);
+function mbRock(x, y, z, sx, sy, sz, rnd, col) {         // jittered icosahedron, flat-shaded, slightly sunk
+  const yaw = rnd() * 6.28, c = Math.cos(yaw), s = Math.sin(yaw);
+  for (let k = 0; k < 12; k++) { const p = ICO.v[k], j = 0.72 + 0.5 * rnd(), lx = p[0] * sx * j, lz = p[2] * sz * j; ICOV[k * 3] = x + lx * c + lz * s; ICOV[k * 3 + 1] = y + p[1] * sy * j * (p[1] < 0 ? 0.5 : 1); ICOV[k * 3 + 2] = z - lx * s + lz * c; }
+  for (let q = 0; q < 20; q++) { const f = ICO.f[q], a = f[0] * 3, b = f[1] * 3, d = f[2] * 3, k = 0.8 + 0.4 * rnd(); mbTri(ICOV[a], ICOV[a + 1], ICOV[a + 2], ICOV[b], ICOV[b + 1], ICOV[b + 2], ICOV[d], ICOV[d + 1], ICOV[d + 2], [col[0] * k, col[1] * k, col[2] * k]); }
+}
+// ---- model builder: flat-shaded boxes / cylinders / rocks into [pos3, nrm3, col3]
+const MB = { a: new Float32Array(9 * 96000), n: 0 };
+function mbTri(ax, ay, az, bx, by, bz, cx_, cy, cz, col) {
+  if (MB.n + 27 > MB.a.length) return;
+  let nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay), ny = (bz - az) * (cx_ - ax) - (bx - ax) * (cz - az), nz = (bx - ax) * (cy - ay) - (by - ay) * (cx_ - ax);
+  const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+  const a = MB.a; let o = MB.n;
+  a[o++] = ax; a[o++] = ay; a[o++] = az; a[o++] = nx; a[o++] = ny; a[o++] = nz; a[o++] = col[0]; a[o++] = col[1]; a[o++] = col[2];
+  a[o++] = bx; a[o++] = by; a[o++] = bz; a[o++] = nx; a[o++] = ny; a[o++] = nz; a[o++] = col[0]; a[o++] = col[1]; a[o++] = col[2];
+  a[o++] = cx_; a[o++] = cy; a[o++] = cz; a[o++] = nx; a[o++] = ny; a[o++] = nz; a[o++] = col[0]; a[o++] = col[1]; a[o++] = col[2];
+  MB.n = o;
+}
+function mbBox(x, y, z, sx, sy, sz, yaw, col) {          // centre (x,y,z), half sizes, yaw about Y
+  const c = Math.cos(yaw || 0), s = Math.sin(yaw || 0), P = [];
+  for (let k = 0; k < 8; k++) { const lx = (k & 1 ? sx : -sx), ly = (k & 2 ? sy : -sy), lz = (k & 4 ? sz : -sz); P.push(x + lx * c + lz * s, y + ly, z - lx * s + lz * c); }
+  const q = (a, b, d, e) => { mbTri(P[a * 3], P[a * 3 + 1], P[a * 3 + 2], P[b * 3], P[b * 3 + 1], P[b * 3 + 2], P[d * 3], P[d * 3 + 1], P[d * 3 + 2], col); mbTri(P[a * 3], P[a * 3 + 1], P[a * 3 + 2], P[d * 3], P[d * 3 + 1], P[d * 3 + 2], P[e * 3], P[e * 3 + 1], P[e * 3 + 2], col); };
+  q(0, 4, 6, 2); q(1, 3, 7, 5); q(2, 6, 7, 3); q(0, 1, 5, 4); q(4, 5, 7, 6); q(0, 2, 3, 1);
+}
+function mbCyl(x, y, z, r0, r1, h, seg, col, cap) {      // vertical frustum from y to y+h
+  for (let k = 0; k < seg; k++) {
+    const a0 = k / seg * 6.2832, a1 = (k + 1) / seg * 6.2832, c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+    mbTri(x + c0 * r0, y, z + s0 * r0, x + c0 * r1, y + h, z + s0 * r1, x + c1 * r1, y + h, z + s1 * r1, col);
+    mbTri(x + c0 * r0, y, z + s0 * r0, x + c1 * r1, y + h, z + s1 * r1, x + c1 * r0, y, z + s1 * r0, col);
+    if (cap) mbTri(x, y + h, z, x + c1 * r1, y + h, z + s1 * r1, x + c0 * r1, y + h, z + s0 * r1, col);
+  }
+}
+function mbRockOld(x, y, z, sx, sy, sz, rnd, col) {
+  const j = () => 0.7 + 0.6 * rnd(), yaw = rnd() * 6.28, c = Math.cos(yaw), s = Math.sin(yaw);
+  const V = [[sx * j(), 0, 0], [-sx * j(), 0, 0], [0, sy * j(), 0], [0, -sy * 0.4, 0], [0, 0, sz * j()], [0, 0, -sz * j()]].map((p) => [x + p[0] * c + p[2] * s + (rnd() - 0.5) * sx * 0.3, y + p[1], z - p[0] * s + p[2] * c + (rnd() - 0.5) * sz * 0.3]);
+  const t = (a, b, d) => { const k = 0.82 + 0.36 * rnd(); mbTri(V[a][0], V[a][1], V[a][2], V[b][0], V[b][1], V[b][2], V[d][0], V[d][1], V[d][2], [col[0] * k, col[1] * k, col[2] * k]); };
+  t(0, 2, 4); t(4, 2, 1); t(1, 2, 5); t(5, 2, 0); t(4, 3, 0); t(1, 3, 4); t(5, 3, 1); t(0, 3, 5);
+}
+
+function g3Init() {
+  const Q = new URLSearchParams(location.search);
+  if (Q.get('view') === '2d') return false;
+  const c = $('gl'); let gl = null;
+  G3.low = Q.get('gq') === 'low';
+  try { gl = c.getContext('webgl', { antialias: !G3.low, alpha: false, powerPreference: 'high-performance' }) || c.getContext('experimental-webgl'); } catch (e) { gl = null; }
+  if (!gl) return false;
+  try {
+    const S = G3S, cm = S.common;
+    G3.prog.sky = g3Program(gl, S.skyV, cm + S.skyF); G3.prog.ter = g3Program(gl, S.terV, cm + S.terF); G3.prog.obj = g3Program(gl, S.objV, cm + S.objF);
+    G3.prog.rib = g3Program(gl, S.ribV, cm + S.ribF); G3.prog.fx = g3Program(gl, S.fxV, S.fxF); G3.prog.pt = g3Program(gl, S.ptV, S.ptF);
+  } catch (e) { return false; }
+  G3.gl = gl;
+  const N = G3C.N, M = N + 1;
+  // shared grid indices: full, and with the centre hole the finer level covers
+  const mkIdx = (hole) => { const a = []; for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    if (hole && Math.abs(i - N / 2 + 0.5) < hole && Math.abs(j - N / 2 + 0.5) < hole) continue;
+    const k = j * M + i; a.push(k, k + M, k + 1, k + 1, k + M, k + M + 1); }
+    const b = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(a), gl.STATIC_DRAW); return { b: b, n: a.length }; };
+  G3.buf.idxFull = mkIdx(0); G3.buf.idxHole = mkIdx(N / 8 - 1);
+  for (let L = 0; L < G3C.CELLS.length; L++) {
+    const lv = { c: G3C.CELLS[L], H: new Float32Array(M * M), MA: new Uint8Array(M * M * 4), SI: new Int32Array(M * M).fill(-2147483647), SJ: new Int32Array(M * M),
+      pos: new Float32Array(M * M * 6), mat: new Uint8Array(M * M * 4), vb: gl.createBuffer(), mb: gl.createBuffer(), ci: 1e9, cj: 1e9, slot: new Int32Array(M * M) };
+    gl.bindBuffer(gl.ARRAY_BUFFER, lv.vb); gl.bufferData(gl.ARRAY_BUFFER, lv.pos.byteLength, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lv.mb); gl.bufferData(gl.ARRAY_BUFFER, lv.mat.byteLength, gl.DYNAMIC_DRAW);
+    G3.lv.push(lv);
+  }
+  // noise texture
+  const tn = new Uint8Array(256 * 256 * 4); for (let i = 0; i < tn.length; i++) tn[i] = Math.random() * 256;
+  for (let pass = 0; pass < 2; pass++) { const src = tn.slice(); for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) for (let ch = 0; ch < 4; ch++) {
+    const g = (xx, yy) => src[(((yy + 256) & 255) * 256 + ((xx + 256) & 255)) * 4 + ch]; tn[(y * 256 + x) * 4 + ch] = (g(x, y) * 4 + g(x + 1, y) + g(x - 1, y) + g(x, y + 1) + g(x, y - 1)) / 8; } }
+  for (let i = 0; i < tn.length; i++) tn[i] = clamp((tn[i] - 128) * 2.1 + 128, 0, 255);
+  G3.tex.noise = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, G3.tex.noise); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, tn);
+  gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  const an = gl.getExtension('EXT_texture_filter_anisotropic'); if (an) gl.texParameterf(gl.TEXTURE_2D, an.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(an.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1)); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  G3.tex.lut = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, G3.tex.lut); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(1024));
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const sb = (data, usage) => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, usage || gl.STATIC_DRAW); return b; };
+  G3.buf.sky = sb(new Float32Array([-1, -1, 3, -1, -1, 3]));
+  G3.buf.rock = sb(9 * 4 * 60 * 700, gl.DYNAMIC_DRAW); G3.buf.obj = sb(9 * 4 * 9000, gl.DYNAMIC_DRAW);
+  G3.buf.rib = sb(4, gl.DYNAMIC_DRAW); G3.fxA = new Float32Array(11 * 6 * 160); G3.buf.fx = sb(G3.fxA.byteLength, gl.DYNAMIC_DRAW);
+  const ps = new Float32Array(G3C.PARTS * 4); for (let i = 0; i < ps.length; i++) ps[i] = Math.random(); G3.buf.pt = sb(ps);
+  // cockpits (view space: x right, y up, -z forward)
+  const mk = (key, dy, fn) => { MB.n = 0; fn(); for (let i = 1; i < MB.n; i += 9) MB.a[i] += dy; G3.cockO[key] = sb(MB.a.slice(0, MB.n)); G3.cockN[key] = MB.n / 9; };
+  const dk = [0.13, 0.12, 0.12], gr = [0.34, 0.33, 0.33], al = [0.72, 0.70, 0.66], or = [0.88, 0.44, 0.22], bl = [0.06, 0.06, 0.07], wh = [0.86, 0.84, 0.80];
+  mk('two_wheel', -0.16, () => { mbBox(0, -0.62, -0.95, 0.52, 0.022, 0.022, 0, gr); mbBox(-0.47, -0.62, -0.93, 0.07, 0.035, 0.035, 0, bl); mbBox(0.47, -0.62, -0.93, 0.07, 0.035, 0.035, 0, bl);
+    mbBox(0, -0.72, -1.02, 0.03, 0.12, 0.03, 0, al); mbBox(0, -0.56, -1.02, 0.13, 0.07, 0.02, 0, dk); mbBox(0, -0.555, -1.0, 0.11, 0.05, 0.005, 0, [0.10, 0.32, 0.26]);
+    mbBox(0, -0.98, -1.5, 0.11, 0.09, 0.42, 0, or); mbBox(0, -1.12, -2.05, 0.07, 0.2, 0.2, 0, bl); });
+  mk('four_wheel', -0.5, () => { mbBox(0, -0.86, -1.7, 0.8, 0.04, 0.6, 0, [0.52, 0.50, 0.47]); mbBox(0, -0.74, -1.12, 0.34, 0.09, 0.04, 0, dk); mbBox(0, -0.735, -1.078, 0.3, 0.065, 0.004, 0, [0.08, 0.30, 0.25]);
+    mbBox(-1.05, -1.0, -2.0, 0.19, 0.3, 0.34, 0, bl); mbBox(1.05, -1.0, -2.0, 0.19, 0.3, 0.34, 0, bl); mbBox(-1.05, -0.72, -2.0, 0.24, 0.03, 0.4, 0, or); mbBox(1.05, -0.72, -2.0, 0.24, 0.03, 0.4, 0, or);
+    mbBox(0.55, -0.62, -2.15, 0.12, 0.10, 0.10, 0, [0.80, 0.66, 0.25]); });
+  mk('buggy', -0.12, () => { mbBox(0, -0.80, -1.25, 1.6, 0.16, 0.5, 0, dk); mbBox(0, -0.66, -1.02, 1.1, 0.04, 0.2, 0, gr); mbBox(-0.45, -0.60, -0.98, 0.3, 0.08, 0.005, 0, [0.08, 0.30, 0.25]); mbBox(0.45, -0.60, -0.98, 0.3, 0.08, 0.005, 0, [0.30, 0.20, 0.08]);
+    mbBox(-1.5, 0.1, -1.3, 0.09, 1.1, 0.09, 0, wh); mbBox(1.5, 0.1, -1.3, 0.09, 1.1, 0.09, 0, wh); mbBox(0, 1.02, -1.3, 1.6, 0.10, 0.09, 0, wh); mbBox(0, 0.1, -1.32, 0.035, 1.0, 0.035, 0, gr);
+    mbBox(0, -1.0, -2.6, 1.3, 0.12, 0.9, 0, wh); mbBox(-1.2, -1.15, -3.1, 0.22, 0.32, 0.36, 0, bl); mbBox(1.2, -1.15, -3.1, 0.22, 0.32, 0.36, 0, bl); });
+  // world labels (DOM)
+  const lb = $('wl'); for (let i = 0; i < 14; i++) { const d = D.createElement('div'); d.className = 'wl'; d.hidden = true; lb.appendChild(d); G3.labels.push({ el: d, txt: '', on: false }); }
+  // look controls
+  const lockable = () => G.screen === 'play' && !G.paused && !G.cut && G.R && !G.R.site && !G.drawer && !G.autopilot;
+  c.addEventListener('pointerdown', (e) => { Snd.init(); if (e.pointerType === 'mouse') { if (lockable() && c.requestPointerLock && !G3.locked) { try { c.requestPointerLock(); } catch (er) { /* ignore */ } } G3.drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; } else if (!G3.drag) G3.drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; });
+  const look = (dx, dy, k) => { G3.yaw += dx * k; G3.pitch = clamp(G3.pitch - dy * k, -1.25, 1.25); };
+  W_.addEventListener('pointermove', (e) => { if (G3.locked) { if (lockable()) look(e.movementX || 0, e.movementY || 0, 0.0023); } else if (G3.drag && e.pointerId === G3.drag.id) { look(e.clientX - G3.drag.x, e.clientY - G3.drag.y, e.pointerType === 'mouse' ? 0.004 : 0.006); G3.drag.x = e.clientX; G3.drag.y = e.clientY; } });
+  const up = (e) => { if (G3.drag && e.pointerId === G3.drag.id) G3.drag = null; }; W_.addEventListener('pointerup', up); W_.addEventListener('pointercancel', up);
+  D.addEventListener('pointerlockchange', () => { G3.locked = D.pointerLockElement === c; });
+  G3.on = true; D.body.classList.add('v3d');
+  return true;
+}
+
+function g3Resize() {
+  if (!G3.on) return;
+  const c = $('gl'), dpr = G3.low ? 1 : Math.min(G3C.DPR, W_.devicePixelRatio || 1), w = Math.max(2, Math.round(W_.innerWidth * dpr)), h = Math.max(2, Math.round(W_.innerHeight * dpr));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  G3.w = w; G3.h = h;
+}
+
+function g3Level(W, lv, L, camx, camy, env, force) {
+  const N = G3C.N, M = N + 1, c = lv.c, ci = Math.round(camx / (4 * c)) * 4, cj = Math.round(camy / (4 * c)) * 4;      // re-centre every 4 cells: 4x fewer refills
+  if (!force && ci === lv.ci && cj === lv.cj) return;
+  lv.ci = ci; lv.cj = cj;
+  const H = lv.H, MA = lv.MA, SI = lv.SI, SJ = lv.SJ, slot = lv.slot, key = G.layers.data, lay = key !== 'none', half = N / 2;
+  const sx = lv.sx || (lv.sx = new Int32Array(M)); for (let i = 0; i < M; i++) { const gi = ci + i - half; sx[i] = ((gi % M) + M) % M; }
+  for (let j = 0; j < M; j++) {
+    const gj = cj + j - half, sjM = (((gj % M) + M) % M) * M, row = j * M;
+    for (let i = 0; i < M; i++) {
+      const gi = ci + i - half, s = sx[i] + sjM; slot[row + i] = s;
+      if (SI[s] !== gi || SJ[s] !== gj) {
+        const x = gi * c, y = gj * c;
+        H[s] = h3(W, x, y);
+        const o = s * 4; MA[o] = F.w * 255; MA[o + 1] = clamp(F.firm, 0, 1) * 255; MA[o + 2] = F.red ? 255 : clamp((F.slope / W.vmax - 0.55) * 1.2, 0, 0.45) * 255;
+        MA[o + 3] = lay ? clamp(layerValue(W, key, x, y, env), 0, 1) * 255 : 0;
+        SI[s] = gi; SJ[s] = gj;
+      }
+    }
+  }
+  const P = lv.pos, T = lv.mat;
+  const i2c = 1 / (2 * c), i1c = 1 / c;
+  for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) {
+    const k = j * M + i, s = slot[k], o = k * 6;
+    const hl = H[slot[i > 0 ? k - 1 : k]], hr = H[slot[i < N ? k + 1 : k]], hd = H[slot[j > 0 ? k - M : k]], hu = H[slot[j < N ? k + M : k]];
+    const dx = (hr - hl) * (i > 0 && i < N ? i2c : i1c), dy = (hu - hd) * (j > 0 && j < N ? i2c : i1c), l = 1 / Math.sqrt(dx * dx + dy * dy + 1);
+    P[o] = (ci + i - half) * c; P[o + 1] = H[s]; P[o + 2] = -(cj + j - half) * c; P[o + 3] = -dx * l; P[o + 4] = l; P[o + 5] = dy * l;
+    const m = s * 4, t = k * 4; T[t] = MA[m]; T[t + 1] = MA[m + 1]; T[t + 2] = MA[m + 2]; T[t + 3] = MA[m + 3];
+  }
+  const gl = G3.gl; gl.bindBuffer(gl.ARRAY_BUFFER, lv.vb); gl.bufferSubData(gl.ARRAY_BUFFER, 0, P); gl.bindBuffer(gl.ARRAY_BUFFER, lv.mb); gl.bufferSubData(gl.ARRAY_BUFFER, 0, T);
+}
+
+function g3Rocks(W, camx, camy) {
+  const RC = G3C.ROCK_CELL, ci = Math.round(camx / RC), cj = Math.round(camy / RC), key = ci + ',' + cj;
+  if (key === G3.rockKey) return;
+  G3.rockKey = key; MB.n = 0;
+  for (let j = cj - G3C.ROCK_R; j <= cj + G3C.ROCK_R; j++) for (let i = ci - G3C.ROCK_R; i <= ci + G3C.ROCK_R; i++) {
+    const r = mulberry32((hashStr(i + ':' + j) ^ W.seed) >>> 0), x0 = i * RC, y0 = j * RC;
+    fieldAt(W, x0 + RC / 2, y0 + RC / 2);
+    const w = F.w, n = Math.floor(r() * (0.6 + 2.6 * Math.min(1.6, F.rough) * (0.25 + 0.75 * w)) + (F.red ? 1.2 : 0));
+    for (let q = 0; q < n && q < 4; q++) {
+      const x = x0 + r() * RC, y = y0 + r() * RC, big = r() < 0.07 * (0.3 + w) ? 2.2 + r() * 2.2 : 0.16 + r() * r() * 1.1;
+      fieldAt(W, x, y); if (F.w < 0.12 && big > 0.35) continue;                         // keep the surveyed corridor clear of real obstacles
+      const hh = h3(W, x, y), t = 0.26 + 0.2 * r();
+      mbRock(x, hh + big * 0.22, -y, big * (0.8 + 0.5 * r()), big * (0.5 + 0.4 * r()), big * (0.8 + 0.5 * r()), r, [t * 1.25, t * 0.78, t * 0.6]);
+    }
+  }
+  const gl = G3.gl; gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.rock); gl.bufferSubData(gl.ARRAY_BUFFER, 0, MB.a.subarray(0, Math.min(MB.n, 9 * 60 * 700)));
+  G3.rockN = Math.min(MB.n, 9 * 60 * 700) / 9;
+}
+
+function g3World(W) {                       // per-mission static geometry: path ribbons, lander, site rig, shelters
+  const gl = G3.gl;
+  G3.W = W; G3.rockKey = ''; G3.layerKey = '';
+  for (let L = 0; L < G3.lv.length; L++) { G3.lv[L].SI.fill(-2147483647); G3.lv[L].ci = 1e9; }
+  // ---- ribbons [pos3, s, side, colour, kind]
+  const out = [], X = W.X, Y = W.Y, n = W.n, hw = W.veh.key === 'on_foot' ? 0.6 : 1.0;
+  const strip = (pts, half, kind, colFn, lift) => {          // pts: [x, y, s] list
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1], p0 = pts[Math.max(0, i - 1)], p3 = pts[Math.min(pts.length - 1, i + 2)];
+      let t0x = b[0] - p0[0], t0y = b[1] - p0[1], t1x = p3[0] - a[0], t1y = p3[1] - a[1]; const l0 = Math.hypot(t0x, t0y) || 1, l1 = Math.hypot(t1x, t1y) || 1; t0x /= l0; t0y /= l0; t1x /= l1; t1y /= l1;
+      const v = (p, tx, ty, side) => { const x = p[0] - ty * side * half, y = p[1] + tx * side * half; out.push(x, h3(W, x, y) + lift, -y, p[2], side, colFn(i), kind); };
+      v(a, t0x, t0y, -1); v(a, t0x, t0y, 1); v(b, t1x, t1y, 1); v(a, t0x, t0y, -1); v(b, t1x, t1y, 1); v(b, t1x, t1y, -1);
+    }
+  };
+  const main = []; for (let i = 0; i < n; i++) main.push([X[i], Y[i], W.S[i]]);
+  strip(main, hw, 0, (i) => W.RISK[i] | 0, 0.07);
+  const glow = []; for (let i = 0; i < n; i += 2) glow.push(main[i]); if ((n - 1) % 2) glow.push(main[n - 1]); strip(glow, 3.2, 4, (i) => W.RISK[Math.min(n - 1, i * 2)] | 0, 0.10);
+  const step = Math.max(1, Math.round(10 / CFG.STEP_M)), eL = [], eR = [];
+  for (let i = 0; i < n; i += step) { const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1); let tx = X[b] - X[a], ty = Y[b] - Y[a]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+    eL.push([X[i] - ty * W.halfW, Y[i] + tx * W.halfW, W.S[i]]); eR.push([X[i] + ty * W.halfW, Y[i] - tx * W.halfW, W.S[i]]); }
+  strip(eL, 0.22, 1, () => 3, 0.08); strip(eR, 0.22, 1, () => 3, 0.08);
+  W.spots.forEach((sp) => { const px = sp.parent >= 0 && W.spots[sp.parent] ? W.spots[sp.parent].x : W.B.x, py = sp.parent >= 0 && W.spots[sp.parent] ? W.spots[sp.parent].y : W.B.y, d = Math.hypot(sp.x - px, sp.y - py);
+    if (d > 4) { const pts = [], m = Math.ceil(d / 5); for (let k = 0; k <= m; k++) pts.push([px + (sp.x - px) * k / m, py + (sp.y - py) * k / m, d * k / m]); strip(pts, 0.35, 2, () => 3, 0.08); } });
+  if (G.tracks) for (let q = 0; q < G.tracks.length; q++) { const tr = G.tracks[q]; if (Math.min(Math.abs(tr.x0), Math.abs(tr.x1)) > 9000 || Math.min(Math.abs(tr.y0), Math.abs(tr.y1)) > 9000) continue;
+    const pts = []; let s = 0; for (let i = 0; i < tr.p.length; i += 2) { if (i) s += Math.hypot(tr.p[i] - tr.p[i - 2], tr.p[i + 1] - tr.p[i - 1]); pts.push([tr.p[i], tr.p[i + 1], s]); } strip(pts, 0.9, 3, () => (tr.c ? 1 : 0), 0.06); }
+  W.backups.forEach((bk) => { const pts = []; let s = 0; for (let i = 0; i < bk.p.length; i += 2) { if (i) s += Math.hypot(bk.p[i] - bk.p[i - 2], bk.p[i + 1] - bk.p[i - 1]); pts.push([bk.p[i], bk.p[i + 1], s]); } if (pts.length > 1 && pts.length < 400) strip(pts, 1.4, 3, () => 4, 0.5); });
+  gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.rib); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(out), gl.STATIC_DRAW); G3.ribN = out.length / 7;
+  G3.trackBuilt = !!G.tracks;
+  // ---- models
+  MB.n = 0;
+  const gold = [0.78, 0.60, 0.22], wh = [0.86, 0.84, 0.80], dk = [0.16, 0.15, 0.15], gr = [0.40, 0.39, 0.38], or = [0.88, 0.44, 0.22], sol = [0.10, 0.14, 0.32];
+  const ax = W.A.x + 9, ay = W.A.y + 7, ah = h3(W, ax, ay), az = -ay;                    // lander beside the start of the route
+  mbCyl(ax, ah + 1.3, az, 2.6, 2.6, 1.5, 8, gold, true); mbCyl(ax, ah + 2.8, az, 1.7, 1.3, 2.0, 8, wh, true); mbCyl(ax, ah + 0.5, az, 0.9, 0.5, 0.8, 8, dk, false);
+  for (let k = 0; k < 4; k++) { const a = k * 1.5708 + 0.785, lx = ax + Math.cos(a) * 3.6, lz = az + Math.sin(a) * 3.6; mbBox(ax + Math.cos(a) * 2.9, ah + 1.0, az + Math.sin(a) * 2.9, 0.07, 1.05, 0.07, 0, gr); mbCyl(lx, ah, lz, 0.5, 0.5, 0.12, 8, gr, true); mbBox((ax + lx) / 2 + Math.cos(a) * 0.6, ah + 0.55, (az + lz) / 2 + Math.sin(a) * 0.6, 0.05, 0.05, 0.8, -a + 1.5708, gr); }
+  mbBox(ax + 1.2, ah + 5.2, az, 0.03, 0.6, 0.03, 0, gr); mbCyl(ax + 1.2, ah + 5.7, az, 0.05, 0.6, 0.25, 10, wh, true); mbBox(ax - 2.9, ah + 0.9, az + 1.2, 0.05, 0.9, 0.6, 0.5, gr);
+  mbBox(ax - 5.5, ah + 1.3, az - 2, 0.03, 1.3, 0.03, 0, wh); mbBox(ax - 5.05, ah + 2.3, az - 2, 0.45, 0.28, 0.01, 0, [0.75, 0.12, 0.12]);
+  const bx = W.B.x + 6, by = W.B.y - 5, bh = h3(W, bx, by), bz = -by;                    // science station at B
+  mbBox(bx, bh + 1.6, bz, 0.05, 1.6, 0.05, 0, gr); mbBox(bx, bh + 3.0, bz, 0.9, 0.03, 0.55, 0.4, sol); mbBox(bx, bh + 0.35, bz, 0.4, 0.35, 0.4, 0.4, or); mbCyl(bx, bh + 3.2, bz, 0.03, 0.03, 0.9, 6, wh, false);
+  for (let k = 0; k < 3; k++) { const a = k * 2.094; mbBox(bx + Math.cos(a) * 0.5, bh + 0.5, bz + Math.sin(a) * 0.5, 0.03, 0.55, 0.03, 0, gr); }
+  W.spots.forEach((sp, k) => { const sh = h3(W, sp.x, sp.y); mbBox(sp.x + 1.6, sh + 0.5, -sp.y, 0.02, 0.5, 0.02, 0, wh); mbBox(sp.x + 1.6, sh + 0.92, -sp.y + 0.16, 0.01, 0.1, 0.16, 0, k === 0 ? or : [0.2, 0.8, 0.85]); });
+  const rr = mulberry32((W.seed ^ 0x3D11) >>> 0);
+  W.shelters.forEach((sh) => { if (sh.kind === 'lander') return; const hh = h3(W, sh.x, sh.y); for (let k = 0; k < 4; k++) { const a = k * 1.4 + rr(), d = 5 + rr() * 2; mbRock(sh.x + Math.cos(a) * d, hh + 2.2, -sh.y + Math.sin(a) * d, 3.4 + rr() * 2, 3.5 + rr() * 2.5, 3 + rr() * 2, rr, [0.34, 0.2, 0.15]); }
+    mbRock(sh.x, hh + 5.6, -sh.y - 2, 6.5, 1.2, 5.5, rr, [0.30, 0.18, 0.14]); });
+  const nObj = Math.min(MB.n, 9 * 9000); gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.obj); gl.bufferSubData(gl.ARRAY_BUFFER, 0, MB.a.subarray(0, nObj)); G3.objN = nObj / 9;
+}
+
+function g3Fx(W, R) {                       // beacons (light pillars) + ground rings, rebuilt every frame (a few dozen quads)
+  const A = G3.fxA; let n = 0; const marks = [];
+  const quad = (x, y, z, col, mode, w, h) => { if (n + 66 > A.length) return; const uv = mode ? [-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1] : [-1, 0, 1, 0, 1, 1, -1, 0, 1, 1, -1, 1];
+    for (let k = 0; k < 6; k++) { A[n++] = x; A[n++] = y; A[n++] = z; A[n++] = uv[k * 2]; A[n++] = uv[k * 2 + 1]; A[n++] = col[0]; A[n++] = col[1]; A[n++] = col[2]; A[n++] = mode; A[n++] = w; A[n++] = h; } };
+  const HC = W.g3h || (W.g3h = {}), hOf = (k, x, y) => { let v = HC[k]; if (v === undefined) v = HC[k] = h3(W, x, y); return v; };
+  const mark = (x, y, col, label, zone, tall, key) => { const hh = hOf(key, x, y); quad(x, hh, -y, col, 0, tall * 0.035 + 0.8, tall); if (zone > 0) quad(x, hh, -y, col, 1, zone, 0); if (label) marks.push({ x: x, y: hh + Math.min(tall * 0.2, 9) + 2.2, z: -y, label: label, wx: x, wy: y, key: key }); };
+  const blue = [0.25, 0.55, 1.0], org = [1.0, 0.55, 0.18], cy = [0.2, 0.9, 0.95], grn = [0.3, 1.0, 0.45], red = [1.0, 0.2, 0.15], wht = [0.75, 0.75, 0.8], amb = [1.0, 0.75, 0.1];
+  const px0 = R ? R.x : 1e9, py0 = R ? R.y : 1e9, ph = R ? R.phase : '', nearP = (x, y, d) => Math.hypot(x - px0, y - py0) < d;
+  mark(W.A.x, W.A.y, blue, ph === 'return' || nearP(W.A.x, W.A.y, 120) ? 'A · LANDER' : '', CFG.A_ZONE_M, 70, 'A');
+  mark(W.B.x, W.B.y, org, ph === 'outbound' ? 'B · TARGET' : '', CFG.B_ZONE_M, 70, 'B');
+  W.spots.forEach((sp, k) => { const done = !!(R && R.samples.some((s) => s.l === sp.label)); mark(sp.x, sp.y, done ? grn : cy, ph === 'site' || nearP(sp.x, sp.y, 160) ? sp.label + (done ? ' ✓' : ' · SAMPLE') : '', CFG.SPOT_ZONE_M, 26, 'S' + k); });
+  if (!W.turn.atB) mark(W.turn.x, W.turn.y, red, 'TURN BACK', 0, 34, 'T');
+  if (G.layers.shelters) W.shelters.forEach((sh, k) => { if (sh.kind !== 'lander') mark(sh.x, sh.y, wht, R && R.storm ? 'SHELTER' : '', CFG.SHELTER_ZONE_M, 16, 'H' + k); });
+  if (R) {
+    W.traps.forEach((t, k) => { if (t.seen) { const hh = hOf('t' + k, t.x, t.y); quad(t.x, hh, -t.y, red, 1, t.r, 0); } });
+    W.scree.forEach((p, k) => { if (Math.abs(p.s0 - R.s) < 160) { const hh = hOf('c' + k, p.x, p.y); quad(p.x, hh, -p.y, amb, 1, 5, 0); } });
+    if (R.abandoned) mark(R.abX, R.abY, wht, 'VEHICLE', 0, 12, 'V' + Math.round(R.abX));
+  }
+  const gl = G3.gl; gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.fx); gl.bufferSubData(gl.ARRAY_BUFFER, 0, A.subarray(0, n)); G3.fxN = n / 11;
+  return marks;
+}
+
+function g3Labels(marks, px, py, show) {
+  const vp = G3.vp, L = G3.labels, cw = W_.innerWidth, ch = W_.innerHeight;
+  for (let i = 0; i < L.length; i++) {
+    const m = show ? marks[i] : null, lb = L[i];
+    if (!m) { if (lb.on) { lb.on = false; lb.el.hidden = true; } continue; }
+    const cx_ = vp[0] * m.x + vp[4] * m.y + vp[8] * m.z + vp[12], cy = vp[1] * m.x + vp[5] * m.y + vp[9] * m.z + vp[13], cw_ = vp[3] * m.x + vp[7] * m.y + vp[11] * m.z + vp[15];
+    if (cw_ <= 0.5) { if (lb.on) { lb.on = false; lb.el.hidden = true; } continue; }
+    const sx = (cx_ / cw_ * 0.5 + 0.5) * cw, sy = (0.5 - cy / cw_ * 0.5) * ch;
+    if (sx < -60 || sx > cw + 60 || sy < -30 || sy > ch + 30) { if (lb.on) { lb.on = false; lb.el.hidden = true; } continue; }
+    const d = Math.hypot(m.wx - px, m.wy - py), txt = m.label + ' · ' + (d >= 1000 ? (d / 1000).toFixed(1) + ' km' : Math.round(d / 5) * 5 + ' m');
+    if (txt !== lb.txt) { lb.txt = txt; lb.el.textContent = txt; }
+    lb.el.style.transform = 'translate(' + sx.toFixed(0) + 'px,' + sy.toFixed(0) + 'px) translate(-50%,-100%)';
+    if (!lb.on) { lb.on = true; lb.el.hidden = false; }
+  }
+}
+
+function g3Use(p) { const gl = G3.gl; gl.useProgram(p.p); for (let i = 0; i < 6; i++) gl.disableVertexAttribArray(i); }
+function g3Attr(p, name, size, type, norm, stride, off) { const gl = G3.gl, a = p.a[name]; if (a === undefined || a < 0) return; gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, size, type, norm, stride, off); }
+
+function render3d(dt) {
+  const gl = G3.gl, play = G.screen === 'play' || G.screen === 'end', W = play ? G.W : G.attract, R = play ? G.R : null;
+  if (!W) { gl.clearColor(0.04, 0.027, 0.02, 1); gl.clear(gl.COLOR_BUFFER_BIT); g3Labels([], 0, 0, false); return; }
+  G3.time += dt; V.time += dt;
+  if (W !== G3.W) g3World(W);
+  if (!G3.trackBuilt && G.tracks) g3World(W);
+  const env = R ? R.env : ATTRACT_ENV, K = IN.keys, cam = G.cam;
+  // ---- camera pose
+  let px, py, spd = 0;
+  if (R) {
+    const a = G.paused || G.cut || R.over ? 1 : clamp(G.alpha, 0, 1);
+    px = R.px + (R.x - R.px) * a; py = R.py + (R.y - R.py) * a; spd = Math.hypot(R.vx, R.vy);
+    if (G.autopilot || R.over) { if (spd > 0.4) { let dy = Math.atan2(R.vx, R.vy) - G3.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); G3.yaw += dy * Math.min(1, dt * 3.2); } G3.pitch += (-0.07 - G3.pitch) * Math.min(1, dt * 2); }
+    else if (!G.paused && !G.cut) { const turn = (K.ArrowRight ? 1 : 0) - (K.ArrowLeft ? 1 : 0); G3.yaw += turn * 2.0 * dt; }
+  } else {
+    const s = (G3.time * 14) % (2 * W.L), ss = s < W.L ? s : 2 * W.L - s, dir = s < W.L ? 1 : -1;
+    routePoint(W, ss); px = RP.x; py = RP.y; let dy = Math.atan2(RP.tx * dir, RP.ty * dir) - G3.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); G3.yaw += dy * Math.min(1, dt * 1.2); G3.pitch += (-0.16 - G3.pitch) * Math.min(1, dt * 2);
+  }
+  const vkey = R ? (R.abandoned ? 'on_foot' : W.veh.key) : 'fly', eyeT = R ? (G3C.EYE[vkey] || 1.7) : 9, ground = h3(W, px, py);
+  const moved = Math.hypot(px - G3.lastX, py - G3.lastY); G3.lastX = px; G3.lastY = py;
+  if (moved < 30) G3.bob += moved; else G3.eyeY = ground + eyeT;
+  G3.eye += (eyeT - G3.eye) * Math.min(1, dt * 4);
+  const tY = ground + G3.eye; G3.eyeY += (tY - G3.eyeY) * Math.min(1, dt * (R ? 14 : 3)); if (G3.eyeY < ground + 0.5) G3.eyeY = ground + 0.5;
+  const walk = vkey === 'on_foot', red = G.reduced ? 0 : 1, mv = clamp(spd / 6, 0, 1);
+  const bobY = red * (walk ? Math.sin(G3.bob * 1.5) * 0.055 * mv : (R ? (vnoise(G3.bob * 0.7, 3.3, 11) - 0.5) * 0.10 * mv * (0.4 + (R.rough || 0.3)) : 0));
+  const sh = cam.shake > 0.05 && red ? cam.shake : 0; if (cam.shake > 0.05) cam.shake *= Math.exp(-dt * 7); else cam.shake = 0;
+  const strafe = R && !G.autopilot ? ((K.d ? 1 : 0) - (K.a ? 1 : 0)) : 0;
+  G3.roll += ((walk ? Math.sin(G3.bob * 0.75) * 0.006 * mv : 0) * red - strafe * 0.012 - G3.roll) * Math.min(1, dt * 6);
+  const yaw = G3.yaw + (sh ? (Math.random() - 0.5) * 0.004 * sh : 0), pit = G3.pitch + (sh ? (Math.random() - 0.5) * 0.004 * sh : 0);
+  const cp = Math.cos(pit), f = G3.f, r = G3.r, u = G3.u;
+  f[0] = Math.sin(yaw) * cp; f[1] = Math.sin(pit); f[2] = -Math.cos(yaw) * cp;
+  let rx = Math.cos(yaw), rz = Math.sin(yaw), ry = 0;
+  let ux = ry * f[2] - rz * f[1], uy = rz * f[0] - rx * f[2], uz = rx * f[1] - ry * f[0];
+  const cr = Math.cos(G3.roll), sr = Math.sin(G3.roll);
+  r[0] = rx * cr + ux * sr; r[1] = ry * cr + uy * sr; r[2] = rz * cr + uz * sr; u[0] = ux * cr - rx * sr; u[1] = uy * cr - ry * sr; u[2] = uz * cr - rz * sr;
+  const E = G3.cam; E[0] = px; E[1] = G3.eyeY + bobY; E[2] = -py;
+  const Vw = G3.view; Vw[0] = r[0]; Vw[1] = u[0]; Vw[2] = -f[0]; Vw[3] = 0; Vw[4] = r[1]; Vw[5] = u[1]; Vw[6] = -f[1]; Vw[7] = 0; Vw[8] = r[2]; Vw[9] = u[2]; Vw[10] = -f[2]; Vw[11] = 0;
+  Vw[12] = -(r[0] * E[0] + r[1] * E[1] + r[2] * E[2]); Vw[13] = -(u[0] * E[0] + u[1] * E[1] + u[2] * E[2]); Vw[14] = f[0] * E[0] + f[1] * E[1] + f[2] * E[2]; Vw[15] = 1;
+  const fovT = (walk ? 72 : 78) + (red ? 7 * clamp(spd / 30, 0, 1) : 0); G3.fov += (fovT - G3.fov) * Math.min(1, dt * 3);
+  const asp = G3.w / G3.h, fovy = G3.fov * DEG / Math.max(1, Math.min(asp, 1.78) / 1.78), th = Math.tan(fovy / 2);
+  m4persp(G3.proj, fovy, asp, G3C.NEAR, G3C.FAR); m4mul(G3.vp, G3.proj, Vw);
+  // ---- geometry upkeep
+  const lkey = G.layers.data + (G.layers.data === 'illum' || G.layers.data === 'temp' ? '|' + Math.round(env.hour * 2) : '');
+  const relayer = lkey !== G3.layerKey;
+  if (relayer) { G3.layerKey = lkey; for (let L = 0; L < G3.lv.length; L++) G3.lv[L].SI.fill(-2147483647);
+    const lay = LAYERS[G.layers.data], lut = lay && lay.ramp ? LUT[lay.ramp] : null; if (lut) { const px4 = new Uint8Array(1024); for (let i = 0; i < 256; i++) { px4[i * 4] = lut[i * 3]; px4[i * 4 + 1] = lut[i * 3 + 1]; px4[i * 4 + 2] = lut[i * 3 + 2]; px4[i * 4 + 3] = 255; } gl.bindTexture(gl.TEXTURE_2D, G3.tex.lut); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 1, gl.RGBA, gl.UNSIGNED_BYTE, px4); } }
+  for (let L = 0; L < G3.lv.length; L++) g3Level(W, G3.lv[L], L, px, py, env, relayer);
+  g3Rocks(W, px, py);
+  const marks = g3Fx(W, R);
+  // ---- environment uniforms
+  const el = env.elev * DEG, az = env.az * DEG, sun = [Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)];
+  const day = sstep(-6, 8, env.elev), storm = R ? clamp(R.stormK, 0, 1) : 0, night = 1 - sstep(-10, 2, env.elev), lamp = night * (R ? 1 : 0);
+  const setEnv = (p) => { gl.uniform3f(p.u.u_sun, sun[0], sun[1], sun[2]); gl.uniform3f(p.u.u_cam, E[0], E[1], E[2]); gl.uniform4f(p.u.u_env, day, storm, env.tauVis || 0.3, night); gl.uniform1f(p.u.u_time, G3.time); };
+  gl.viewport(0, 0, G3.w, G3.h); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
+  let p;
+  // terrain
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.depthFunc(gl.LEQUAL); gl.clear(gl.DEPTH_BUFFER_BIT);
+  p = G3.prog.ter; g3Use(p); setEnv(p); gl.uniformMatrix4fv(p.u.u_vp, false, G3.vp);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, G3.tex.noise); gl.uniform1i(p.u.u_noise, 0); gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, G3.tex.lut); gl.uniform1i(p.u.u_lut, 1); gl.activeTexture(gl.TEXTURE0);
+  gl.uniform3f(p.u.u_opt, G.layers.offlimits ? 1 : 0, G.layers.data !== 'none' ? 1 : 0, lamp); gl.uniform3f(p.u.u_fwd, f[0], f[1], f[2]);
+  for (let L = 0; L < G3.lv.length; L++) {
+    const lv = G3.lv[L], ib = L === 0 ? G3.buf.idxFull : G3.buf.idxHole;
+    gl.uniform1f(p.u.u_drop, G3C.DROP[L]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lv.vb); g3Attr(p, 'a_pos', 3, gl.FLOAT, false, 24, 0); g3Attr(p, 'a_nrm', 3, gl.FLOAT, false, 24, 12);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lv.mb); g3Attr(p, 'a_mat', 4, gl.UNSIGNED_BYTE, true, 4, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib.b); gl.drawElements(gl.TRIANGLES, ib.n, gl.UNSIGNED_SHORT, 0);
+  }
+  // rocks + models
+  p = G3.prog.obj; g3Use(p); setEnv(p); gl.uniformMatrix4fv(p.u.u_vp, false, G3.vp); gl.uniform3f(p.u.u_opt, 0, 0, lamp); gl.uniform3f(p.u.u_fwd, f[0], f[1], f[2]);
+  const drawObj = (b, n) => { if (!n) return; gl.bindBuffer(gl.ARRAY_BUFFER, b); g3Attr(p, 'a_pos', 3, gl.FLOAT, false, 36, 0); g3Attr(p, 'a_nrm', 3, gl.FLOAT, false, 36, 12); g3Attr(p, 'a_col', 3, gl.FLOAT, false, 36, 24); gl.drawArrays(gl.TRIANGLES, 0, n); };
+  drawObj(G3.buf.rock, G3.rockN); drawObj(G3.buf.obj, G3.objN);
+  // sky last: only the pixels no terrain covered
+  p = G3.prog.sky; g3Use(p); setEnv(p); gl.depthMask(false);
+  gl.uniform3f(p.u.u_f, f[0], f[1], f[2]); gl.uniform3f(p.u.u_r, r[0] * th * asp, r[1] * th * asp, r[2] * th * asp); gl.uniform3f(p.u.u_u, u[0] * th, u[1] * th, u[2] * th);
+  gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.sky); g3Attr(p, 'a_p', 2, gl.FLOAT, false, 0, 0); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  // path ribbons
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+  p = G3.prog.rib; g3Use(p); setEnv(p); gl.uniformMatrix4fv(p.u.u_vp, false, G3.vp);
+  gl.uniform1f(p.u.u_dir, R && (R.phase === 'return' || R.phase === 'site' && R.samples.length) ? -1 : 1); gl.uniform1f(p.u.u_vis, R && !R.comms ? 0.35 + 0.25 * Math.sin(G3.time * 9) : 1);
+  gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.rib); g3Attr(p, 'a_pos', 3, gl.FLOAT, false, 28, 0); g3Attr(p, 'a_dat', 4, gl.FLOAT, false, 28, 12); gl.drawArrays(gl.TRIANGLES, 0, G3.ribN);
+  // beacons
+  gl.blendFunc(gl.ONE, gl.ONE);
+  p = G3.prog.fx; g3Use(p); gl.uniformMatrix4fv(p.u.u_vp, false, G3.vp); gl.uniform3f(p.u.u_camR, Math.cos(G3.yaw), 0, Math.sin(G3.yaw)); gl.uniform1f(p.u.u_time, G3.time); gl.uniform1f(p.u.u_storm, storm);
+  gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.fx); g3Attr(p, 'a_base', 3, gl.FLOAT, false, 44, 0); g3Attr(p, 'a_uv', 2, gl.FLOAT, false, 44, 12); g3Attr(p, 'a_col', 4, gl.FLOAT, false, 44, 20); g3Attr(p, 'a_size', 2, gl.FLOAT, false, 44, 36);
+  gl.drawArrays(gl.TRIANGLES, 0, G3.fxN);
+  // dust
+  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  p = G3.prog.pt; g3Use(p); gl.uniformMatrix4fv(p.u.u_vp, false, G3.vp); gl.uniform3f(p.u.u_cam, E[0], E[1], E[2]);
+  const wd = (env.to || 0) * DEG, wsp = (env.wind || 4), t = G3.time, box = storm > 0.3 ? 46 : 70;
+  gl.uniform3f(p.u.u_off, Math.sin(wd) * wsp * t * (1 + 4 * storm) - E[0], -0.15 * t - E[1], -Math.cos(wd) * wsp * t * (1 + 4 * storm) - E[2]);
+  gl.uniform4f(p.u.u_p, box, 0.5 + 2.6 * storm, G.reduced ? 0.12 : clamp(0.16 + wsp / 60 + storm, 0, 1), (0.16 + 0.5 * storm) * (0.35 + 0.65 * day));
+  gl.uniform3f(p.u.u_col, 0.86, 0.62, 0.44);
+  gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.pt); g3Attr(p, 'a_seed', 4, gl.FLOAT, false, 16, 0); gl.drawArrays(gl.POINTS, 0, G3C.PARTS);
+  // cockpit / gloves
+  gl.disable(gl.BLEND); gl.depthMask(true);
+  if (R && G3.cockN[vkey]) {
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    p = G3.prog.obj; g3Use(p); setEnv(p);
+    const pm = G3.view; pm.set(G3.proj); const ox = -G3.roll * 3, oy = -bobY * 0.6 - (walk ? 0.02 * Math.sin(G3.bob * 1.5) * mv : 0) + Math.min(0, G3.pitch) * 0.35;
+    pm[12] = pm[0] * ox; pm[13] = pm[5] * oy;                                         // translate the cockpit slightly in view space
+    gl.uniformMatrix4fv(p.u.u_vp, false, pm); gl.uniform3f(p.u.u_opt, 1, 0, lamp);
+    gl.bindBuffer(gl.ARRAY_BUFFER, G3.cockO[vkey]); g3Attr(p, 'a_pos', 3, gl.FLOAT, false, 36, 0); g3Attr(p, 'a_nrm', 3, gl.FLOAT, false, 36, 12); g3Attr(p, 'a_col', 3, gl.FLOAT, false, 36, 24); gl.drawArrays(gl.TRIANGLES, 0, G3.cockN[vkey]);
+  }
+  g3Labels(marks, px, py, !!R && G.screen === 'play' && (!R || R.comms || marks.length < 3 || Math.sin(G3.time * 9) > -0.3));
+  // ---- compass + guidance
+  if (R && G.screen === 'play') {
+    const W2 = R.W; let gx, gy, name;
+    if (R.phase === 'site') { let best = null, bd = 1e18; W2.spots.forEach((sp) => { if (R.samples.some((s) => s.l === sp.label)) return; const d = Math.hypot(sp.x - px, sp.y - py); if (d < bd) { bd = d; best = sp; } }); if (best) { gx = best.x; gy = best.y; name = best.label; } else { gx = W2.A.x; gy = W2.A.y; name = 'A'; } }
+    else { const dir = R.phase === 'return' ? -1 : 1; routePoint(W2, clamp(R.s + dir * 45, 0, W2.L)); gx = RP.x; gy = RP.y; name = dir > 0 ? 'B' : 'A'; }
+    let rel = Math.atan2(gx - px, gy - py) - G3.yaw; rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+    const hd = ((G3.yaw / DEG) % 360 + 360) % 360, card = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(hd / 45) % 8];
+    const arrow = $('cmpA'); arrow.style.transform = 'rotate(' + (rel / DEG).toFixed(0) + 'deg)'; setCls(arrow, 'off', Math.abs(rel) > 0.6);
+    G3.hint += dt; if (G3.hint > 0.2) { G3.hint = 0; setText($('cmpT'), card + ' ' + Math.round(hd).toString().padStart(3, '0') + '° · ' + (R.onRoute ? 'follow the line to ' + name : 'OFF ROUTE ' + Math.round(R.d) + ' m')); setCls($('cmp'), 'bad', !R.onRoute);
+      setHidden($('lookHint'), G3.locked || G.touch || G.autopilot || G.paused || !!G.cut || !!R.site || R.real > 14); }
+    if (G3.locked && (G.paused || G.cut || R.site || G.drawer || R.over) && D.exitPointerLock) D.exitPointerLock();
+  }
+}
 
 // =====================================================================================================================
 // 13. hud / ui — DOM only, throttled to ~5 Hz, written only when values change
@@ -3101,6 +3602,7 @@ function show(name) {
   G.screen = name;
   setHidden($('title'), name !== 'title'); setHidden($('brief'), name !== 'brief'); setHidden($('end'), name !== 'end');
   setHidden($('hud'), name !== 'play'); setHidden($('touch'), !(name === 'play' && G.touch));
+  setHidden($('cmp'), !(name === 'play' && G3.on)); setHidden($('visor'), !(name === 'play' && G3.on)); if (name !== 'play') setHidden($('lookHint'), true);
   if (name !== 'play') { setHidden($('site'), true); setHidden($('drawer'), true); G.drawer = false; setHidden($('pause'), true); G.paused = false; $('toast').classList.remove('on'); }
   if (name === 'title' || name === 'brief') { G.R = null; G.cam.tv = 330; Snd.windLevel(0.05); if (G.W) { worldDispose(G.W); G.W = null; } if (G.attract) G.attract.fresh = true; }
   G.hudDirty = true;
@@ -3522,7 +4024,7 @@ function setPaused(p) {
 function toggleDrawer() { if (G.screen !== 'play') return; G.drawer = !G.drawer; setHidden($('drawer'), !G.drawer); if (G.drawer && G.R) drawerLive(G.R); }
 function toggleMute() { Snd.setMute(!G.mute); suitSay(G.mute ? 'Sound off.' : 'Sound on.', false); setText($('btnMute'), G.mute ? 'MUTED' : 'SOUND'); }
 function pauseInit() {
-  const keys = [['W A S D / arrows', 'Move'], ['Shift', 'Careful pace: slower, no scree slips, spots soft sand'], ['E / Space', 'Interact: work a spot, mini-game action, rock free of sand'],
+  const keys = [['W A S D', 'Move (W along your view, A / D strafe)'], ['Mouse / ← →', 'Look around (click the view to capture the mouse)'], ['Shift', 'Careful pace: slower, no scree slips, spots soft sand'], ['E / Space', 'Interact: work a spot, mini-game action, rock free of sand'],
     ['1 – 0', 'Use the tool in that belt slot (also clickable)'], ['G  R  F  O', 'GPR ping · Radio relay · Repair kit · Emergency O2 bottle'], ['B  C  H', 'Battery pack · Camera photo · Head home (start the return leg)'],
     ['L / Tab', 'Cycle data layer / open the Planner data drawer'], ['+ − / wheel', 'Zoom'], ['M', 'Mute'], ['P / Esc', 'Pause'], ['Click the ground', 'Point info: ground type, minerals, confidence'], ['Touch', 'Left joystick to move; ACT and CAREFUL buttons; tap tool slots']];
   const k = $('keys'); keys.forEach((r) => { const a = mk('span'); a.appendChild(mk('span', 'kbd', r[0])); k.appendChild(a); k.appendChild(mk('span', '', r[1])); });
@@ -3580,7 +4082,9 @@ function zoom(f) { G.cam.tv = clamp(G.cam.tv * f, CFG.VIEW_MIN_M, CFG.VIEW_MAX_M
 function inputUpdate() {
   const K = IN.keys;
   let mx = (K.d || K.ArrowRight ? 1 : 0) - (K.a || K.ArrowLeft ? 1 : 0), my = (K.w || K.ArrowUp ? 1 : 0) - (K.s || K.ArrowDown ? 1 : 0);
+  if (G3.on) { mx = (K.d ? 1 : 0) - (K.a ? 1 : 0); my = (K.w || K.ArrowUp ? 1 : 0) - (K.s || K.ArrowDown ? 1 : 0); }
   if (IN.joy) { mx = IN.jx; my = IN.jy; }
+  if (G3.on) { const c = Math.cos(G3.yaw), sn = Math.sin(G3.yaw), st = mx, fw = my; mx = st * c + fw * sn; my = fw * c - st * sn; }
   const l = Math.hypot(mx, my); if (l > 1) { mx /= l; my /= l; }
   IN.mx = mx; IN.my = my; IN.careful = !!K.Shift || IN.careLock;
 }
@@ -3713,7 +4217,7 @@ function routeStart() {
   }
   show('title'); titleRender();
   const prefs = store.get('marswalk.game.prefs', {}) || {};
-  if (!G.skip && !prefs.intro) { store.set('marswalk.game.prefs', Object.assign({}, typeof prefs === 'object' ? prefs : {}, { intro: 1 })); scene('intro'); }
+  if (STORY && !G.skip && !prefs.intro) { store.set('marswalk.game.prefs', Object.assign({}, typeof prefs === 'object' ? prefs : {}, { intro: 1 })); scene('intro'); }
 }
 function boot() {
   const Q = new URLSearchParams(location.search);
@@ -3721,7 +4225,7 @@ function boot() {
   G.speed = clamp(parseInt(Q.get('speed'), 10) || 1, 1, 200); G.seedParam = Q.has('seed') ? parseInt(Q.get('seed'), 10) : NaN;
   if (DIFF[Q.get('difficulty')]) G.diffKey = Q.get('difficulty');
   G.acc = 0; G.alpha = 1;
-  resize(); tileInit(); spriteInit(); pauseInit(); inputInit();
+  g3Init(); resize(); tileInit(); spriteInit(); pauseInit(); inputInit();
   setText($('btnMute'), G.mute ? 'MUTED' : 'SOUND');
   G.baked = BAKED.map((m) => normMission(m, { src: 'baked' })).filter((N) => N && N.cands.length);
   G.tracksLL = tracksDecode();
