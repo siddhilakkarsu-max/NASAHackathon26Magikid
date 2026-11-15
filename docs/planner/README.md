@@ -7,6 +7,10 @@ Detailed photos and Elevation colours are overhead views. Names, crater outlines
 rover tracks, the photo tile grid and HiRISE footprints are independent overlays.
 Choosing a regional data layer restores the planner background.
 
+Phobos and Deimos are available under **Time → Phobos & Deimos**. See
+[Mars moons](MOONS.md) for controls, NASA/JPL sources, physical scale and model
+limitations. Place labels hide behind Mars while the camera moves.
+
 ## Regions and 3D navigation
 
 **Regions** in the left tool rail opens the existing region selector. Selecting

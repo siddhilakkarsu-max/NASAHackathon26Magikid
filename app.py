@@ -43,6 +43,7 @@ from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS
                     region_box, region_label, site_id)
 from gear.api import router as gear_router
 from leaderboard import router as game_router
+from mars_moons import router as moons_router
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
 import mars_radiation
 from surface_temperature import temperature_overlay
@@ -1241,6 +1242,7 @@ def trek_tile(layer: str, z: int, y: int, x: int):
 
 app.include_router(gear_router)
 app.include_router(game_router)          # game callsigns + leaderboard (leaderboard.py)
+app.include_router(moons_router)
 
 
 # ------------------------------------- global 5 m CTX mosaic, colourised ----

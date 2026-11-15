@@ -12,6 +12,8 @@
 <script src="/temperature_view.js"></script>
 <script src="/mars_lighting.js"></script>
 <script src="/mars_sky.js"></script>
+<script src="/mars_visibility.js"></script>
+<script src="/mars_moons.js"></script>
 <script src="/route_playback.js"></script>
 <script src="/regional_terrain.js"></script>
 <script src="/planner_layout.js"></script>
@@ -342,6 +344,21 @@
   <label class="check"><input type="checkbox" id="globeLighting" checked aria-describedby="lightingNote" /> Sunlight and atmosphere</label>
   <div class="small" id="lightingNote">Move your mouse over the night side to reveal the map. Globe lighting follows the selected region’s solar time.</div>
   <label class="check"><input type="checkbox" id="showStars" checked /> Star background</label>
+  <details id="moonControls">
+    <summary>Phobos &amp; Deimos</summary>
+    <label class="check"><input type="checkbox" id="showMoons" checked /> Show Mars's moons</label>
+    <button id="moonSystemView" type="button" class="secondary">Mars and moons</button>
+    <div class="row"><button id="moonPhobos" type="button" class="secondary" disabled>View Phobos</button><button id="moonDeimos" type="button" class="secondary" disabled>View Deimos</button></div>
+    <label for="moonDate">Moon time (UTC)</label>
+    <input id="moonDate" type="datetime-local" step="1" min="1995-01-02T00:00:00" max="2049-12-30T23:59:59" required />
+    <div class="row"><button id="moonApply" type="button" class="secondary">Set moon time</button><button id="moonNow" type="button" class="secondary">Now</button></div>
+    <label for="moonSpeed">Orbit playback</label>
+    <select id="moonSpeed"><option value="0">Paused</option><option value="1" selected>Real time (1×)</option><option value="60">60× faster</option><option value="600">600× faster</option></select>
+    <div id="moonReadout" class="small"></div>
+    <p class="small">Moon time is separate from the planning season and local solar time. Distances and moon sizes stay to scale.</p>
+    <div id="moonStatus" class="small" role="status"></div>
+    <button id="moonRetry" type="button" class="secondary">Retry moon data</button>
+  </details>
   <label class="check"><input type="checkbox" id="showDustHaze" aria-describedby="dustHazeNote" /> Seasonal dust haze</label>
   <div class="small" id="dustHazeNote">Illustrative haze from seasonal dust data at the view center. It does not locate individual clouds or show live storms.</div>
   <div class="small" id="dustHazeStatus" role="status" hidden></div>
@@ -473,6 +490,7 @@
   <button id="sourcesButton" class="secondary" type="button" aria-expanded="false" aria-controls="sourcesPanel">Sources &amp; model information</button>
   <div id="sourcesPanel" class="small" hidden>
     <h2>Data sources</h2>
+    <p><a href="/api/moons/sources" target="_blank" rel="noopener">Mars moons: NASA models, JPL ephemerides and method</a>. NASA/JPL-Caltech texture colors are preserved. Model orientation and lighting are illustrative; this is not a moon-phase or eclipse predictor.</p>
     <p><a href="/api/weather/sources" target="_blank" rel="noopener">Weather data and source inventory</a></p>
     <p><a href="/api/radiation/method" target="_blank" rel="noopener">Radiation method, assumptions and sources</a></p>
     <p><a href="https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html" target="_blank" rel="noopener">Murray Lab CTX viewer and global map catalogue</a></p>
@@ -672,6 +690,12 @@ marsSky = createMarsSky({ viewer, ellipsoid: MARS, api: API,
 });
 $("showStars").onchange = () => marsSky.setStarsEnabled($("showStars").checked);
 $("showDustHaze").onchange = () => marsSky.setDustEnabled($("showDustHaze").checked);
+const marsMoons = createMarsMoons({ viewer, ellipsoid: MARS, api: API, controls: {
+  enabled: $("showMoons"), date: $("moonDate"), speed: $("moonSpeed"), readout: $("moonReadout"), status: $("moonStatus"),
+  system: $("moonSystemView"), phobos: $("moonPhobos"), deimos: $("moonDeimos"), apply: $("moonApply"), now: $("moonNow"), retry: $("moonRetry"),
+} });
+for (const id of ["region", "jumpTo", "globalLayer", "regionalLayer"]) $(id).addEventListener("change", () => marsMoons.stopTracking(), true);
+$("wholeMars").addEventListener("click", () => marsMoons.stopTracking(), true);
 const marks = viewer.entities;
 const imageLayers = () => tileset ? tileset.imageryLayers : viewer.imageryLayers;
 const mapOpacity = () => +$("mapOpacity").value / 100;
@@ -1916,9 +1940,11 @@ function murrayLine(ds, ring, color, width, maxDist) {
     distanceDisplayCondition: maxDist ? new Cesium.DistanceDisplayCondition(0, maxDist) : undefined } });
 }
 function murrayLabel(ds, lon, lat, text, maxDist, color = Cesium.Color.WHITE) {
-  return ds.entities.add({ position: Cesium.Cartesian3.fromDegrees(lon, lat, 0, MARS), label: { text,
+  const position = Cesium.Cartesian3.fromDegrees(lon, lat, 0, MARS);
+  return ds.entities.add({ position, label: { text,
+    show: marsSurfaceLabelVisibility(viewer, MARS, position),
     font: "12px sans-serif", fillColor: color, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
-    style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: 1e9,
+    style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: 0,
     heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
     distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, maxDist) } });
 }
@@ -2890,6 +2916,8 @@ api("/api/weather/calendar").then(calendar => {
     if (initialView === "jezero3d") {
       await murrayCatalogueReady;
       if (murray.defs.length) await showJezeroTerrain();
+    } else if (initialView === "moons") {
+      marsMoons.systemView();
     } else if (initialView === "terrain") {
       await murrayCatalogueReady;
       $("globalMaps").open = true;
