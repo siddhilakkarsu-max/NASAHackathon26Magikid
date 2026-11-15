@@ -8,6 +8,8 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
   let anchor = now(), anchorWall = performance.now(), current = C.JulianDate.clone(anchor);
   let pendingDay = null, failedDay = null, lastReadout = 0, currentTable = null, lastError = '';
   let prefetchController = null, prefetchedDay = null;
+  let planningReference = null, planningKey = '', planningTimer = null, planningController = null;
+  let planningGeneration = 0, planningPending = false, planningError = '', planningResult = null, lastPlan = null;
   const cache = new Map(), records = new Map();
   const system = { time: current, speed, available: false, error: '', sunPosition: new C.Cartesian3() };
   const dateOf = time => C.JulianDate.toIso8601(time).slice(0, 10);
@@ -55,7 +57,10 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     if (document.activeElement !== controls.date) controls.date.value = iso.slice(0, 19);
     controls.readout.textContent = iso.replace('T', ' ').replace('Z', ' UTC') +
       (speed === 0 ? ' · paused' : ` · ${speed}× speed`);
-    controls.status.textContent = !enabled ? 'Moons hidden.' : lastError || (pendingDay
+    if (controls.syncNote) controls.syncNote.textContent = planningResult
+      ? `Linked to region center ${planningResult.longitude.toFixed(2)}°E · resolved Ls ${planningResult.actual_ls.toFixed(3)}° · reference date ${planningResult.reference_date}.`
+      : 'Time/season edits choose the nearest season to the displayed moon date, then the nearest matching local solar time at the region center. The resolved UTC and season are shown; this is a dated scenario.';
+    controls.status.textContent = !enabled ? 'Moons hidden.' : planningPending ? 'Matching season and local time with NASA/JPL…' : planningError || lastError || (pendingDay
       ? 'Loading NASA/JPL moon positions… First use downloads about 65 MB of orbital data.'
       : 'Real sizes and distances. Small dots locate moons when they are too small to see.');
     for (const [id, button] of [['phobos', controls.phobos], ['deimos', controls.deimos]]) {
@@ -136,11 +141,11 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     C.JulianDate.addSeconds(anchor, (performance.now() - anchorWall) / 1000 * speed, current);
     const day = dateOf(current);
     if (enabled && (!currentTable || currentTable.date !== day)) void load(day);
-    const available = enabled && currentTable && C.JulianDate.compare(current, currentTable.start) >= 0 &&
+    const available = enabled && !planningPending && !planningError && currentTable && C.JulianDate.compare(current, currentTable.start) >= 0 &&
       C.JulianDate.compare(current, currentTable.end) <= 0;
     system.available = !!(available && currentTable.sun?.getValue(current, system.sunPosition));
     system.speed = speed;
-    system.error = lastError;
+    system.error = planningError || lastError;
     if (available && speed >= 600 && C.JulianDate.secondsDifference(currentTable.end, current) < speed * 5) {
       void prefetch(dateOf(C.JulianDate.addSeconds(currentTable.end, 1, new C.JulianDate())));
     }
@@ -152,9 +157,41 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     if (!available) stopTracking();
     if (performance.now() - lastReadout > 1000) { lastReadout = performance.now(); report(); }
   }
-  function setTime(iso) {
+  function cancelPlanning() {
+    planningGeneration++; clearTimeout(planningTimer); planningController?.abort();
+    planningPending = false; planningError = ''; planningResult = null; planningReference = null; planningKey = ''; lastPlan = null;
+  }
+  function syncPlanning(values) {
+    const key = JSON.stringify(values);
+    if (key === planningKey) return;
+    planningKey = key; lastPlan = values;
+    planningReference ||= dateOf(current);
+    const request = ++planningGeneration;
+    clearTimeout(planningTimer); planningController?.abort();
+    setSpeed(0); planningPending = true; planningError = ''; planningResult = null; update(); report();
+    // Debounce slider scrubbing, cancel superseded work, and never display an
+    // old date's moon positions as though they match a new planning scenario.
+    planningTimer = setTimeout(async () => {
+      const abort = planningController = new AbortController();
+      try {
+        const params = new URLSearchParams({ ...values, reference_date: planningReference });
+        const response = await fetch(api + '/api/moons/planning-time?' + params, { signal: abort.signal });
+        if (!response.ok) throw new Error('Moon time could not match these settings. Retry moon data or choose another UTC reference date.');
+        const result = await response.json();
+        if (destroyed || request !== planningGeneration) return;
+        if (!Number.isFinite(result.actual_ls) || !Number.isFinite(result.longitude)) throw new Error('Invalid NASA/JPL time response.');
+        setTime(result.utc, true); planningResult = result; planningPending = false;
+      } catch (error) {
+        if (destroyed || request !== planningGeneration || error.name === 'AbortError') return;
+        planningPending = false; planningError = error.message;
+      }
+      if (!destroyed && request === planningGeneration) { update(); report(); scene.requestRender(); }
+    }, 250);
+  }
+  function setTime(iso, fromPlanning = false) {
     const time = C.JulianDate.fromIso8601(iso);
     if (!allowed(dateOf(time))) throw new Error('Choose a date between 1995-01-02 and 2049-12-30.');
+    if (!fromPlanning) cancelPlanning();
     anchor = time; C.JulianDate.clone(time, current); anchorWall = performance.now();
     failedDay = null; lastError = '';
     // Invalidate a late request even when the new date is already cached.
@@ -197,17 +234,22 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
       catch (error) { lastError = error.message; report(); }
     };
     controls.now.onclick = () => { setTime(C.JulianDate.toIso8601(now())); setSpeed(1); controls.speed.value = '1'; };
-    controls.retry.onclick = () => { failedDay = null; void load(dateOf(current), true); };
+    controls.retry.onclick = () => {
+      if (planningError && lastPlan) { planningKey = ''; syncPlanning(lastPlan); }
+      else { failedDay = null; void load(dateOf(current), true); }
+    };
   }
   update(); report();
-  return { setTime, setSpeed, setEnabled, systemView, focus, stopTracking,
+  return { setTime, setSpeed, setEnabled, systemView, focus, stopTracking, syncPlanning,
+    planningLinked: () => planningReference !== null,
     // Read-only live frame, updated before the overview's scene listener.
     systemFrame: () => system,
-    state: () => ({ enabled, speed, utc: C.JulianDate.toIso8601(current), pendingDay, error: lastError,
+    state: () => ({ enabled, speed, utc: C.JulianDate.toIso8601(current), pendingDay, error: planningError || lastError,
+      planningPending, planningResult,
       moons: [...records.values()].map(r => ({ id: r.id, valid: r.valid, position: C.Cartesian3.clone(r.position),
         markerVisible: r.entity.label.show.getValue(viewer.clock.currentTime), scale: 1000 })) }),
     destroy() {
-      destroyed = true; generation++; controller?.abort(); prefetchController?.abort(); removeUpdate(); stopTracking();
+      destroyed = true; cancelPlanning(); generation++; controller?.abort(); prefetchController?.abort(); removeUpdate(); stopTracking();
       for (const r of records.values()) r.entity.model.customShader.getValue()?.destroy();
       viewer.dataSources.remove(dataSource, true); cache.clear();
     },

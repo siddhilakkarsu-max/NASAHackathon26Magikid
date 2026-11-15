@@ -366,7 +366,7 @@
     <label for="moonSpeed">Orbit playback</label>
     <select id="moonSpeed"><option value="0">Paused</option><option value="1" selected>Real time (1×)</option><option value="60">60× faster</option><option value="600">600× faster</option><option value="3600">3,600× (one hour per second)</option></select>
     <div id="moonReadout" class="small"></div>
-    <p class="small">Moon time is separate from the planning season and local solar time. Distances and moon sizes stay to scale.</p>
+    <p class="small" id="moonSyncNote">Time/season edits match the nearest season to the moon UTC date and local solar time at the region center. Distances and sizes stay to scale.</p>
     <div id="moonStatus" class="small" role="status"></div>
     <button id="moonRetry" type="button" class="secondary">Retry moon data</button>
   </details>
@@ -703,7 +703,7 @@ marsSky = createMarsSky({ viewer, ellipsoid: MARS, api: API,
 $("showStars").onchange = () => marsSky.setStarsEnabled($("showStars").checked);
 $("showDustHaze").onchange = () => marsSky.setDustEnabled($("showDustHaze").checked);
 const marsMoons = createMarsMoons({ viewer, ellipsoid: MARS, api: API, controls: {
-  enabled: $("showMoons"), date: $("moonDate"), speed: $("moonSpeed"), readout: $("moonReadout"), status: $("moonStatus"),
+  enabled: $("showMoons"), date: $("moonDate"), speed: $("moonSpeed"), readout: $("moonReadout"), status: $("moonStatus"), syncNote: $("moonSyncNote"),
   system: $("moonSystemView"), phobos: $("moonPhobos"), deimos: $("moonDeimos"), apply: $("moonApply"), now: $("moonNow"), retry: $("moonRetry"),
 } });
 for (const id of ["region", "jumpTo", "globalLayer", "regionalLayer"]) $(id).addEventListener("change", () => marsMoons.stopTracking(), true);
@@ -769,13 +769,19 @@ function labels() {
   syncGlobeLighting();
 }
 function syncGlobeLighting() {
+  if (marsMoons.planningLinked()) syncPlanningMoons();
   if (marsOverview?.controlsLighting()) return;
+  globeLighting.update(+$("hour").value, +$("ls").value, planningLongitude());
+  marsSky?.refresh();
+}
+function planningLongitude() {
   const rectangle = current?.rect;
-  const longitude = rectangle ? Cesium.Math.toDegrees(Cesium.Rectangle.center(
+  return rectangle ? Cesium.Math.toDegrees(Cesium.Rectangle.center(
     Cesium.Rectangle.fromDegrees(rectangle.west, rectangle.south, rectangle.east, rectangle.north)
   ).longitude) : 0;
-  globeLighting.update(+$("hour").value, +$("ls").value, longitude);
-  marsSky?.refresh();
+}
+function syncPlanningMoons() {
+  marsMoons.syncPlanning({ hour: +$("hour").value, ls: +$("ls").value, longitude: planningLongitude() });
 }
 
 async function api(path, body, signal) {
@@ -2825,6 +2831,7 @@ $("jumpTo").onchange = () => {
   // the slider after one step. Keep the browser's range gesture in control.
   $(id).addEventListener("dragstart", event => event.preventDefault());
 });
+["hour", "ls"].forEach(id => $(id).addEventListener("input", syncPlanningMoons));
 ["hour", "ls", "vehicle"].forEach((id) => $(id).addEventListener("change", () => {
   if (id === "vehicle") applyVehicleLimits();
   invalidatePlan();

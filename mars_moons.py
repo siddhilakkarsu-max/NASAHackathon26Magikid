@@ -8,6 +8,7 @@ from functools import lru_cache
 import hashlib
 import json
 import logging
+import math
 from pathlib import Path
 import ssl
 import threading
@@ -136,6 +137,75 @@ def ephemeris(date_utc: str = Query(default=None, alias='date')):
         raise HTTPException(503, 'NASA/JPL moon data could not load. Retry when the source is available; no estimated orbit is substituted.') from None
 
 
+def _planning_epoch(spice, reference, ls, hour, longitude):
+    """Resolve the season nearest reference, then the closest local solar hour.
+
+    Ls and hour cannot both be exact independent continuous constraints on one
+    epoch. Keep the requested hour exact and publish the resulting actual Ls.
+    No mean-orbit formula determines the returned epoch: roots use SPICE.
+    """
+    lo = spice.str2et(str(FIRST_DAY) + 'T00:00:00')
+    hi = spice.str2et(str(LAST_DAY) + 'T23:59:59')
+    ref = spice.str2et(reference + 'T12:00:00')
+    target = math.radians(ls % 360)
+    start, end = max(lo, ref - 400 * 86400), min(hi, ref + 400 * 86400)
+    step = 8 * 86400
+    def season(et):
+        return spice.lspcn('MARS', et, 'NONE')
+    def wrap(angle):
+        return (angle + math.pi) % (2 * math.pi) - math.pi
+    roots = []
+    a, raw, turns = start, season(start), 0
+    while a < end:
+        b = min(a + step, end)
+        following = season(b)
+        next_turns = turns + (1 if following < raw else 0)
+        left, right = raw + turns * 2 * math.pi, following + next_turns * 2 * math.pi
+        for cycle in range(turns, next_turns + 1):
+            wanted = target + cycle * 2 * math.pi
+            if left <= wanted <= right:
+                x, y = a, b
+                for _ in range(40):
+                    mid = (x + y) / 2
+                    if wrap(season(mid) - target) < 0: x = mid
+                    else: y = mid
+                roots.append((x + y) / 2)
+        a, raw, turns = b, following, next_turns
+    if not roots:
+        raise HTTPException(422, 'That season is outside the supported date range. Choose another moon reference date.')
+    et = min(roots, key=lambda t: abs(t - ref))
+    def local_hour(epoch):
+        sun = spice.spkpos('SUN', epoch, 'IAU_MARS', 'NONE', 'MARS')[0]
+        return (12 + (longitude - math.degrees(math.atan2(sun[1], sun[0]))) / 15) % 24
+    for _ in range(8):
+        error = (local_hour(et) - hour + 12) % 24 - 12
+        if abs(error) < 1e-9: break
+        derivative = ((local_hour(et + 1) - local_hour(et - 1) + 12) % 24 - 12) / 2
+        et -= error / derivative
+        if not lo <= et <= hi:
+            raise HTTPException(422, 'The matching local time is outside the supported date range.')
+    if abs((local_hour(et) - hour + 12) % 24 - 12) > 1e-6:
+        raise RuntimeError('Local solar time did not converge')
+    return {'utc': spice.et2utc(et, 'ISOC', 3) + 'Z',
+            'actual_ls': math.degrees(season(et)), 'local_hour': local_hour(et),
+            'longitude': longitude, 'reference_date': reference,
+            'method': 'Nearest season to reference date, then nearest local true solar hour; JPL SPICE.'}
+
+
+@router.get('/planning-time')
+def planning_time(ls: float = Query(ge=0, le=360), hour: float = Query(ge=0, le=24),
+                  longitude: float = Query(ge=-180, le=360), reference_date: str = Query()):
+    reference = _day(reference_date).isoformat()
+    try:
+        with LOCK:
+            return _planning_epoch(_spice(), reference, ls, hour, longitude)
+    except HTTPException:
+        raise
+    except Exception:
+        logger.exception('NASA/JPL planning-time conversion unavailable')
+        raise HTTPException(503, 'NASA/JPL time conversion unavailable. No substitute moon positions are shown.') from None
+
+
 @router.get('/sources')
 def sources():
     return {'ephemeris': 'JPL MAR099 / DE440', 'frame': 'IAU_MARS',
@@ -146,7 +216,7 @@ def sources():
             'method': 'SPICE geometric center-of-mass positions and velocities, transformed into rotating IAU_MARS; cubic Hermite interpolation of 300-second samples.',
             'limits': ['Positions are ephemeris predictions, not live observations or a spacecraft navigation product.',
                        'The animated overview uses DE440 Sun positions on the moon UTC clock. Its orbiting camera is a presentation choice; the Sun marker is not to scale.',
-                       'Moon time is UTC and independent of the planner season and local solar time.',
+                       'Season/time edits resolve to the nearest occurrence of the requested Ls relative to the displayed moon UTC date, then the nearest matching local true solar hour at the region center. Actual Ls can differ by up to about half a sol of seasonal motion; the resolved UTC and Ls are shown.',
                        'NASA model textures are visualization assets, not calibrated natural-color photometry. No false-color overlay is applied.',
                        'Model axes are aligned approximately to the IAU body frame; feature-level attitude and photometric phases/eclipses are not modeled.',
                        'Models and orbital distances use physical scale. Locator dots and labels are screen-size aids.',

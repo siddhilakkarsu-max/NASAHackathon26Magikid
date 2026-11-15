@@ -7,9 +7,18 @@ region or another map releases moon tracking. The opening overview selects
 3,600× controls set the moon clock; **Paused** freezes it.
 **Now** restores current UTC and real-time speed.
 
-Moon time is a separate UTC clock. The planner's local solar time and season
-are scenarios without a unique Earth date/year; changing them must not silently
-invent a new absolute orbital phase. During the opening overview, surface
+Editing the planner's season or local solar time now resolves a dated scenario
+with JPL SPICE. Because those inputs alone do not specify a year, the moon UTC
+date when linking starts is the reference: choose the closest occurrence of Ls,
+then the nearest matching local true solar time at the region center. The UI
+shows the resolved UTC, actual Ls and reference date. Matching the hour can move
+Ls by about half a sol's seasonal motion; it does not claim both continuous
+constraints are simultaneously exact. Subsequent slider edits retain that
+reference date; Set moon time or Now resets the link. Conversion uses
+[NAIF lspcn](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/lspcn_c.html)
+and geometric subsolar longitude; tests independently check the hour with
+[NAIF et2lst](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/et2lst_c.html).
+No guessed orbit is substituted if conversion fails. During the opening overview, surface
 lighting uses the Sun position on this same UTC clock. Leaving the overview
 for planning restores lighting from the planning settings.
 
@@ -19,7 +28,12 @@ for planning restores lighting from the planning settings.
 terrain overlay and automatically plays the system at 3,600×. The view fits
 both physical moon orbits; moons are very small at this distance, so locator
 dots identify them. **Pause motion** freezes the UTC clock and camera. Dragging
-or scrolling also pauses it. **Play overview** returns to the planner background
+or scrolling also pauses it. After seven seconds without interaction the
+overview resumes at the same camera position, including after time/season edits.
+Holding a drag prevents resumption until release; further input resets the wait.
+Map/region selection, moon tracking and planning tasks cancel automatic resume.
+Hidden tabs, source failures and reduced-motion preferences do not auto-resume.
+**Play overview** returns to the planner background
 and resumes the animation. Existing region, map, moon-following, tour and
 planning controls take priority over the automatic view.
 

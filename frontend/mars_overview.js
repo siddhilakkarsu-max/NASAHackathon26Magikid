@@ -25,6 +25,24 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
   const RATE = 3600; // One simulated hour per real second; clearly labeled.
   let mode = 'idle', entered = false, preparing = false, framePending = false;
   let previousLongitude = null, ownsLight = false, lastText = '', lastReadout = 0;
+  let resumeTimer = null;
+  let resumePlanning = false;
+  const heldPointers = new Set();
+  function cancelResume() { clearTimeout(resumeTimer); resumeTimer = null; }
+  function scheduleResume() {
+    cancelResume();
+    if (mode !== 'paused' || !(ownsLight || resumePlanning) || document.hidden || reduced.matches || heldPointers.size ||
+        moons.systemFrame().error) return;
+    resumeTimer = setTimeout(() => {
+      resumeTimer = null;
+      if (mode !== 'paused' || !(ownsLight || resumePlanning) || document.hidden || reduced.matches || heldPointers.size ||
+          viewer.trackedEntity || document.body.classList.contains('touring') || moons.systemFrame().error) return;
+      if (!moons.systemFrame().available) { scheduleResume(); return; }
+      // Resume at the user's camera position, without resetting zoom or map.
+      mode = 'playing'; ownsLight = true; resumePlanning = false; previousLongitude = null; moons.setSpeed(RATE);
+      report(); scene.requestRender();
+    }, 7000);
+  }
   const rotation = new C.Matrix3(), position = new C.Cartesian3();
   const direction = new C.Cartesian3(), up = new C.Cartesian3();
   const removers = [];
@@ -37,7 +55,8 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
     controls.button.setAttribute('aria-pressed', String(mode === 'playing'));
     const frame = moons.systemFrame();
     const text = ownsLight ? (frame.error ? 'Motion unavailable · Play overview to retry' : !frame.available ? 'Loading NASA/JPL motion…' :
-      `${mode === 'playing' ? '3,600× · orbiting view' : 'Motion paused'} · ${C.JulianDate.toIso8601(frame.time, 0).replace('T', ' ').replace('Z', ' UTC')}`) :
+      `${mode === 'playing' ? '3,600× · orbiting view' : reduced.matches ? 'Motion paused' : 'Paused · resumes after 7 seconds idle'} · ${C.JulianDate.toIso8601(frame.time, 0).replace('T', ' ').replace('Z', ' UTC')}`) :
+      resumePlanning && !reduced.matches ? 'Time selected · resumes after 7 seconds idle' :
       'Drag to explore · Play to return to the animated planet';
     if (text !== lastText) { controls.readout.textContent = text; lastText = text; }
   }
@@ -86,6 +105,7 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
     if (performance.now() - lastReadout > 200) { lastReadout = performance.now(); report(); }
   }
   function start(play = true) {
+    cancelResume(); resumePlanning = false;
     preparing = true;
     try {
       selectPlanner();
@@ -97,29 +117,51 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
     tick(); report(); scene.requestRender();
   }
   function pause() {
-    if (preparing || mode !== 'playing') return;
+    if (preparing) return;
+    if (mode === 'paused') { scheduleResume(); return; }
+    if (mode !== 'playing') return;
     mode = 'paused'; framePending = false; previousLongitude = null;
-    moons.setSpeed(0); report(); scene.requestRender();
+    moons.setSpeed(0); scheduleResume(); report(); scene.requestRender();
   }
   function leave() {
-    if (preparing || !ownsLight) return;
-    pause(); framePending = false; ownsLight = false;
+    if (preparing) return;
+    cancelResume(); resumePlanning = false;
+    if (!ownsLight) return;
+    pause(); cancelResume(); framePending = false; ownsLight = false;
     restorePlanningLight(); report();
+  }
+  function planningChange(event) {
+    if (event.target.matches('#hour,#ls') && (ownsLight || resumePlanning)) {
+      pause(); ownsLight = false; resumePlanning = true;
+      restorePlanningLight(); scheduleResume(); report();
+    } else if (event.target.matches(changes)) leave();
   }
   controls.button.onclick = () => mode === 'playing' ? pause() : start();
   listen(scene.canvas, 'pointerdown', pause, true);
   listen(scene.canvas, 'wheel', pause, { capture: true, passive: true });
+  listen(document, 'pointerdown', event => { heldPointers.add(event.pointerId); cancelResume(); }, true);
+  for (const type of ['pointerup', 'pointercancel']) {
+    listen(document, type, event => { heldPointers.delete(event.pointerId); scheduleResume(); }, true);
+  }
+  for (const type of ['pointermove', 'wheel', 'keydown', 'input']) listen(document, type, scheduleResume, { capture: true, passive: true });
+  listen(window, 'blur', () => { heldPointers.clear(); cancelResume(); });
+  listen(window, 'focus', scheduleResume);
   // Stop before other handlers fly, plan, change lighting, or follow a moon.
   const changes = '#region,#jumpTo,#layer,#globalLayer,#regionalLayer,#hour,#ls,#globeLighting,#showMoons,#moonSpeed';
-  const buttons = '#wholeMars,#zoomRegion,#map3dView,#jezero3d,#moonApply,#moonNow,#moonSystemView,#moonPhobos,#moonDeimos,#runMission,#plan,#find,#walkerView,#playRoute,#gmControls button,#gmRail button';
-  listen(document, 'input', event => { if (event.target.matches(changes)) leave(); }, true);
-  listen(document, 'change', event => { if (event.target.matches(changes)) leave(); }, true);
-  listen(document, 'click', event => { if (event.target.closest(buttons)) leave(); }, true);
+  const buttons = '#wholeMars,#zoomRegion,#map3dView,#jezero3d,#moonApply,#moonNow,#moonSystemView,#moonPhobos,#moonDeimos,#runMission,#plan,#find,#walkerView,#playRoute';
+  listen(document, 'input', planningChange, true);
+  listen(document, 'change', planningChange, true);
+  listen(document, 'click', event => {
+    if (event.target.closest(buttons)) leave();
+    else if (event.target.closest('#gmControls button,#gmRail button')) pause();
+  }, true);
   listen(document, 'keydown', event => {
     if (!event.target.matches('input,select,textarea') && ['Escape', 'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown'].includes(event.key)) pause();
   }, true);
   listen(document, 'visibilitychange', () => {
+    cancelResume(); heldPointers.clear();
     if (mode === 'playing') { moons.setSpeed(document.hidden ? 0 : RATE); previousLongitude = null; }
+    else if (!document.hidden) scheduleResume();
   });
   listen(reduced, 'change', () => { if (reduced.matches) pause(); });
   const removeTick = scene.preUpdate.addEventListener(tick);
@@ -128,7 +170,7 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
     enter() { if (entered) return; entered = true; if (eligible) start(!reduced.matches); },
     start, pause, leave,
     controlsLighting: () => ownsLight,
-    state: () => ({ mode, entered, ownsLight, framePending, rate: RATE }),
-    destroy() { leave(); removeTick(); removers.forEach(remove => remove()); controls.button.onclick = null; },
+    state: () => ({ mode, entered, ownsLight, framePending, rate: RATE, resumePending: resumeTimer !== null }),
+    destroy() { leave(); cancelResume(); removeTick(); removers.forEach(remove => remove()); controls.button.onclick = null; },
   };
 }

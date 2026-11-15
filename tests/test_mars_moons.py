@@ -50,7 +50,7 @@ class MoonServiceTests(unittest.TestCase):
     def test_sources_distinguish_physical_positions_from_visual_models(self):
         data = client.get('/api/moons/sources').json()
         self.assertEqual(data['frame'], 'IAU_MARS')
-        self.assertTrue(any('independent' in line for line in data['limits']))
+        self.assertTrue(any('nearest' in line for line in data['limits']))
         for spec in moons.MANIFEST['files']:
             if spec['path'].endswith('.glb'):
                 self.assertTrue(moons._verified(moons.ROOT / spec['path'], spec))
@@ -58,6 +58,33 @@ class MoonServiceTests(unittest.TestCase):
 
 @unittest.skipUnless(HAVE_KERNELS, 'Download the verified NAIF kernels to run physical ephemeris checks')
 class MoonPhysicsTests(unittest.TestCase):
+    def test_planning_time_matches_spice_season_and_local_time(self):
+        for ls, hour, longitude in [(0, 0, 0), (360, 24, 360), (90, 11, 77.45), (180, 18.5, -137.4), (270, 6, 180)]:
+            with self.subTest(ls=ls, hour=hour, longitude=longitude):
+                response = client.get('/api/moons/planning-time', params={
+                    'ls': ls, 'hour': hour, 'longitude': longitude, 'reference_date': '2026-11-15'})
+                self.assertEqual(response.status_code, 200, response.text)
+                data = response.json()
+                with moons.LOCK:
+                    s = moons._spice()
+                    et = s.str2et(data['utc'].rstrip('Z'))
+                    # Independent SPICE local-time routine checks east longitude,
+                    # midnight wrapping and the numerical inversion.
+                    h, m, sec, *_ = s.et2lst(et, 499, np.radians(longitude), 'PLANETOCENTRIC')
+                    self.assertLess(abs((h + m / 60 + sec / 3600 - hour + 12) % 24 - 12), 1 / 3600 + 1e-6)
+                    actual = np.degrees(s.lspcn('MARS', et, 'NONE'))
+                    self.assertAlmostEqual(actual, data['actual_ls'], places=6)
+                    self.assertLess(abs((actual - ls + 180) % 360 - 180), .4)
+                    self.assertLess(abs(et - s.str2et('2026-11-15T12:00:00')), 400 * 86400)
+
+    def test_planning_time_rejects_invalid_input_and_source_failure(self):
+        params = {'ls': 90, 'hour': 11, 'longitude': 77, 'reference_date': '2026-11-15'}
+        for key, value in [('ls', 'nan'), ('ls', 361), ('hour', -1), ('longitude', 361), ('reference_date', '2050-01-01')]:
+            with patch.object(moons, '_spice', side_effect=AssertionError('no download')):
+                self.assertEqual(client.get('/api/moons/planning-time', params={**params, key: value}).status_code, 422)
+        with patch.object(moons, '_spice', side_effect=OSError('offline')):
+            self.assertEqual(client.get('/api/moons/planning-time', params=params).status_code, 503)
+
     def test_sun_uses_same_epoch_units_and_rotating_frame_as_moons(self):
         data = moons.ephemeris('2026-11-15')
         with moons.LOCK:
