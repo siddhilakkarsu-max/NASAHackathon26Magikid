@@ -25,7 +25,7 @@
 <link href="/ui_polish.css" rel="stylesheet" />
 <link href="/mascot.css" rel="stylesheet" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap" rel="stylesheet" />
+<link href="https://fonts.googleapis.com/css2?family=Electrolize&family=Inter:wght@200;300;400;500;600&display=swap" rel="stylesheet" />
 <style>
   /* Designers: restyle freely. Everything visual lives in this file. */
   :root { --bg: rgba(18, 12, 10, 0.88); --fg: #f3e7dd; --accent: #e0703a; --muted: #b9a79a; }
@@ -146,8 +146,9 @@
 
   /* ===== Design (Figma "mars - home page"): landing page + panel restyle. Overrides the styles above. ===== */
   :root { --bg: #1c1d22; --fg: #ebebeb; --accent: #f7943a; --muted: #8e9097; --line: #8e909766;
-          --page: #131318; --navy: #111820; }
-  html, body { font-family: Inter, system-ui, sans-serif; background: var(--page); }
+          --page: #131318; --navy: #111820;
+          --ui-font: Electrolize, Inter, system-ui, sans-serif; }   /* the one font for all text */
+  html, body { font-family: var(--ui-font); background: var(--page); }
   #panel { background: var(--bg); margin: 12px; padding: 18px 16px; border-radius: 14px;
            font-size: 12px; letter-spacing: .02em; }
   h1 { font-size: 12px; font-weight: 500; color: var(--fg); text-transform: uppercase; letter-spacing: .12em;
@@ -191,7 +192,7 @@
   table.matrix th, table.matrix td { border-bottom-color: #ffffff1a; }
   #mResult h3 { color: var(--accent); font-weight: 500; letter-spacing: .06em; }
   .chip { background: #ffffff1a; }
-  #routeHover, #weatherHover { font-family: Inter, system-ui, sans-serif; border-radius: 8px; }
+  #routeHover, #weatherHover { font-family: var(--ui-font); border-radius: 8px; }
 
   /* The map drawer replaces the older stacked mobile grid. Keep its map in
      the nonzero column when the viewport becomes narrow. */
@@ -204,19 +205,25 @@
   body.touring #overviewBar { display: none; }
   /* landing page */
   #landing { position: fixed; inset: 0; z-index: 1000; background: var(--navy); display: grid; place-items: center;
-             transition: opacity .6s ease, visibility .6s; font-family: Inter, system-ui, sans-serif; }
+             transition: opacity .6s ease, visibility .6s; font-family: var(--ui-font); }
   #landing.gone { opacity: 0; visibility: hidden; }
   #landing .globe { position: relative; width: min(72vmin, 620px); aspect-ratio: 1; }
   #landing img { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0 60px #f7943a22); }
   #landing .hero { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
                    justify-content: center; color: #fff; text-align: center; }
-  #landing .title { font-size: clamp(44px, 11vmin, 92px); font-weight: 200; letter-spacing: .14em; line-height: 1;
+  #landing .title { font-family: var(--ui-font); font-size: clamp(44px, 11vmin, 92px); font-weight: 200; letter-spacing: .14em; line-height: 1;
                     margin-left: .14em; text-shadow: 0 2px 18px #0007; }
   #landing .sub { margin: 14px 0 26px; font-size: clamp(11px, 1.7vmin, 15px); letter-spacing: .12em;
                   text-shadow: 0 1px 8px #000a; }
   #landing button { width: auto; margin: 0; padding: 10px 26px; background: #fff; color: #111; border-radius: 999px;
                     font-size: clamp(10px, 1.5vmin, 13px); font-weight: 500; letter-spacing: .12em; }
   #landing button:hover { background: #ffe9d6; }
+  /* Electrolize everywhere, also where other files set a font: the panel title, section headers, tour card,
+     mascot speech and Play button (the section headers' "V" chevron keeps its own glyph font) */
+  body #panel > h1, body #panel .panel-section > summary, body #panel #missionSettings > summary, body #sourcesButton,
+  body #tourCard, body .helmut-bubble, body #playFab, body #playFab small { font-family: var(--ui-font); }
+  /* form fields don't inherit the page font by default (the search bar, the assistant's message box) */
+  input, textarea, select, button, body #marsSearch input { font-family: var(--ui-font); }
   /* Advanced (technical) details: hidden until the A key is pressed */
   body:not(.adv-on) .adv, body:not(.adv-on) .adv-only { display: none !important; }
   .adv { color: var(--muted); }
@@ -710,6 +717,24 @@ const marsMoons = createMarsMoons({ viewer, ellipsoid: MARS, api: API, controls:
 for (const id of ["region", "jumpTo", "globalLayer", "regionalLayer"]) $(id).addEventListener("change", () => marsMoons.stopTracking(), true);
 $("wholeMars").addEventListener("click", () => marsMoons.stopTracking(), true);
 const marks = viewer.entities;
+// Map labels are drawn onto the 3D canvas, so they don't follow the page's CSS font. They use Electrolize too;
+// labels drawn before the web font arrives are redrawn once it has (under a new font string, so Cesium doesn't
+// reuse the fallback glyphs it already cached).
+let mapFontName = "Electrolize, sans-serif", mapFontUsed = false;
+function mapFont(px) { mapFontUsed = true; return `${px}px ${mapFontName}`; }
+document.fonts.load("12px Electrolize").then(() => {
+  if (!mapFontUsed || !document.fonts.check("12px Electrolize")) return;
+  const old = mapFontName;
+  mapFontName = "Electrolize, Inter, sans-serif";
+  const now = Cesium.JulianDate.now();
+  const redraw = entity => {
+    const font = entity.label?.font?.getValue(now);
+    if (typeof font === "string" && font.endsWith(old)) entity.label.font = font.replace(old, mapFontName);
+  };
+  viewer.entities.values.forEach(redraw);
+  for (let i = 0; i < viewer.dataSources.length; i++) viewer.dataSources.get(i).entities.values.forEach(redraw);
+  viewer.scene.requestRender();
+}).catch(() => {});
 const imageLayers = () => tileset ? tileset.imageryLayers : viewer.imageryLayers;
 const mapOpacity = () => +$("mapOpacity").value / 100;
 const temperatureView = createTemperatureView({
@@ -1047,7 +1072,7 @@ function pin(id, p, color, text) {
   marks.add({ id, position: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS),
     point: { pixelSize: 12, color, outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
-    label: { text, font: "13px sans-serif", pixelOffset: new Cesium.Cartesian2(0, -20),
+    label: { text, font: mapFont(13), pixelOffset: new Cesium.Cartesian2(0, -20),
              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 } });
 }
 
@@ -1186,7 +1211,7 @@ async function findTarget() {
       marks.add({ id: `match${i}`, position: Cesium.Cartesian3.fromDegrees(m.lon, m.lat, 0, MARS),
         point: { pixelSize: 8, color: Cesium.Color.GOLD, outlineColor: Cesium.Color.BLACK, outlineWidth: 1,
                  heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
-        label: { text: String(i + 1), font: "12px sans-serif", pixelOffset: new Cesium.Cartesian2(10, -10),
+        label: { text: String(i + 1), font: mapFont(12), pixelOffset: new Cesium.Cartesian2(10, -10),
                  heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 } });
       const li = document.createElement("li");
       li.textContent = `${Math.round(m.score * 100)}% match · ${m.lat.toFixed(4)}°N ${m.lon.toFixed(4)}°E`;
@@ -1386,7 +1411,7 @@ function marker(ds, p, color, text, size = 11) {
   ds.entities.add({ position: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS),
     point: { pixelSize: size, color, outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
-    label: { text, font: "12px sans-serif", pixelOffset: new Cesium.Cartesian2(0, -18),
+    label: { text, font: mapFont(12), pixelOffset: new Cesium.Cartesian2(0, -18),
              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 } });
 }
 
@@ -1748,7 +1773,7 @@ function drawMission(fly) {
         position: Cesium.Cartesian3.fromDegrees(n.lon, n.lat, 0, MARS),
         point: { pixelSize: 9, color: C(NOTE_COLOR[n.kind] || "#ffffff"), outlineColor: Cesium.Color.WHITE, outlineWidth: 1.5,
                  heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
-        label: { text: noteText(n), font: "12px Inter, sans-serif", fillColor: Cesium.Color.WHITE, showBackground: true,
+        label: { text: noteText(n), font: mapFont(12), fillColor: Cesium.Color.WHITE, showBackground: true,
                  backgroundColor: C("#1c1d22").withAlpha(0.85), backgroundPadding: new Cesium.Cartesian2(6, 4),
                  horizontalOrigin: Cesium.HorizontalOrigin.LEFT, pixelOffset: new Cesium.Cartesian2(9, 0),
                  heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 } });
@@ -1963,7 +1988,7 @@ function murrayLabel(ds, lon, lat, text, maxDist, color = Cesium.Color.WHITE) {
   const position = Cesium.Cartesian3.fromDegrees(lon, lat, 0, MARS);
   return ds.entities.add({ position, label: { text,
     show: marsSurfaceLabelVisibility(viewer, MARS, position),
-    font: "12px sans-serif", fillColor: color, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
+    font: mapFont(12), fillColor: color, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
     style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: 0,
     heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
     distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, maxDist) } });
@@ -2024,7 +2049,7 @@ async function murrayGeojson(def) {
     ds.entities.add({ position: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS),
       point: { pixelSize: 9, color, outlineColor: Cesium.Color.BLACK, outlineWidth: 2,
         heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
-      label: { text: `${rover} · end of archived path`, font: "13px sans-serif", fillColor: color,
+      label: { text: `${rover} · end of archived path`, font: mapFont(13), fillColor: color,
         outlineColor: Cesium.Color.BLACK, outlineWidth: 3, style: Cesium.LabelStyle.FILL_AND_OUTLINE,
         pixelOffset: new Cesium.Cartesian2(0, -22), heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
         disableDepthTestDistance: 1e9, distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, 2e5) } });
