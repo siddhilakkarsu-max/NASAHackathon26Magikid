@@ -186,6 +186,7 @@
     return true;
   }
   const currentLayer = () => plannerLayout.globalChoice() || $("layer").value;
+  window.marsSetLayer = setLayer;
   const chipsBar = el("div", { id: "gmChips" });
   const CHIPS = [
     ["radiation", "Radiation", "radiation_dose"], ["thermo", "Temperature", "global_temperature"],
