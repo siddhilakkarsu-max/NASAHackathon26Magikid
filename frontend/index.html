@@ -17,6 +17,8 @@
 <script src="/planner_layout.js"></script>
 <script src="/game-launch.js" defer></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
+<link href="/map_help.css" rel="stylesheet" />
+<link href="/maps_ui.css" rel="stylesheet" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap" rel="stylesheet" />
 <style>
@@ -71,6 +73,7 @@
                    padding: 8px 10px; box-sizing: border-box; }
   #routePlayback button { margin: 0 0 4px; min-height: 32px; }
   #routePlayback button:disabled { opacity: .65; cursor: default; }
+  #walkerStatus { max-width: 360px; }
   .small { color: var(--muted); font-size: 11px; }
   #routeHover { position: absolute; z-index: 6; pointer-events: none; max-width: 300px; padding: 7px 9px;
                 background: #131520f0; color: #fff; font-size: 12px; line-height: 1.45;
@@ -254,7 +257,14 @@
   <div id="weatherHover" aria-hidden="true" hidden></div>
   <div id="routePlayback" hidden>
     <button id="playRoute" type="button">Play route</button>
+    <button id="walkerView" type="button" class="secondary" title="Stand on the ground at eye height along this route">Walker's view</button>
+    <span id="walkerNav" hidden>
+      <button id="walkerPrev" type="button" class="secondary" aria-label="Previous stop">◀ Back</button>
+      <button id="walkerNext" type="button" class="secondary" aria-label="Next stop">Next ▶</button>
+      <button id="walkerExit" type="button" class="secondary">Exit view</button>
+    </span>
     <div class="small" id="routePlaybackStatus" role="status"></div>
+    <div class="small" id="walkerStatus" role="status"></div>
   </div>
   <div id="routeHover" aria-hidden="true" hidden></div>
 </div>
@@ -271,6 +281,7 @@
     <button id="wholeMars" class="secondary" type="button">Whole Mars</button>
     <button id="zoomRegion" class="secondary" type="button">Zoom to region</button>
   </div>
+  <label>Jump to a place <select id="jumpTo"><option value="">Famous places (Murray Lab CTX viewer list)…</option></select></label>
 
   <details id="missionSetup" class="panel-section" name="workspace" open>
     <summary>Plan a mission</summary>
@@ -537,6 +548,8 @@ const globeLighting = createMarsLighting(viewer, MARS, $("marsSun"));
 let marsSky = null;
 const routePlayback = createRoutePlayback({ viewer, ellipsoid: MARS, controls: {
   panel: $("routePlayback"), button: $("playRoute"), status: $("routePlaybackStatus"),
+  walk: $("walkerView"), walkNav: $("walkerNav"), walkPrev: $("walkerPrev"), walkNext: $("walkerNext"),
+  walkExit: $("walkerExit"), walkStatus: $("walkerStatus"),
 } });
 $("globeLighting").onchange = () => {
   globeLighting.setEnabled($("globeLighting").checked);
@@ -1372,7 +1385,8 @@ async function runMission() {
     if (!isCurrent()) return;
     const requestRegion = regionId();
     await streamEvents("/api/mission/stream", { region: requestRegion, goal, vehicle: $("mVehicle").value,
-      ls: +$("ls").value, priority: $("mPriority").value, green_only: $("greenOnly").checked }, async (e) => {
+      ls: +$("ls").value, local_hour: +$("hour").value, priority: $("mPriority").value,
+      green_only: $("greenOnly").checked }, async (e) => {
       if (!isCurrent()) return;
       if (e.type === "ai" && /^Waiting for the AI/.test($("mStatus").innerText))   // our turn now
         setMsg($("mStatus"), { goal: "The AI is reading your goal…", explain: "The AI is explaining the choice…",
@@ -1512,7 +1526,7 @@ function renderMission() {
   liAdv(set, `Travelling by: ${plainName(s.vehicle.label).toLowerCase()}`,
         `${s.vehicle.label}: max slope ${s.vehicle.max_slope}°, range ${s.vehicle.range_km} km`);
   liAdv(set, `Season: ${plainName(s.season.label).replace(/:.*/, "")}`,
-        `${s.season.label}; walk planned for ${s.local_hour}:00 local (sun ${s.sun_elevation}° up)`);
+        `${s.season.label}; walk planned for ${hhmm(s.local_hour)} local (sun ${s.sun_elevation}° up)`);
   liAdv(set, `Priority: ${s.priority.label.toLowerCase()}` + (s.green_only ? ", staying on rover tracks" : ""),
         `route cost weighs time ${s.priority.cost.time}, energy ${s.priority.cost.energy}, risk ${s.priority.cost.risk}`);
   out.append(set);
@@ -1587,6 +1601,9 @@ function renderMission() {
   r.candidates.forEach((c, i) => out.append(candidateCard(c, i)));
   for (const d of r.dropped) out.append(el("div", { className: "small bad adv", textContent: `Dropped B${d.id} (${deg(d.B)}): ${d.reason}` }));
   plannerLayout.organizeMission(r, selected, disclosureState);
+  // the AI's thinking lives in these sections: keep them open while it is working (afterwards the user decides)
+  if (r.explain_ai?.live && $("missionWhy")) $("missionWhy").open = true;
+  if (r.annot_ai?.live && $("missionNotes")) $("missionNotes").open = true;
 }
 
 // Mission-planner vehicle (config.MISSION_VEHICLES) -> closest gear-page traveller (config.VEHICLES).
@@ -1602,6 +1619,10 @@ function missionGearHref(c) {
   return "kit.html?" + q;
 }
 
+function hhmm(hour) {            // 14.25 -> "14:15"
+  const m = Math.round((+hour || 0) * 60);
+  return `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
 function candidateCard(c, i) {
   const d = el("details", { className: "card" + (i === selected ? " sel" : ""), open: i === selected });
   const nasa = c.A.kind === "NASA candidate";
@@ -1615,6 +1636,9 @@ function candidateCard(c, i) {
   say(`Trip: ${rt.distance_km} km, about ${rt.round_trip_h} h there and back`);
   for (const it of R.items) say(`${it.name[0].toUpperCase() + it.name.slice(1)} left at the end: ${it.left_pct}%`, it.ok ? "ok" : "bad");
   say(`Turn back after ${ta.h} h at the latest`);
+  const S = c.safety || {};
+  if (S.shelter_text) say(`Storm shelter: ${S.shelter_text}`, S.shelter_ok === false ? "bad" : "ok");
+  if (S.walkback_text) say(`If the vehicle breaks: ${S.walkback_text}`, S.walkback_ok === false ? "bad" : "ok");
   const ul = el("ul", { className: "adv" }), add = (t, cls = "") => ul.append(el("li", { textContent: t, className: cls }));
   add(`Target: ${k.target.join("; ")}`);
   add(`Data confidence: ${k.confidence}`);
@@ -1623,6 +1647,7 @@ function candidateCard(c, i) {
   add(`Nearby: ${k.nearby.join("; ")}`);
   add(`Sampling spots: ${k.sampling.map((p) => `${deg(p)} (${p.what})`).join("; ")}`);
   add(`Protection: ${k.protection.join("; ")}`);
+  if (k.safety?.length) add(`Safety checks: ${k.safety.join("; ")}`);
   add(`Landing spot A ${deg(c.A)}: ${k.from_A}`);
   add(`Route: ${rt.distance_km} km, ${rt.one_way_h} h one way, ${rt.round_trip_h} h round trip incl. sampling; ` +
       `max slope ${rt.max_slope}°, loose ground ${rt.loose_pct}%, green track ${rt.green_pct}% (${rt.green_km} km), yellow ${rt.yellow_pct}%`);
@@ -2341,7 +2366,7 @@ function roverCard(path, p) {
     lines.push([`Risk: ${["low", "moderate", "high"][Math.round(p.risk)] || "–"}` +
                 (p.green ? " · on green rover-verified track" : p.yellow ? " · on high-strain (yellow) track" : ""),
                 p.risk >= 1.5 ? "warn" : ""]);
-    lines.push([`Sunlight cos(i) ${fmt(p.sun, 2)} · surface ~${fmt(p.temp, 0)} K at ${mission.settings.local_hour}:00`, "adv"]);
+    lines.push([`Sunlight cos(i) ${fmt(p.sun, 2)} · surface ~${fmt(p.temp, 0)} K at ${hhmm(mission.settings.local_hour)}`, "adv"]);
     for (const it of c.resources.items) {
       const used = p.used && p.used[it.name];
       if (used == null) continue;
@@ -2426,11 +2451,41 @@ document.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key ===
 $("startExploring").focus();
 
 // ------------------------------------------------ plan anywhere on Mars ----
+let namedSites = [];             // /api/sites: famous places, loaded on demand (about a minute the first time)
 function fillRegions(selected = $("region").value) {
+  const loaded = new Set(regions.map((r) => r.region));
+  const more = namedSites.filter((s) => !loaded.has(s.site));
   $("region").innerHTML = `<option value="${ANYWHERE}">Anywhere on Mars (where you're looking)</option>` +
     '<optgroup label="Loaded areas">' +
-    regions.map((r) => `<option value="${r.region}">${r.label || r.region}</option>`).join("") + "</optgroup>";
+    regions.map((r) => `<option value="${r.region}">${r.label || r.region}</option>`).join("") + "</optgroup>" +
+    (more.length ? '<optgroup label="More places (load in about a minute)">' +
+      more.map((s) => `<option value="site:${s.site}">${s.label}</option>`).join("") + "</optgroup>" : "");
   if (selected && regions.some((r) => r.region === selected)) $("region").value = selected;
+}
+async function loadNamedSite(key) {            // build a named site's data cube, then switch to it
+  const s = namedSites.find((x) => x.site === key);
+  if (!s) return;
+  viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(s.lon - 0.4, s.lat - 0.4, s.lon + 0.4, s.lat + 0.4) });
+  const t0 = Date.now();
+  try {
+    let st = await api("/api/sites/build", { site: key });
+    while (!st.ready) {
+      if (st.status === "failed") throw new Error((st.log || []).slice(-1).join(" "));
+      setMsg($("areaStatus"), `Loading ${s.label}… ${Math.round((Date.now() - t0) / 1000)} s | 3D terrain, THEMIS, ` +
+        "TES albedo; CRISM minerals follow");
+      await sleep(2000);
+      st = await api(`/api/sites/build/${st.region}`);
+    }
+    namedSites = (await api("/api/sites")).sites;
+    await useArea(st.region);
+    $("region").value = st.region;
+    $("region").onchange();
+    setMsg($("areaStatus"), `${s.label} is loaded.`);
+    if (st.status !== "done") watchArea(st.region);
+  } catch (e) {
+    setMsg($("areaStatus"), `Couldn't load ${s.label}. | ${e.message}`);
+    fillRegions();
+  }
 }
 // ------------------------------------------- advanced (technical) details ----
 // Everything technical has class "adv" and shows only after pressing A. Server messages are "plain | detail":
@@ -2580,6 +2635,26 @@ applyGlobalMap();
 showWholeMars();
 $("wholeMars").onclick = () => showWholeMars();   // just the view: weather layers only when picked in the menu
 $("zoomRegion").onclick = () => { if (current) flyTo(current.rect); };
+
+// Quick-jump places: the 16 shortcuts in Caltech Murray Lab's Global CTX Mosaic viewer
+// (murray-lab.caltech.edu/CTX/V01/SceneView). Coordinates are near each feature; height = how far out to view it.
+const JUMP_PLACES = [
+  ["Jezero (Perseverance)", 18.44, 77.45, 60e3], ["Gale (Curiosity)", -4.59, 137.44, 80e3],
+  ["Gusev (Spirit)", -14.57, 175.47, 120e3], ["Meridiani (Opportunity)", -1.95, -5.53, 120e3],
+  ["Olympus Mons", 18.65, -133.8, 1200e3], ["Capri Chasma", -7.39, -44.83, 250e3],
+  ["Coloe", 42.18, 55.13, 150e3], ["Shalbatana", 5.95, -42.75, 250e3],
+  ["Valles Marineris", -13.9, -59.2, 1500e3], ["Cavi Angusti", -77.01, -79.04, 200e3],
+  ["Medusae Fossae", -0.78, 175.94, 400e3], ["Nicholson", -0.44, -164.61, 150e3],
+  ["Zunil", 7.43, 166.47, 60e3], ["Milankovič", 54.34, -147.69, 200e3],
+  ["Terra Sirenum", -39.47, -157.36, 250e3], ["Eberswalde", -23.70, -33.31, 120e3],
+];
+$("jumpTo").innerHTML += JUMP_PLACES.map(([n], i) => `<option value="${i}">${n}</option>`).join("");
+$("jumpTo").onchange = () => {
+  const p = JUMP_PLACES[+$("jumpTo").value];
+  if (!p) return;
+  viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(p[2], p[1], p[3], MARS) });
+  $("jumpTo").value = "";
+};
 ["hour", "ls", "budget"].forEach((id) => {
   $(id).addEventListener("input", labels);
   // A text selection spanning a range can start native HTML dragging and cancel
@@ -2605,6 +2680,7 @@ $("layer").onchange = () => {
 };
 ["budget", "region"].forEach((id) => $(id).addEventListener("change", invalidatePlan));
 $("region").onchange = () => {
+  if ($("region").value.startsWith("site:")) { loadNamedSite($("region").value.slice(5)); return; }
   setMsg($("areaStatus"), anywhere() ? "Zoom in anywhere on Mars and plan: the plan uses the place in the middle " +
     `of the map. Zoomed out, it uses ${current ? current.label : "the current area"}. | New areas load from the ` +
     "3D terrain (MDEM200M) in seconds; CRISM minerals follow." : "");
@@ -2663,6 +2739,7 @@ api("/api/weather/calendar").then(calendar => {
     fill("mPriority", opts.priorities, "safety");
     const meta = await api("/api/regions");
     regions = meta.regions;
+    try { namedSites = (await api("/api/sites")).sites; } catch (e) { namedSites = []; }
     Object.assign(SPECS, meta.vehicle_specs || {});
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
     fillRegions(ANYWHERE);
@@ -2692,5 +2769,7 @@ api("/api/weather/calendar").then(calendar => {
   }
 })();
 </script>
+<script src="/map_help.js"></script>
+<script src="/maps_ui.js"></script>
 </body>
 </html>

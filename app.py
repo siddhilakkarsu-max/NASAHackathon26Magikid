@@ -31,6 +31,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 import annotate
+import assistant
 import mission
 import murray
 import jezero_terrain
@@ -251,6 +252,8 @@ class MissionRequest(BaseModel):
     ls: float | None = Field(None, ge=0, le=360, description="season slider (solar longitude); overrides 'season'")
     priority: str = "safety"
     green_only: bool = Field(False, description="stick to green, rover-verified tracks where possible")
+    local_hour: float | None = Field(None, ge=0, le=24, description="Mars local solar time the walk starts "
+                                     "(the time slider); default 11:00")
 
 
 class FindRequest(Conditions):
@@ -995,6 +998,23 @@ def find(req: FindRequest):
 _missions = {}   # mission id -> facts for the explanation (last 50)
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"] = "user"
+    text: str = Field(..., max_length=1000)
+
+
+class AssistantRequest(BaseModel):
+    messages: list[ChatMessage] = Field(..., min_length=1, max_length=40)
+    state: dict = Field(default_factory=dict, description="what the page shows: region, hour, vehicle, has_mission, places")
+    memo: dict = Field(default_factory=dict, description="what this chat has settled; sent back each turn")
+
+
+@app.post("/api/assistant")
+def assistant_reply(req: AssistantRequest):
+    """Chat box: a sentence in, a reply + suggested answers + map actions out (built-in rules; AI if configured)."""
+    return assistant.reply([m.model_dump() for m in req.messages], req.state, req.memo)
+
+
 @app.get("/api/mission/options")
 def mission_options():
     return {"vehicles": {k: {"label": v["label"], "max_slope": v["max_slope"], "range_km": v["range_km"]}
@@ -1009,7 +1029,8 @@ def plan_mission(req: MissionRequest):
     """Goal + vehicle + season + priority -> 3 candidate missions, the decision matrix and the winner."""
     c = _mission_cube(req)
     try:
-        res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only)
+        res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
+                           local_hour=req.local_hour)
     except mission.NoLandingSpot as e:
         nl = _no_landing(c, e)
         raise HTTPException(400, f"{nl['text']} | {nl['detail']}")
@@ -1103,7 +1124,7 @@ async def plan_mission_stream(req: MissionRequest, request: Request):
         yield event(type="status", text="Finding the best places, landing spots and routes…")
         try:
             res = _finish_mission(mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
-                                               goal_spec=(spec, parser, notes)), c)
+                                               goal_spec=(spec, parser, notes), local_hour=req.local_hour), c)
         except mission.NoLandingSpot as e:
             yield event(type="status", text=str(e).split(" | ")[0] + " Looking for the nearest firm ground…")
             yield event(type="error", **_no_landing(c, e))
