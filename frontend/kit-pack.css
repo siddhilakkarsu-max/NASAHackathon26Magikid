@@ -1,0 +1,67 @@
+/* Packing-list mode and the extra sheet tools (kit-pack.js). Uses kit.css variables only. */
+.head .tools { flex-wrap: wrap; justify-content: flex-end; }
+.ghost[aria-pressed="true"] { color: var(--text); border-color: var(--rust); background: var(--rust-soft); }
+.pk-url { width: 260px; height: 28px; padding: 3px 8px; background: var(--surface); border: 1px solid var(--line-2); border-radius: 2px;
+  font: 12px var(--mono); color: var(--text-2); }
+
+body.packing .pk-sec .bar-tools { display: none; }
+
+.pk-head { position: sticky; top: 48px; z-index: 6; background: var(--bg); display: flex; align-items: center; gap: 14px;
+  padding: 10px 0; margin-top: 12px; border-top: 1px solid var(--line-2); border-bottom: 1px solid var(--line); }
+.pk-title { font: 600 12px var(--cond); text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-2); }
+.pk-count { font: 12.5px var(--mono); font-variant-numeric: tabular-nums; color: var(--text); }
+.pk-meter { flex: 1; max-width: 240px; height: 3px; background: var(--line); position: relative; }
+.pk-meter i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--sand); transition: width 0.15s; }
+.pk-head .link { margin-left: auto; }
+
+.pk-group { margin-top: 18px; }
+.pk-group > h3 { margin: 0; padding: 10px 0 6px; border-bottom: 1px solid var(--line-2); display: flex; gap: 12px; align-items: baseline;
+  font: 600 13px var(--cond); text-transform: uppercase; letter-spacing: 0.09em; }
+.pk-group > h3 .n { margin-left: auto; font: 400 12px var(--mono); color: var(--text-3); letter-spacing: 0; text-transform: none; }
+.pk-group ul { list-style: none; margin: 0; padding: 0; }
+.pk-line { border-bottom: 1px solid var(--line); }
+
+.pack label.pk-row { display: grid; grid-template-columns: 3px 16px minmax(0, 1fr) 40px 92px 100px; column-gap: 12px; align-items: center;
+  margin: 0; padding: 7px 4px 7px 0; font-size: 14px; color: var(--text); cursor: pointer; }
+.pk-row:hover { background: var(--surface); }
+.pk-bar { align-self: stretch; background: var(--line-2); }
+.p-critical .pk-bar { background: var(--rust); }
+.p-recommended .pk-bar { background: var(--sand); }
+.p-optional .pk-bar { background: repeating-linear-gradient(to bottom, var(--line-2) 0 3px, transparent 3px 6px); }
+
+.pk-box { appearance: none; -webkit-appearance: none; margin: 0; width: 15px; height: 15px; border: 1px solid var(--text-3); border-radius: 2px;
+  background: var(--surface); display: grid; place-items: center; cursor: pointer; }
+.pk-box:hover { border-color: var(--text-2); }
+.pk-box:checked { background: var(--rust); border-color: var(--rust); }
+.pk-box:checked::after { content: ""; width: 4px; height: 8px; margin-top: -2px; border: solid var(--bg); border-width: 0 1.5px 1.5px 0; transform: rotate(45deg); }
+
+.pk-nm { min-width: 0; }
+.pk-nm small { display: none; color: var(--text-3); font-size: 12px; }
+.pk-qty { font: 13px var(--mono); text-align: right; }
+.pk-car { font-size: 12.5px; color: var(--text-2); }
+.pk-mass { font: 12.5px var(--mono); text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.pk-mass small { color: var(--text-3); font-size: 11px; margin-left: 1px; }
+.pk-mass .none { color: var(--text-3); }
+
+.pk-line.done .pk-nm { color: var(--text-3); text-decoration: line-through; text-decoration-color: var(--line-2); }
+.pk-line.done .pk-qty, .pk-line.done .pk-car, .pk-line.done .pk-mass { color: var(--text-3); }
+
+@media (max-width: 640px) {
+  .pack label.pk-row { grid-template-columns: 3px 16px minmax(0, 1fr) 30px 84px; column-gap: 10px; }
+  .pk-car { display: none; }
+  .pk-nm small { display: block; }
+  .pk-meter { max-width: none; }
+  .pk-url { width: 100%; }
+}
+
+/* print: the packing list with empty boxes to tick by hand */
+@media print {
+  body.packing .figures, body.packing .alert, body.packing .lede, body.packing .published-note,
+  body.packing .sheet > .sec:not(.pk-sec), body.packing .pk-sec > .intro, body.packing .pk-meter,
+  .pk-count, .pk-group > h3 .n { display: none !important; }
+  .pk-head { position: static; }
+  .pk-box, .pk-box:checked { background: #fff; border-color: #333; }
+  .pk-box:checked::after { display: none; }
+  .pk-line.done .pk-nm, .pk-line.done .pk-qty, .pk-line.done .pk-car, .pk-line.done .pk-mass { color: var(--text); text-decoration: none; }
+  .pk-line, .pk-group > h3 { break-inside: avoid; }
+}
