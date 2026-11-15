@@ -514,7 +514,17 @@ ESSENTIALS = [
 
 # Landing rules for a safe touchdown spot A (checked over a circle of area_radius_m around the spot).
 LANDING_RULES = dict(max_slope_deg=5.0, max_rough_percentile=60, min_ti=200.0, max_elevation_m=-500.0,
-                     max_abs_lat=50.0, area_radius_m=500.0)
+                     max_abs_lat=50.0, area_radius_m=500.0,
+                     # team design rule: land at least this far from the science target B, so the lander's engine
+                     # plume doesn't blast or contaminate what the crew came to sample (and the trip isn't 0 km)
+                     min_standoff_m=500.0)
+
+# Route safety checks added to the mission planner (team assumptions, not NASA limits):
+# - shelter: during a solar particle event the crew should reach cover (a steep wall, the lander, or a pressurized
+#   rover) within this many minutes from any point of the route
+# - walk-back: if a vehicle fails at the far end, the crew must be able to walk back to A on the suit oxygen left
+SHELTER_MAX_MIN = 30.0
+MIN_SUN_ELEV_DEG = 10.0      # walks are restricted when the sun is this low (dawn / dusk)
 
 # NASA's known sites per region. Spots inside a landing site / landing ellipse are "NASA candidate";
 # exploration zones are shown on the detail card for context.

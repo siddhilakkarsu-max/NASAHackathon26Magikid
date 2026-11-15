@@ -32,7 +32,7 @@ import search
 from config import MARS_RADIUS_M
 from config import (CONSUMABLE_RESERVE, ESSENTIALS, LANDING_RULES, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
                     NASA_SITES, PRIORITIES, SEARCH_ZONES, SEASONS, SITE_HOURS, SPECIAL_REGIONS, SUIT, TOOLS,
-                    TRACK_RULES, VEHICLE_POWER, WALKER)
+                    TRACK_RULES, VEHICLE_POWER, WALKER, SHELTER_MAX_MIN, MIN_SUN_ELEV_DEG)
 
 ROOT = Path(__file__).parent
 LOCAL_HOUR = 11.0            # plan the walk for late morning: sun high, warmest part of the day
@@ -297,15 +297,41 @@ def nearest_landing(cube, b_rc):
         return None
     r, c = b_rc
     d_any, idx = edts["any"]
+    standoff = LANDING_RULES.get("min_standoff_m", 0.0)
     best = dict(rc=(int(idx[0][r, c]), int(idx[1][r, c])), dist_m=float(d_any[r, c]), kind="Tool-found", site=None)
+    if best["dist_m"] < standoff:                                   # too close to B: nearest spot outside the ring
+        best = _nearest_beyond(cube, "any", b_rc, standoff)
+        if best is None:
+            return None
+        best.update(kind="Tool-found", site=None)
     if "nasa" in edts:
         d_n, idx_n = edts["nasa"]
-        if d_n[r, c] <= 1.5 * d_any[r, c] + 500:
-            rc = (int(idx_n[0][r, c]), int(idx_n[1][r, c]))
+        nasa = dict(rc=(int(idx_n[0][r, c]), int(idx_n[1][r, c])), dist_m=float(d_n[r, c]))
+        if nasa["dist_m"] < standoff:
+            nasa = _nearest_beyond(cube, "nasa", b_rc, standoff)
+        if nasa and nasa["dist_m"] <= 1.5 * best["dist_m"] + 500:
             _, owner, _ = nasa_sites(cube)
-            site = sites_in(cube)[owner[rc]]
-            best = dict(rc=rc, dist_m=float(d_n[r, c]), kind="NASA candidate", site=site["name"])
+            site = sites_in(cube)[owner[nasa["rc"]]]
+            best = dict(rc=nasa["rc"], dist_m=nasa["dist_m"], kind="NASA candidate", site=site["name"])
     return best
+
+
+def _nearest_beyond(cube, which, b_rc, min_m):
+    """Closest landing pixel ("any" or "nasa") that is at least min_m from B (the plume standoff)."""
+    def make():
+        safe = landing_mask(cube)
+        nasa, _, _ = nasa_sites(cube)
+        return {k: np.nonzero(m_) for k, m_ in (("any", safe), ("nasa", safe & nasa))}
+    ys, xs = _cached(cube, "landing_px", make)[which]
+    if len(ys) == 0:
+        return None
+    r, c = b_rc
+    d = np.hypot((ys - r) * cube.pixel_m[0], (xs - c) * cube.pixel_m[1])
+    d = np.where(d >= min_m, d, np.inf)
+    i = int(np.argmin(d))
+    if not np.isfinite(d[i]):
+        return None
+    return dict(rc=(int(ys[i]), int(xs[i])), dist_m=float(d[i]))
 
 
 # ------------------------------------------------------------- per mission ----
@@ -478,9 +504,11 @@ def read_goal(goal):
 
 
 def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safety", green_only=False,
-         goal_spec=None):
-    """goal_spec: (spec, parser, notes) when the goal was already read (e.g. streamed); else read_goal(goal)."""
+         goal_spec=None, local_hour=None):
+    """goal_spec: (spec, parser, notes) when the goal was already read (e.g. streamed); else read_goal(goal).
+    local_hour: Mars local solar time the walk starts (the planner's time slider); default LOCAL_HOUR."""
     v = MISSION_VEHICLES[vehicle]
+    hour = LOCAL_HOUR if local_hour is None else float(local_hour)
 
     # 1-2. settings and tools ------------------------------------------------------------------
     spec, parser, notes = goal_spec or read_goal(goal)
@@ -493,10 +521,16 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
     tools = tool_list(criteria, vehicle)
 
     ls = SEASONS[season]["ls"]
-    sun_e, sun_az = physics.sun_position((cube.s + cube.n) / 2, LOCAL_HOUR, ls)
+    sun_e, sun_az = physics.sun_position((cube.s + cube.n) / 2, hour, ls)
     illum = physics.illumination(cube.bands["slope"], cube.bands["aspect"], sun_e, sun_az)
     temp = physics.surface_temp_k(illum, cube.bands.get("firmness"), sun_e, cube.bands.get("albedo"))
     L = _route_layers(cube, v, season, priority, green_only)
+    if sun_e < MIN_SUN_ELEV_DEG:
+        notes.append(f"At {_hhmm(hour)} the sun is only {sun_e:.0f}° up: walks are restricted near dawn and dusk "
+                     f"(low light, long shadows, cold). Pick a time closer to midday. | sun elevation {sun_e:.1f}° "
+                     f"< {MIN_SUN_ELEV_DEG:.0f}° minimum")
+    walk = _walker_layers(cube, season, priority, green_only, v)    # for the walk-back check (None when on foot)
+    shelter_t = None                                                # minutes-to-cover map, built on first use
 
     # 3. destinations ----------------------------------------------------------------------------
     ctx = search.Ctx(cube, v, sun_e, illum, temp, L["time"], zones=SEARCH_ZONES.get(cube.region, []))
@@ -616,7 +650,12 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
             dropped.append(dict(cand, reason=f"round trip needs {b_['used']:.2f} {b_['unit']} {b_['name']} but only "
                                              f"{b_['usable']:.2f} is usable after the {100 * R['reserve']:.0f}% reserve"))
             continue
-        cand["card"] = _card(cube, (br, bc), parts, criteria, score, cand, zones, sun_e, illum, temp, season, v)
+        # route safety: minutes to cover, and walking home if the vehicle fails at B ----------------
+        if shelter_t is None:
+            shelter_t = _shelter_minutes(cube, v, L)
+        cand["safety"] = _safety_checks(cube, v, vehicle, cand, R, rr, cc, seg_len, steps, shelter_t, walk, a)
+        cand["card"] = _card(cube, (br, bc), parts, criteria, score, cand, zones, sun_e, illum, temp, season, v,
+                             hour)
         cand["_R"] = R
         candidates.append(cand)
 
@@ -637,7 +676,7 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
                       range_km=v["range_km"]), season=dict(key=season, **SEASONS[season]),
                       priority=dict(key=priority, label=PRIORITIES[priority]["label"], cost=PRIORITIES[priority]["cost"]),
                       weights=weights, criteria={k: v_[0] for k, v_ in MATRIX_CRITERIA.items()}, green_only=green_only,
-                      sun_elevation=round(sun_e, 1), local_hour=LOCAL_HOUR),
+                      sun_elevation=round(sun_e, 1), local_hour=round(hour, 2)),
         tools=tools, candidates=candidates, dropped=dropped, notes=notes,
         tracks=dict(rover=tr["rover"], km=tr["km"]) if tr else None, rect=cube.rect)
     result["explanation"], result["explanation_source"] = _template(result), "template"
@@ -645,7 +684,68 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
     return result
 
 
-def _card(cube, b_rc, parts, criteria, score, cand, zones, sun_e, illum, temp, season, v):
+def _hhmm(hour):
+    h = int(hour) % 24
+    return f"{h:02d}:{int(round((hour - int(hour)) * 60)) % 60:02d}"
+
+
+def _walker_layers(cube, season, priority, green_only, v):
+    """On-foot route layers (time per metre) for the walk-back check; None when the crew is already walking."""
+    if not v.get("battery_wh"):
+        return None
+    return _route_layers(cube, MISSION_VEHICLES["on_foot"], season, priority, green_only)
+
+
+def _shelter_minutes(cube, v, L):
+    """Minutes from every pixel to the nearest cover at this vehicle's pace: the foot of a steep wall (overhang /
+    shadowed wall; physics.shelter_seeds). The landing spot A is added per route in _safety_checks."""
+    passable = np.isfinite(L["time"])
+    seeds = physics.shelter_seeds(cube.bands["slope"], passable, steep_deg=v["max_slope"] + 2)
+    return physics.travel_time_from(np.where(passable, L["time"], np.inf), seeds, cube.pixel_m) / 60
+
+
+def _safety_checks(cube, v, vehicle, cand, R, rr, cc, seg_len, steps, shelter_t, walk, a):
+    """Shelter: worst-case minutes to cover along the route (walls, or back to the lander A).
+    Walk-back: for a vehicle, can the crew walk from B back to A on the suit oxygen left if it fails at B?"""
+    out = {}
+    if vehicle == "buggy" or v.get("pressurized"):                  # the pressurized rover is itself the shelter
+        out["shelter_min"] = 0.0
+        out["shelter_text"] = "the pressurized rover is the shelter: cover is always 0 min away"
+    else:
+        to_wall = np.nan_to_num(shelter_t[rr, cc], nan=np.inf)
+        to_A = R["t_at"] * 60                                         # minutes from A to each pixel = way back
+        worst = float(np.max(np.minimum(to_wall, to_A)))
+        out["shelter_min"] = round(worst, 1)
+        ok = worst <= SHELTER_MAX_MIN
+        out["shelter_ok"] = ok
+        out["shelter_text"] = (f"cover (a steep wall or the lander) is never more than {worst:.0f} min away"
+                               + ("" if ok else f": over the {SHELTER_MAX_MIN:.0f} min target for a solar storm"))
+    if walk is not None:                                            # riding: what if the vehicle fails at B?
+        a_, b_ = rr[:-1], cc[:-1]
+        run = seg_len[:-1]
+        load = physics.load_factor(0.0, WALKER["body_kg"], WALKER["suit_kg"])
+        o2_per_m = SUIT["o2_walk_kg_h"] / 3600 * np.nan_to_num(walk["time"][a_, b_], nan=np.nanmax(walk["time"]))
+        P = physics.path_resources(cube.bands["elevation"][rr, cc], run, o2_per_m * load, walker=True,
+                                   slope_deg=np.nan_to_num(cube.bands["slope"][a_, b_], nan=0.0))
+        need = float(P["back"])                                     # B -> A on foot
+        walk_h = float(np.sum(run * np.nan_to_num(walk["time"][a_, b_], nan=0.0))) / 3600
+        o2 = next((i for i in R["items"] if i["name"] == "oxygen"), None)
+        usable = SUIT["o2_kg"] * (1 - R["reserve"])
+        left = usable - ((o2["out"] + o2["site"]) if (o2 and v.get("suited")) else 0.0)
+        km = float(steps.sum()) / 1000
+        walk_limit = MISSION_VEHICLES["on_foot"]["range_km"]
+        ok = need <= left and km <= walk_limit
+        out.update(walkback_ok=ok, walkback_o2_need=round(need, 2), walkback_o2_left=round(max(left, 0.0), 2),
+                   walkback_h=round(walk_h, 1))
+        out["walkback_text"] = (f"if the vehicle fails at B, walking {km:.1f} km back takes ~{walk_h:.1f} h and "
+                                f"{need:.2f} kg O2 ({max(left, 0):.2f} kg left after the reserve)"
+                                + ("" if ok else (": NOT possible, keep a second vehicle or stay closer to A"
+                                                  if need > left else
+                                                  f": beyond the {walk_limit:.0f} km walking limit")))
+    return out
+
+
+def _card(cube, b_rc, parts, criteria, score, cand, zones, sun_e, illum, temp, season, v, hour=LOCAL_HOUR):
     r, c = b_rc
     b = cube.bands
     targets = [f"{search.describe(cr)}: {explain(r, c)}" for cr, explain in parts]
@@ -687,9 +787,10 @@ def _card(cube, b_rc, parts, criteria, score, cand, zones, sun_e, illum, temp, s
         terrain=[f"slope {b['slope'][r, c]:.1f}°, roughness {b['roughness'][r, c]:.1f} m, elevation {b['elevation'][r, c]:.0f} m",
                  search.ground_text(cube, r, c)],
         conditions=[f"{SEASONS[season]['label']}, dust risk {SEASONS[season]['dust_risk']:.0%}",
-                    f"at {LOCAL_HOUR:.0f}:00 local: sun {sun_e:.0f}° up, sunlight cos(i) {max(float(illum[r, c]), 0):.2f}, "
+                    f"at {_hhmm(hour)} local: sun {sun_e:.0f}° up, sunlight cos(i) {max(float(illum[r, c]), 0):.2f}, "
                     f"surface ~{temp[r, c]:.0f} K (approx.)"],
         nearby=nearby or ["nothing else notable within 2 km"], sampling=spots,
+        safety=[t for t in (cand.get("safety", {}).get("shelter_text"), cand.get("safety", {}).get("walkback_text")) if t],
         protection=["inside a COSPAR Special Region: off-limits" if special_mask(cube)[r, c]
                     else "not in a known COSPAR Special Region"] + [f"inside the {z}" for z in inside],
         from_A=cand["A"]["kind"] + (f": {cand['A']['site']}" if cand["A"]["site"] else "")
@@ -702,6 +803,9 @@ def _matrix_scores(c, v, best_rt):
     safety -= 2 if r["max_slope"] > 0.8 * v["max_slope"] else 1 if r["max_slope"] > 0.6 * v["max_slope"] else 0
     safety -= 2 if r["loose_pct"] > 50 else 1 if r["loose_pct"] > 25 else 0
     safety -= 1 if r["yellow_pct"] > 25 else 0
+    s = c.get("safety", {})
+    safety -= 1 if s.get("shelter_ok") is False else 0              # cover too far away for a solar storm
+    safety -= 2 if s.get("walkback_ok") is False else 0             # can't walk home if the vehicle fails
     left = min(i["left_pct"] for i in res["items"]) / 100
     landing = (4 if c["A"]["kind"] == "NASA candidate" else 3) + (1 if c["A"]["dist_km"] <= 1 else 0) \
         - (1 if c["A"]["dist_km"] > 0.8 * v["range_km"] else 0)
