@@ -51,3 +51,7 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#45](PR-045-feat-siddhi.md) | docs: changelog files for PRs #40-#44 | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#46](PR-046-feat-gk.md) | Game: vehicle handling, dismounting, and a sampling spot at B | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | none |
 | [#47](PR-047-feat-siddhi.md) | Feat/siddhi | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#48](PR-048-feat-jason-chen10-marsmap.md) | Stream real Mars terrain and open regions in topographic 3D | `siddhilakkarsu-max/feat/jason-chen10-marsmap` | 2026-11-15 | 4 file(s) |
+| [#49](PR-049-feat-siddhi.md) | Autoplay tour: a looping cinematic flythrough of the planner with cap… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#50](PR-050-feat-gk.md) | Game leaderboard with callsigns, and a 'mission ready' launch button on the planner | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | none |
+| [#51](PR-051-feat-siddhi.md) | Flythrough: every map view, weather layer, area layer, overlay and pa… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
