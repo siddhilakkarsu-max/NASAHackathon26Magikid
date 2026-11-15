@@ -10,8 +10,9 @@ Mission planner: goal + vehicle + season + priority -> the recommended mission.
                    spot passing config.LANDING_RULES ("Tool-found")
   4. routes        cost map from time, energy/oxygen, terrain risk and seasonal dust; green rover tracks get a
                    discount, yellow ones a penalty, off-limits terrain is blocked; lowest-cost route A -> B
-     resources     round-trip oxygen and/or battery incl. tool mass, with a 15-25 % reserve and a turnaround
-                   deadline; routes that fail are dropped
+     resources     oxygen and/or battery out and back (the return is the route reversed: Minetti slope cost
+                   for walkers, m g h climbs for vehicles) incl. tool mass, with a 15-25 % reserve and a
+                   turnaround deadline; routes that fail are dropped
   5. decision      each candidate scored 1-5 on config.MATRIX_CRITERIA, weighted by priority -> recommended
   6. explanation   the AI model words the reasons from the numbers (template text without a model)
 
@@ -28,8 +29,9 @@ from skimage.draw import line as draw_line
 
 import physics
 import search
-from config import (ESSENTIALS, LANDING_RULES, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES, NASA_SITES,
-                    PRIORITIES, SEARCH_ZONES, SEASONS, SITE_HOURS, SPECIAL_REGIONS, SUIT, TOOLS, TRACK_RULES)
+from config import (CONSUMABLE_RESERVE, ESSENTIALS, LANDING_RULES, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
+                    NASA_SITES, PRIORITIES, SEARCH_ZONES, SEASONS, SITE_HOURS, SPECIAL_REGIONS, SUIT, TOOLS,
+                    TRACK_RULES, VEHICLE_POWER, WALKER)
 
 ROOT = Path(__file__).parent
 LOCAL_HOUR = 11.0            # plan the walk for late morning: sun high, warmest part of the day
@@ -232,7 +234,12 @@ def _route_layers(cube, v, season, priority, green_only):
     if v["battery_wh"]:
         energy = v["wh_per_km"] / 1000 * (1 + 0.05 * slope) * (1 + 0.5 * v["sand_penalty"] * (1 - firm) ** 2)
     else:                                                            # on foot: oxygen per metre walked
-        energy = SUIT["o2_walk_kg_h"] / 3600 * (1 + 0.04 * slope) / np.maximum(speed, 1e-3)
+        # flat-ground pace (the planner's slope slowdown taken back out) x Minetti's cost of going up and
+        # coming back down this slope, as the resource check charges it (a pixel has no direction)
+        s = np.minimum(slope, 60.0)
+        g = np.tan(np.radians(s))
+        updown = (physics.minetti_cw(g) + physics.minetti_cw(-g)) / (2 * physics.minetti_cw(0.0))
+        energy = SUIT["o2_walk_kg_h"] / 3600 * time * physics.walker_slope_slowdown(s) * updown
     risk = (slope / v["max_slope"]) ** 2 + (1 - firm) ** 2 + 0.3 * rough_n
     w = PRIORITIES[priority]["cost"]
     finite = np.isfinite(time)
@@ -251,41 +258,105 @@ def _route_layers(cube, v, season, priority, green_only):
     return dict(time=time, energy=energy, risk=risk, cost=cost, red=red)
 
 
-def _resources(v, tools, seg_len, rr, cc, L, priority, season):
-    """Round-trip oxygen and/or battery use, reserve, and the turnaround deadline.
-    Each resource also gets "at": the outbound use on reaching every route pixel (for the hover readout)."""
-    step_s = seg_len * L["time"][rr, cc]                       # seconds for the step leaving each pixel
-    t_at = np.concatenate([[0.0], np.cumsum(step_s)[:-1]]) / 3600
-    out_time_h = float(step_s.sum() / 3600)
-    rt_h = 2 * out_time_h + SITE_HOURS
+MODEL_SOURCE = ("Walking oxygen: flat-ground pace x Minetti et al. 2002 (J Appl Physiol 93:1039) slope cost ratio, "
+                "x carried load (body + suit + tools); the return leg is the route reversed, so climbs out are "
+                "descents back. Vehicles: drive energy plus m g h for every climb on each leg (a lower bound). "
+                "Same model as the gear page (physics.path_resources).")
+# MISSION_VEHICLES -> config.VEHICLE_POWER entry, where one describes the same kind of vehicle. Only the
+# pressurized buggy has a counterpart (the crew rover, battery recharged 2:1 from sunlight); the scout bike and
+# the open rover have no published power source here, so no recharge time is given for them.
+POWER_MAP = {"buggy": "pressurized_rover"}
 
-    def running(step):                                        # use on arrival at each pixel, and the total
-        c = np.cumsum(step)
-        return np.concatenate([[0.0], c[:-1]]), float(c[-1])
-    reserve = PRIORITIES[priority]["reserve"] + (0.05 if SEASONS[season]["dust_risk"] >= 0.3 else 0.0)
+
+def _reserve(priority, season):
+    """The priority's reserve (+5 % in dusty seasons), never below the team's contingency rule
+    (config.CONSUMABLE_RESERVE: 15 %, 20 % in the dust-storm season Ls 180-330)."""
+    ls = SEASONS[season]["ls"] % 360
+    lo, hi = CONSUMABLE_RESERVE["dust_season_ls"]
+    floor = CONSUMABLE_RESERVE["dust_season" if lo <= ls <= hi else "normal"]
+    return max(PRIORITIES[priority]["reserve"] + (0.05 if SEASONS[season]["dust_risk"] >= 0.3 else 0.0), floor)
+
+
+def _sunlight(cube, season):
+    """Dust opacity at the region this season and the share of direct sunlight it lets through (cached)."""
+    def make():
+        lat, lon, ls = (cube.s + cube.n) / 2, (cube.w + cube.e) / 2, SEASONS[season]["ls"]
+        tau = physics.dust_opacity(lat, lon, ls)
+        return tau, physics.daily_sunlight_fraction(lat, ls, tau)
+    return _cached(cube, ("sunlight", season), make)
+
+
+def _turn_h(r, step_h, out_h):
+    """Latest time after leaving A to turn back: the furthest point k where the cost out to k plus the cost
+    of walking/driving back from k (the reversed path) plus the site work still fits in the usable supply.
+    Beyond B it is extended at the round trip's average burn per outbound hour (the old formula's meaning)."""
+    cum_c = np.concatenate([[0.0], np.cumsum(r["step"])])
+    cum_t = np.concatenate([[0.0], np.cumsum(step_h)])
+    budget = r["usable"] - r["site"]
+    if budget >= cum_c[-1]:
+        return out_h + (budget - cum_c[-1]) * out_h / max(cum_c[-1], 1e-12)
+    return float(np.interp(budget, cum_c, cum_t)) if budget > 0 else 0.0
+
+
+def _resources(cube, vehicle, v, tools, seg_len, rr, cc, L, priority, season):
+    """Round-trip oxygen and/or battery use, reserve, and the turnaround deadline. The way out and the way back
+    are costed separately (physics.path_resources): the return leg is the outbound route reversed.
+    Each resource also gets "at": the outbound use on reaching every route pixel (for the hover readout)."""
+    n = len(rr) - 1
+    run = seg_len[:n]
+    a, b_ = rr[:n], cc[:n]                                          # the pixel each step leaves from
+    step_h = run * L["time"][a, b_] / 3600
+    t_at = np.concatenate([[0.0], np.cumsum(step_h)])               # hours on reaching each of the len(rr) pixels
+    out_time_h = float(step_h.sum())
+    rt_h = 2 * out_time_h + SITE_HOURS
+    reserve = _reserve(priority, season)
+    z = cube.bands["elevation"][rr, cc]
+
+    def arrival(step_out):                                          # outbound use on reaching each pixel
+        return np.concatenate([[0.0], np.cumsum(step_out)])
     res = []
-    load = 1 + tools["kg"] / v["mass_kg"]
+    # O2 or Wh per metre, the same in both directions; slope and climbs are added by path_resources
+    o2_per_m = (SUIT["o2_ride_kg_h"] if v["battery_wh"] else SUIT["o2_walk_kg_h"]) / 3600 * L["time"][a, b_]
     if v["suited"]:
-        if v["battery_wh"]:
-            o2_at, o2_out = t_at * SUIT["o2_ride_kg_h"], out_time_h * SUIT["o2_ride_kg_h"]
-        else:
-            o2_at, o2_out = running(seg_len * L["energy"][rr, cc] * load)
-        res.append(dict(name="oxygen", unit="kg", cap=SUIT["o2_kg"], out=o2_out, site=SITE_HOURS * SUIT["o2_site_kg_h"],
-                        source=SUIT["source"], at=o2_at))
+        if v["battery_wh"]:                                         # riding: suit O2 by the hour
+            P = physics.path_resources(z, run, o2_per_m)
+            extra = {}
+        else:                                                       # walking: Minetti x carried load
+            load = physics.load_factor(tools["kg"], WALKER["body_kg"], WALKER["suit_kg"])
+            P = physics.path_resources(z, run, o2_per_m * load, walker=True,
+                                       slope_deg=np.nan_to_num(cube.bands["slope"][a, b_], nan=0.0))
+            extra = dict(slope_factor=round(P["slope_factor"], 3), slope_factor_out=round(P["slope_factor_out"], 3),
+                         slope_factor_back=round(P["slope_factor_back"], 3), load_factor=round(load, 3))
+        res.append(dict(name="oxygen", unit="kg", cap=SUIT["o2_kg"], out=P["out"], back=P["back"],
+                        site=SITE_HOURS * SUIT["o2_site_kg_h"], step=P["step_out"] + P["step_back"],
+                        source=SUIT["source"], extra=extra, at=arrival(P["step_out"])))
     if v["battery_wh"]:
-        drive_at, drive = running(seg_len * L["energy"][rr, cc] * load)
-        res.append(dict(name="battery", unit="Wh", cap=v["battery_wh"], out=drive + out_time_h * v["hotel_w"],
-                        site=tools["site_wh"] + SITE_HOURS * v["hotel_w"], at=drive_at + t_at * v["hotel_w"]))
+        load = 1 + tools["kg"] / v["mass_kg"]                      # tools add to the vehicle's mass
+        wh_per_m = L["energy"][a, b_] * load + v["hotel_w"] * L["time"][a, b_] / 3600
+        P = physics.path_resources(z, run, wh_per_m, mass_kg=v["mass_kg"] + tools["kg"])
+        extra = dict(climb_wh=round(P["climb_wh_out"] + P["climb_wh_back"], 1),
+                     climb_wh_out=round(P["climb_wh_out"], 1), climb_wh_back=round(P["climb_wh_back"], 1))
+        power = VEHICLE_POWER.get(POWER_MAP.get(vehicle, ""), {})
+        tau, frac = _sunlight(cube, season)
+        extra.update(power_source=power.get("source"), dust_opacity=None if tau is None else round(tau, 2),
+                     sunlight_pct=None if frac is None else int(round(100 * frac)), recharge_h=None)
+        if power.get("source") == "battery" and power.get("recharge_ratio") and frac and frac > 1e-6:
+            extra["recharge_h"] = round(power["recharge_ratio"] * 2 * out_time_h / frac, 1)
+        res.append(dict(name="battery", unit="Wh", cap=v["battery_wh"],
+                        out=P["out"] + P["climb_wh_out"], back=P["back"] + P["climb_wh_back"],
+                        site=tools["site_wh"] + SITE_HOURS * v["hotel_w"],
+                        step=P["step_out"] + P["step_back"] + P["climb_out_wh"] + P["climb_back_wh"], extra=extra,
+                        at=arrival(P["step_out"] + P["climb_out_wh"])))     # drive + idle + climbs so far
     for r in res:
-        r["used"] = 2 * r["out"] + r["site"]
+        r["used"] = r["out"] + r["back"] + r["site"]
         r["usable"] = r["cap"] * (1 - reserve)
         r["left"] = 1 - r["used"] / r["cap"]
         r["ok"] = r["used"] <= r["usable"]
-        # latest time to turn back: half of what is left after the site work, at the outbound burn rate
-        r["turn_h"] = (r["usable"] - r["site"]) / 2 / max(r["out"] / max(out_time_h, 1e-6), 1e-9)
+        r["turn_h"] = _turn_h(r, step_h, out_time_h)
     binding = max(res, key=lambda r: r["used"] / r["usable"])
     return dict(out_h=out_time_h, rt_h=rt_h, reserve=reserve, items=res, binding=binding, t_at=t_at,
-                ok=all(r["ok"] for r in res), turn_h=min(r["turn_h"] for r in res))
+                ok=all(r["ok"] for r in res), turn_h=min(r["turn_h"] for r in res),
+                gain_m=P["gain_m"], loss_m=P["loss_m"])
 
 
 def _score(x, steps):
@@ -368,7 +439,7 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
         steps = np.hypot(np.diff(rr) * cube.pixel_m[0], np.diff(cc) * cube.pixel_m[1])
         seg_len = np.append(steps, 0.0)                             # length of the step leaving each pixel
         dist_km = float(steps.sum() / 1000)
-        R = _resources(v, tools, seg_len, rr, cc, L, priority, season)
+        R = _resources(cube, vehicle, v, tools, seg_len, rr, cc, L, priority, season)
         slope = cube.bands["slope"][rr, cc]
         ti = _ti(cube)
         loose = (np.nan_to_num(ti[rr, cc], nan=300) < 200) if ti is not None else \
@@ -401,9 +472,14 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
         cand["resources"] = dict(
             reserve_pct=round(100 * R["reserve"]), binding=R["binding"]["name"], ok=R["ok"],
             items=[dict(name=r["name"], unit=r["unit"], capacity=round(r["cap"], 2), used=round(r["used"], 2),
-                        left_pct=round(100 * r["left"]), ok=r["ok"], source=r.get("source", "")) for r in R["items"]],
+                        left_pct=round(100 * r["left"]), ok=r["ok"], source=r.get("source", ""),
+                        out=round(r["out"], 3), back=round(r["back"], 3), site=round(r["site"], 3),
+                        usable=round(r["usable"], 2), **r["extra"]) for r in R["items"]],
             turnaround=dict(h=round(R["turn_h"], 2), lat=round(tlat, 5), lon=round(tlon, 5),
-                            at_B=bool(R["turn_h"] >= R["out_h"])))
+                            at_B=bool(R["turn_h"] >= R["out_h"])),
+            elevation_gain_m=round(R["gain_m"]), elevation_loss_m=round(R["loss_m"]),
+            reserve_rule="priority reserve (+5% in dusty seasons), at least 15% / 20% in the dust-storm season",
+            model="minetti", model_source=MODEL_SOURCE)
         if dist_km > v["range_km"]:
             dropped.append(dict(cand, reason=f"route {dist_km:.1f} km is beyond the {v['range_km']:.0f} km range")); continue
         if not R["ok"]:
