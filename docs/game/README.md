@@ -14,7 +14,8 @@ guide and the hand-over for the next developer or agent.
 |---|---|
 | `run.bat` / `./run.sh`, then `http://localhost:8000/game.html` | Online mode: plan any mission on the title screen, real weather, pixel values and rover tracks |
 | **Play** button on the gear page (`kit.html`) | Opens the game and plans a mission from the kit form's vehicle, season, region and goals |
-| **Play this mission** on the planner (`index.html`) | Opens the exact plan and selected route. Needs one line in `index.html`, see "Pending" below |
+| **Play route #N** in the planner's Mission results | Opens the exact plan and selected route in a new tab |
+| **Game · Survive the route** on the planner | A collapsed section for playing the selected route or browsing ready-made missions |
 | Double-click `frontend/game.html` | Offline mode: five baked real missions, embedded Jezero weather tables, generated terrain |
 
 ## How to play
@@ -65,7 +66,7 @@ breach), `tools` (every charge spent more than 30 m from A: 20 s countdown), `of
 | `cand=<0-2>` | Route index |
 | `difficulty=cadet\|astronaut\|commander` | Burn x0.90 / 1.00 / 1.15, corridor 16 / 12 / 9 m, hazards x0.6 / 1 / 1.5 |
 | `src=planner` | Load the hand-off from `localStorage["marswalk.game.mission"]` |
-| `goal=`, `vehicle=`, `season=`, `priority=`, `green_only=1`, `region=` | Plan live through `/api/mission/stream` (falls back to a baked mission with a note) |
+| `goal=`, `vehicle=`, `season=`, `ls=`, `priority=`, `green_only=1`, `region=` | Plan live through `/api/mission/stream`; exact `ls` overrides the season preset (falls back to a baked mission with a note) |
 | `autopilot=1` | A bot follows the path, samples and returns (demos, tests) |
 | `speed=<1-200>` | Simulation speed multiplier |
 | `skip=1`, `mute=1` | Skip cutscenes, start muted |
@@ -86,8 +87,10 @@ blackout, scree and a return under pressure).
 |---|---|
 | `frontend/game.html` | The whole game. Edit it directly; there is no generator to re-run |
 | `frontend/game-launch.js` | Adds Play buttons to `index.html` (when included) and `kit.html`; writes the hand-off |
-| `tests/test_game.py` | Structure and contract tests (10), part of `python -m unittest discover -s tests` |
+| `tests/test_game.py` | Structure, contract and launcher tests, part of `python -m unittest discover -s tests` |
 | `docs/game/smoke_test.js` | Headless-Chrome autopilot run over every baked mission and route |
+| `docs/game/launcher_test.js` | Dependency-free Node checks for saved-plan settings, region, exact season, storage fallback and kit mapping |
+| `docs/game/integration_test.mjs` | Playwright browser checks for compact launch UI, route handoff, kit rerender, live-plan fallback, geographic raster alignment and cancelled-plan isolation |
 
 ### Sections of `game.html` (search for `// N.` headings)
 
@@ -116,7 +119,7 @@ Hand-off written by `game-launch.js`, read by `readHandoff()` and treated as unt
 
 ```json
 {"v":1,"savedAt":0,"region":"jezero","selected":0,
- "request":{"goal":"","vehicle":"","season":"","priority":"","green_only":false},
+ "request":{"goal":"","vehicle":"","season":"","ls":90,"priority":"","green_only":false},
  "hour":11,"ls":90,"ai":{"goal":{"reasoning":"","content":""},"explain":{"reasoning":"","content":""}},
  "mission":{}}
 ```
@@ -162,9 +165,24 @@ A wrong use wastes a charge.
 ### Verify before committing
 
 ```bash
-python -m unittest discover -s tests                      # 149 tests
+python -m unittest discover -s tests
+node docs/game/launcher_test.js                          # no dependencies
 node docs/game/smoke_test.js http://127.0.0.1:8000        # 14/14 routes, needs puppeteer-core and a running server
+node docs/game/integration_test.mjs                     # needs playwright; mocks app APIs, no server required
 ```
+
+For the browser integration checks, install `playwright` or set `PLAYWRIGHT_MODULE` to its importable module
+URL. Set `CHROME` if Chrome is not at the default Windows location. These checks use deterministic planner
+responses; the smoke test above exercises the served game separately.
+
+The planner handoff reads the saved mission settings even when the form contains a draft for the next plan.
+It preserves the selected candidate and the resolved region, and passes the exact solar longitude through
+the URL if browser storage is unavailable. The Game section stays collapsed until opened; its shortcut in
+Mission results is hidden while planning and when a region change clears the mission. Kit Play keeps its
+existing form-to-live-mission flow and preserves the form's exact solar longitude.
+Selecting another mission cancels an outstanding live plan; a late response cannot replace the chosen game.
+Both briefing and gameplay place imagery using the bounds returned with that image, independently of the
+mission's science raster bounds. Images without valid geographic bounds use the procedural fallback.
 
 ### Verified on 2026-11-15, first-person 3D build (headless Chrome, Intel UHD graphics)
 
@@ -184,16 +202,15 @@ node docs/game/smoke_test.js http://127.0.0.1:8000        # 14/14 routes, needs 
   and 16 flow checks (live planning, hand-off, corrupt and hostile hand-off, URL planning, offline fallback).
 - 59-60 frames per second, about 1.5 ms of script per frame.
 
-### Pending and limits
+### Limits
 
-- **Pending:** `frontend/index.html` belongs to other teammates and is not edited. To get the Play button there,
-  add `<script src="/game-launch.js" defer></script>` in `<head>` after the `mars_lighting.js` tag. The script
-  injects the button itself. It was tested by injecting it into the page, but that test predates the planner's
-  new landing screen and has not been repeated since.
+- The launcher is included by both planner and kit pages. Browser integration checks cover the collapsed Game
+  section and selected-route action; regional imagery and track caches are reset when their region changes.
 - The baked missions and `VEH` match the planner at main `e3f16de`. If vehicle numbers change again,
   `test_vehicle_table_matches_planner` fails: update `VEH` and re-fetch the `BAKED` lines from `/api/mission`.
-- Baked missions and the embedded weather table are Jezero only. Live planning sends whatever `region` it is
-  given, but other regions are untested in the game.
+- Baked missions and the embedded weather table are Jezero only. When live weather is unavailable, the HUD
+  explicitly labels the inherited Jezero climate fallback, including for missions elsewhere. Non-Jezero
+  raster positioning is covered by mocked browser regressions; this does not validate that region's live data.
 - Terrain off the corridor is generated, so it does not match the real ground. On the corridor it follows the
   plan's risk values.
 - Storms, breaches and tool wear are game rules; the planner has no such events.

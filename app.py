@@ -5,6 +5,7 @@ The Cesium front end only displays what this returns.
 Run:   uvicorn app:app --reload --port 8000
 Open:  http://localhost:8000
 """
+import asyncio
 import base64
 import io
 import json
@@ -19,7 +20,8 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,6 +30,8 @@ from matplotlib.colors import LinearSegmentedColormap, to_hex
 from PIL import Image
 from pydantic import BaseModel, Field
 
+import annotate
+import assistant
 import mission
 import murray
 import physics
@@ -119,7 +123,12 @@ def _cube_meta(region, mtime):
     w, s, e, n = [float(v) for v in z["bounds"]]
     H, W = z["coverage_fraction"].shape
     mid = math.radians((s + n) / 2)
-    return {"region": region, "label": region_label(region), "rect": {"west": w, "south": s, "east": e, "north": n},
+    label = region_label(region)
+    if region.startswith("site_"):                   # name an area after the IAU place it is in or near
+        place = murray.place_name((s + n) / 2, (w + e) / 2)
+        if place:
+            label = f"{place} ({label.removeprefix('Site ')})"
+    return {"region": region, "label": label, "rect": {"west": w, "south": s, "east": e, "north": n},
             "size": [W, H], "bands": names,
             "pixel_m": [round((e - w) / W * math.pi / 180 * MARS_RADIUS_M * math.cos(mid)),
                         round((n - s) / H * math.pi / 180 * MARS_RADIUS_M)],
@@ -241,6 +250,8 @@ class MissionRequest(BaseModel):
     ls: float | None = Field(None, ge=0, le=360, description="season slider (solar longitude); overrides 'season'")
     priority: str = "safety"
     green_only: bool = Field(False, description="stick to green, rover-verified tracks where possible")
+    local_hour: float | None = Field(None, ge=0, le=24, description="Mars local solar time the walk starts "
+                                     "(the time slider); default 11:00")
 
 
 class FindRequest(Conditions):
@@ -985,6 +996,23 @@ def find(req: FindRequest):
 _missions = {}   # mission id -> facts for the explanation (last 50)
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"] = "user"
+    text: str = Field(..., max_length=1000)
+
+
+class AssistantRequest(BaseModel):
+    messages: list[ChatMessage] = Field(..., min_length=1, max_length=40)
+    state: dict = Field(default_factory=dict, description="what the page shows: region, hour, vehicle, has_mission, places")
+    memo: dict = Field(default_factory=dict, description="what this chat has settled; sent back each turn")
+
+
+@app.post("/api/assistant")
+def assistant_reply(req: AssistantRequest):
+    """Chat box: a sentence in, a reply + suggested answers + map actions out (built-in rules; AI if configured)."""
+    return assistant.reply([m.model_dump() for m in req.messages], req.state, req.memo)
+
+
 @app.get("/api/mission/options")
 def mission_options():
     return {"vehicles": {k: {"label": v["label"], "max_slope": v["max_slope"], "range_km": v["range_km"]}
@@ -999,13 +1027,14 @@ def plan_mission(req: MissionRequest):
     """Goal + vehicle + season + priority -> 3 candidate missions, the decision matrix and the winner."""
     c = _mission_cube(req)
     try:
-        res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only)
+        res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
+                           local_hour=req.local_hour)
     except mission.NoLandingSpot as e:
         nl = _no_landing(c, e)
         raise HTTPException(400, f"{nl['text']} | {nl['detail']}")
     except ValueError as e:
         raise HTTPException(400, _loading_hint(c.region, str(e)))
-    return _finish_mission(res)
+    return _finish_mission(res, c)
 
 
 def _no_landing(cube, err):
@@ -1049,9 +1078,14 @@ def _mission_cube(req):
     return get_cube(req.region)
 
 
-def _finish_mission(res):
-    """Give the plan an id (for the explanation) and turn its maps into PNG overlays."""
+def _finish_mission(res, cube=None):
+    """Give the plan an id (for the explanation), add the map notes along each route (cliffs, soft sand,
+    minerals; annotate.py) and turn its maps into PNG overlays."""
     score, red = res.pop("_score"), res.pop("_red")
+    if cube is not None:
+        v = MISSION_VEHICLES[res["settings"]["vehicle"]["key"]]
+        for c in res["candidates"]:
+            c["map_notes"] = annotate.route_notes(cube, c, v)
     res["id"] = uuid.uuid4().hex[:12]
     _missions[res["id"]] = mission.explain_facts(res)
     while len(_missions) > 50:
@@ -1062,12 +1096,12 @@ def _finish_mission(res):
 
 
 @app.post("/api/mission/stream")
-def plan_mission_stream(req: MissionRequest):
+async def plan_mission_stream(req: MissionRequest, request: Request):
     """The same plan as /api/mission, as a stream of server-sent events, with the AI model's thinking live:
     {"type": "status"|"ai"|"result"|"explanation"|"note"|"error"|"done", ...}
     "ai" events carry phase ("goal" = reading the goal, "explain" = explaining the choice), kind ("reasoning" =
     the model's thinking, "content" = its answer) and a piece of text."""
-    c = _mission_cube(req)
+    c = await run_in_threadpool(_mission_cube, req)
 
     def event(**data):
         return f"data: {json.dumps(data, default=lambda o: o.item() if hasattr(o, 'item') else str(o))}\n\n"
@@ -1077,7 +1111,9 @@ def plan_mission_stream(req: MissionRequest):
         if spec["unknown"] or not spec["criteria"]:
             yield event(type="status", text="The AI is reading your goal…")
             for kind, *rest in search.ai_parse_stream(req.goal):
-                if kind in ("reasoning", "content"):
+                if kind == "waiting":
+                    yield event(type="ai_wait", phase="goal", ahead=rest[0])
+                elif kind in ("reasoning", "content"):
                     yield event(type="ai", phase="goal", kind=kind, text=rest[0])
                 elif kind == "spec" and rest[0]["criteria"]:
                     spec, parser = rest[0], "ai"
@@ -1086,7 +1122,7 @@ def plan_mission_stream(req: MissionRequest):
         yield event(type="status", text="Finding the best places, landing spots and routes…")
         try:
             res = _finish_mission(mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
-                                               goal_spec=(spec, parser, notes)))
+                                               goal_spec=(spec, parser, notes), local_hour=req.local_hour), c)
         except mission.NoLandingSpot as e:
             yield event(type="status", text=str(e).split(" | ")[0] + " Looking for the nearest firm ground…")
             yield event(type="error", **_no_landing(c, e))
@@ -1099,16 +1135,48 @@ def plan_mission_stream(req: MissionRequest):
             yield event(type="status", text="The AI is explaining the choice…")
             text = None
             for kind, *rest in mission.explain_stream(_missions[res["id"]]):
-                if kind in ("reasoning", "content"):
+                if kind == "waiting":
+                    yield event(type="ai_wait", phase="explain", ahead=rest[0])
+                elif kind in ("reasoning", "content"):
                     yield event(type="ai", phase="explain", kind=kind, text=rest[0])
                 elif kind == "done":
                     text = rest[0].strip() or None
                 elif kind == "error":
                     yield event(type="note", text=rest[0])
             yield event(type="explanation", text=text or res["explanation"], source="ai" if text else "template")
+            notes_all = [n for cand in res["candidates"] for n in cand.get("map_notes", [])]
+            if notes_all:                           # the AI words the map notes along the routes
+                yield event(type="status", text="The AI is labelling the map…")
+                for kind, *rest in annotate.captions_stream(notes_all, req.goal, res["settings"]["vehicle"]["label"]):
+                    if kind == "waiting":
+                        yield event(type="ai_wait", phase="annotate", ahead=rest[0])
+                    elif kind in ("reasoning", "content"):
+                        yield event(type="ai", phase="annotate", kind=kind, text=rest[0])
+                    elif kind == "labels":
+                        yield event(type="annotations", labels=rest[0], source="ai")
+                    elif kind == "error":
+                        yield event(type="note", phase="annotate", text=f"| map labels: {rest[0]}")
         yield event(type="done")
 
-    return StreamingResponse(events(), media_type="text/event-stream",
+    async def guarded():
+        """Pass events on until the page goes away; then close the generator, which closes the AI connection
+        and stops the model, so an abandoned plan doesn't hold up everyone else's."""
+        gen, end = events(), object()
+        try:
+            while not await request.is_disconnected():
+                item = await run_in_threadpool(next, gen, end)
+                if item is end:
+                    break
+                yield item
+        finally:                              # the generator may still be busy in a worker thread: retry
+            for _ in range(600):
+                try:
+                    gen.close()
+                    break
+                except ValueError:                # "generator already executing"
+                    await asyncio.sleep(0.1)
+
+    return StreamingResponse(guarded(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 

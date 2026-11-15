@@ -1,14 +1,14 @@
 // "Play" launcher: opens game.html (Marswalk: Survive the Route) from the planner pages.
 // A plain classic script with no dependencies. Safe to include on any page, more than once; it never throws.
 //
-//   index.html  adds a "Play this mission" button under the mission result (#mResult) and a
-//               "Play this route as a game" link beside the gear link. Both hand the plan on screen to the game
+//   index.html  adds a compact "Play route #N" action inside Mission results and a collapsed Game section.
+//               Both hand the plan on screen to the game
 //               through localStorage["marswalk.game.mission"] and open game.html?src=planner in a new tab.
 //               If storage is blocked or full, the request goes in the URL instead and the game plans it again.
 //   kit.html    adds a "Play" button to the sheet's tool row. The kit page has no mission plan, so the game
-//               plans one live from URL params read off the kit form (traveller, Ls, region, science goals).
+//               plans one live from URL params read off the kit form (traveller, exact Ls, region, science goals).
 //
-// It reads two top-level bindings of index.html's inline script by bare name (`mission`, `selected`); nothing is
+// It reads the planner's `mission`, `selected` and `regionId` bindings by bare name; nothing is
 // written to them. The only global it adds is window.MarswalkGameLaunch = { version, buildPayload(), open() }.
 (function () {
   "use strict";
@@ -16,7 +16,7 @@
     if (typeof window === "undefined" || typeof document === "undefined") return;
     if (window.MarswalkGameLaunch) return;                       // already loaded on this page
 
-    var VERSION = "1.0.0";
+    var VERSION = "1.1.0";
     var GAME = "game.html";
     var STORE_KEY = "marswalk.game.mission";                     // read by game.html when the URL has ?src=planner
     var MAX_WITH_IMAGES = 1500000;                               // characters of JSON; above this the two PNGs are left out
@@ -57,16 +57,27 @@
       return isFinite(i) && i >= 0 && i < n ? Math.floor(i) : 0;
     }
 
-    function plannerRequest() {
-      return { goal: value("goal").trim(), vehicle: value("mVehicle"), season: value("mSeason"),
-               priority: value("mPriority"), green_only: isChecked("greenOnly") };
+    function plannerRegion(m) {
+      if (m && typeof m.request_region === "string" && m.request_region) return m.request_region;
+      try { if (typeof regionId === "function") return regionId(); } catch (_) {}
+      return value("region") || "jezero";
+    }
+
+    function plannerRequest(m) {
+      // Controls may already contain a draft for the next plan. Recreate the plan being played.
+      var s = (m && m.settings) || {}, season = s.season || {};
+      var ls = typeof season.ls === "number" && isFinite(season.ls) ? season.ls : number("ls");
+      return { goal: text(s.goal) || value("goal").trim(), vehicle: text(s.vehicle && s.vehicle.key) || value("mVehicle"),
+               season: text(season.key) || seasonFromLs(ls), ls: ls,
+               priority: text(s.priority && s.priority.key) || value("mPriority"),
+               green_only: typeof s.green_only === "boolean" ? s.green_only : isChecked("greenOnly") };
     }
 
     // The hand-off object, shape fixed by the game spec. null when there is no plan with candidates.
     function plannerPayload(withImages) {
       var m = currentMission();
       if (!m) return null;
-      var req = plannerRequest();
+      var req = plannerRequest(m);
       if (!req.goal && m.settings && typeof m.settings.goal === "string") req.goal = m.settings.goal;
       var copy = {}, k;
       for (k in m) {
@@ -77,7 +88,7 @@
       }
       var g = m.goal_ai || {}, x = m.explain_ai || {};
       return {
-        v: 1, savedAt: Date.now(), region: value("region"), selected: currentSelected(m), request: req,
+        v: 1, savedAt: Date.now(), region: plannerRegion(m), selected: currentSelected(m), request: req,
         hour: number("hour"), ls: number("ls"),
         ai: { goal: { reasoning: text(g.reasoning), content: text(g.content) },
               explain: { reasoning: text(x.reasoning), content: text(x.content) } },
@@ -107,10 +118,10 @@
       try { json = JSON.stringify(full); } catch (_) { json = ""; }
       if (json && json.length <= MAX_WITH_IMAGES && store(full)) return GAME + "?src=planner";
       if (store(plannerPayload(false))) return GAME + "?src=planner";
-      var r = plannerRequest();
+      var r = plannerRequest(m);
       if (!r.goal && m.settings && typeof m.settings.goal === "string") r.goal = m.settings.goal;
-      return GAME + query([["goal", r.goal], ["vehicle", r.vehicle], ["season", r.season], ["priority", r.priority],
-                           ["green_only", r.green_only ? 1 : 0], ["region", value("region")], ["cand", currentSelected(m)]]);
+      return GAME + query([["goal", r.goal], ["vehicle", r.vehicle], ["season", r.season], ["ls", r.ls], ["priority", r.priority],
+                           ["green_only", r.green_only ? 1 : 0], ["region", plannerRegion(m)], ["cand", currentSelected(m)]]);
     }
 
     // ------------------------------------------------------------ kit page (kit.html)
@@ -137,6 +148,7 @@
         goal: kitGoal(),
         vehicle: KIT_VEHICLE[veh] || "four_wheel",
         season: seasonFromLs(number("ls")),
+        ls: number("ls"),
         priority: "safety",
         green_only: 0,
         region: value("region") || "jezero"
@@ -144,7 +156,7 @@
     }
     function kitUrl() {
       var p = kitParams();
-      return GAME + query([["goal", p.goal], ["vehicle", p.vehicle], ["season", p.season], ["priority", p.priority],
+      return GAME + query([["goal", p.goal], ["vehicle", p.vehicle], ["season", p.season], ["ls", p.ls], ["priority", p.priority],
                            ["green_only", p.green_only], ["region", p.region]]);
     }
 
@@ -177,35 +189,44 @@
     function mountPlanner() {
       var result = byId("mResult"), run = byId("runMission");
       var btn = byId("playMission"), note = byId("playMissionNote");
+      var style = document.createElement("style");
+      style.textContent = ".game-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}" +
+        ".game-actions button,#gameSection button{width:auto;margin:0;padding:8px 12px}" +
+        ".game-actions[hidden]{display:none}";
+      document.head.appendChild(style);
+      var actions = byId("gameMissionActions");
+      if (!actions) {
+        actions = document.createElement("div");
+        actions.id = "gameMissionActions"; actions.className = "game-actions"; actions.hidden = true;
+        result.insertAdjacentElement("afterend", actions);
+      }
       if (!btn) {
-        btn = document.createElement("button");                  // inherits the panel's full-width orange button style
-        btn.id = "playMission"; btn.type = "button"; btn.hidden = true;
-        btn.textContent = "▶ Play this mission";
-        result.insertAdjacentElement("afterend", btn);           // outside #mResult: renderMission() empties it
+        btn = document.createElement("button");
+        btn.id = "playMission"; btn.type = "button"; btn.className = "secondary";
+        btn.textContent = "Play selected route";
+        actions.appendChild(btn);                               // outside #mResult: renderMission() empties it
         btn.addEventListener("click", function () { try { if (currentMission()) openGame(); } catch (_) {} });
       }
       if (!note) {
-        note = document.createElement("div");
-        note.id = "playMissionNote"; note.className = "small"; note.hidden = true;
-        btn.insertAdjacentElement("afterend", note);
+        note = document.createElement("span");
+        note.id = "playMissionNote"; note.className = "small";
+        note.textContent = "Survival game · opens a new tab";
+        actions.appendChild(note);
       }
-
-      var gear = byId("gearLink"), sep = byId("playLinkSep"), link = byId("playLink");
-      if (gear && gear.parentNode && !link) {
-        sep = document.createElement("span");
-        sep.id = "playLinkSep"; sep.hidden = true; sep.textContent = " · ";
-        link = document.createElement("a");
-        link.id = "playLink"; link.hidden = true; link.target = "_blank"; link.rel = "noopener";
-        link.href = GAME; link.textContent = "Play this route as a game";
-        gear.insertAdjacentElement("afterend", sep);
-        sep.insertAdjacentElement("afterend", link);
-        // same pattern as gearLink: fix the href on click, then let the browser open the tab
-        link.addEventListener("click", function (ev) {
-          try {
-            if (!currentMission()) { ev.preventDefault(); return; }
-            link.href = launchUrl();
-          } catch (_) {}
-        });
+      var section = byId("gameSection"), gameButton, gameNote;
+      if (!section) {
+        section = document.createElement("details");
+        section.id = "gameSection"; section.className = "panel-section";
+        section.setAttribute("name", "workspace");
+        var summary = document.createElement("summary"); summary.textContent = "Game · Survive the route";
+        gameNote = document.createElement("p"); gameNote.className = "small"; gameNote.id = "gameSectionNote";
+        gameButton = document.createElement("button");
+        gameButton.id = "gameOpen"; gameButton.type = "button"; gameButton.className = "secondary";
+        section.appendChild(summary); section.appendChild(gameNote); section.appendChild(gameButton);
+        (byId("missionResults") || result).insertAdjacentElement("afterend", section);
+        gameButton.addEventListener("click", function () { if (!run.disabled) openGame(); });
+      } else {
+        gameButton = byId("gameOpen"); gameNote = byId("gameSectionNote");
       }
 
       var last = "";
@@ -213,13 +234,17 @@
         try {
           var m = currentMission();
           var show = !!m && !run.disabled;                       // disabled = a new plan is being computed
-          var n = m ? currentSelected(m) + 1 : 0;
-          var key = show + ":" + n;
-          if (key === last && btn.hidden === !show) return;
+          var n = m ? m.candidates[currentSelected(m)].rank || currentSelected(m) + 1 : 0;
+          var key = show + ":" + n + ":" + run.disabled;
+          if (key === last && actions.hidden === !show) return;
           last = key;
-          btn.hidden = !show; note.hidden = !show;
-          if (link) { link.hidden = !show; sep.hidden = !show; }
-          if (show) note.textContent = "Opens route #" + n + " in a new tab as a game: follow the path to B, do the science, get back to A alive.";
+          actions.hidden = !show; btn.disabled = !show;
+          btn.textContent = "Play route #" + n;
+          gameButton.disabled = run.disabled;
+          gameButton.textContent = show ? "Play route #" + n : "Browse game missions";
+          gameNote.textContent = show
+            ? "Play the selected mission: follow route #" + n + " to B, collect a sample, and return to A. Opens in a new tab."
+            : "Follow a planned route, collect samples, and return safely. Plan a mission above or try a ready-made mission. Opens in a new tab.";
         } catch (_) {}
       }
 
