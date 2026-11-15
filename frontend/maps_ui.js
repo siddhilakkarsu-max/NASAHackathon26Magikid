@@ -26,6 +26,13 @@
     gem: '<path d="M6 4h12l3 5-9 11L3 9z"/><path d="M3 9h18M9 4l3 16 3-16"/>',
     tracks: '<path d="M6 21c0-6 4-7 4-12S8 3 8 3M16 21c0-6-2-7-2-12s2-6 2-6"/>',
     photo: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-8 8"/>',
+    rocket: '<path d="M14.5 4.5c2.6-1.3 5-1.2 5-1.2s.1 2.4-1.2 5l-5.6 5.6-3.6-3.6z"/><path d="m9.1 10.3-3.4-.4-2.2 2.2 3.8 1.2M13.7 14.9l.4 3.4-2.2 2.2-1.2-3.8"/><circle cx="15.4" cy="8.6" r="1.4"/><path d="M6.5 17.5 4 20M8.5 18.5l-1.5 1.5M5.5 15.5 4 17"/>',
+    gamepad: '<path d="M7 7h10a4.5 4.5 0 0 1 4.4 5.5l-.9 4a2.5 2.5 0 0 1-4.3 1.1L14.5 16h-5l-1.7 1.6a2.5 2.5 0 0 1-4.3-1.1l-.9-4A4.5 4.5 0 0 1 7 7z"/><path d="M8 10v3M6.5 11.5h3"/><circle cx="15.5" cy="10.8" r=".7"/><circle cx="17" cy="12.6" r=".7"/>',
+    foldmap: '<path d="M3.5 6.5 9 4l6 2.5L20.5 4v13.5L15 20l-6-2.5-5.5 2.5z"/><path d="M9 4v13.5M15 6.5V20"/>',
+    scan: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><circle cx="11" cy="11" r="3.2"/><path d="m13.4 13.4 3.1 3.1"/>',
+    book: '<path d="M12 6.5C10 5 6.5 4.5 3.5 5v13c3-.5 6.5 0 8.5 1.5 2-1.5 5.5-2 8.5-1.5V5c-3-.5-6.5 0-8.5 1.5z"/><path d="M12 6.5v13"/>',
+    pin2: '<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="3"/><circle cx="12" cy="10" r="1.2"/>',
+    key: '<circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l2 2"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   };
   document.body.classList.add("gm");
@@ -40,9 +47,19 @@
   rail.setAttribute("aria-label", "Planner tools");
   document.body.append(rail);
   let openSection = null;
+  // Each rail button shows ONLY its own section (plus what that section needs, e.g. the region picker for Plan);
+  // Menu shows the whole panel.
+  const COMPANIONS = { missionSetup: ["panelPlace", "mStatus"], globalMaps: ["mapKey"], regionalMaps: ["mapKey"] };
+  function solo(sectionId) {
+    for (const n of panel.querySelectorAll(".soloKeep")) n.classList.remove("soloKeep");
+    if (!sectionId || sectionId === "all") { delete panel.dataset.solo; return; }
+    panel.dataset.solo = sectionId;
+    for (const id of [sectionId, ...(COMPANIONS[sectionId] || [])]) $(id)?.classList.add("soloKeep");
+  }
   function drawer(on, sectionId = null) {
     document.body.classList.toggle("drawer", on);
     openSection = on ? sectionId || "all" : null;
+    solo(on ? openSection : null);
     for (const b of rail.querySelectorAll("button[data-section]")) b.classList.toggle("on", on && b.dataset.section === openSection);
     if (on && sectionId && sectionId !== "all") {
       const sec = $(sectionId);
@@ -75,9 +92,15 @@
   railBtn("grid", "Area data", toggle("regionalMaps"), "regionalMaps");
   railBtn("clock", "Time", toggle("conditionsPanel"), "conditionsPanel");
   railBtn("pin", "Point info", toggle("pointDetails"), "pointDetails");
+  railBtn("gamepad", "Game", toggle("gameSection"), "gameSection");
+  railBtn("book", "Sources", toggle("sourcesSection"), "sourcesSection");
   rail.append(el("div", { className: "grow" }));
   railBtn("help", "Help", () => window.openMapManual?.());
-  const syncResults = () => { resultsBtn.disabled = $("missionResults").hidden; };
+  const syncResults = () => {
+    resultsBtn.disabled = $("missionResults").hidden;
+    const game = rail.querySelector('button[data-section="gameSection"]');
+    if (game) game.disabled = !$("gameSection") || $("gameSection").hidden;
+  };
   new MutationObserver(syncResults).observe($("missionResults"), { attributes: true, attributeFilter: ["hidden"] });
   syncResults();
   // A click on the map shows the point's values: open the drawer there, like a place card.
@@ -86,6 +109,51 @@
     if (/Click the map/.test(info.textContent) || openSection === "pointDetails") return;
     if (!document.body.classList.contains("drawer")) drawer(true, "pointDetails");
   }).observe(info, { childList: true, subtree: true, characterData: true });
+
+  // ------------------------------------------------- panel design (team mock-up) ----
+  // Chamfered section cards with a line icon, thin spaced capitals and a V chevron; "MARSWALK PLANNER" between
+  // copper rules. The region picker and its buttons are grouped as #panelPlace; the sources button and its list
+  // become #sourcesSection so each can be shown alone from the rail.
+  const fonts = el("link", { rel: "stylesheet",
+    href: "https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap" });
+  document.head.append(fonts);
+  const h1 = panel.querySelector("h1");
+  if (h1) h1.textContent = "Marswalk Planner";
+  (() => {
+    const start = $("helpOpen") || h1, end = $("missionSetup");
+    if (!start || !end || $("panelPlace")) return;
+    const group = el("div", { id: "panelPlace" });
+    let n = start.nextSibling;
+    const move = [];
+    while (n && n !== end) { move.push(n); n = n.nextSibling; }
+    end.before(group);
+    group.append(...move);
+  })();
+  (() => {
+    const b = $("sourcesButton"), list = $("sourcesPanel");
+    if (!b || !list || $("sourcesSection")) return;
+    const wrap = el("div", { id: "sourcesSection", className: "sourcesCard" });
+    b.before(wrap);
+    wrap.append(b, list);
+  })();
+  const SECTION_ICONS = { missionSetup: "rocket", manual: "route", missionResults: "list", gameSection: "gamepad",
+    conditionsPanel: "sun", globalMaps: "foldmap", regionalMaps: "pin2", mapKey: "key", pointDetails: "scan" };
+  function decorate() {
+    for (const [id, icon] of Object.entries(SECTION_ICONS)) {
+      const s = document.querySelector(`#${id} > summary`);
+      if (!s || s.querySelector(".secIcon")) continue;
+      const label = el("span", { className: "secLabel" });
+      label.append(...[...s.childNodes].filter(n => !(n.classList && n.classList.contains("secHelp"))));
+      s.prepend(el("span", { className: "secIcon" }, svg(ICON[icon])), label);
+    }
+    const sb = $("sourcesButton");
+    if (sb && !sb.querySelector(".secIcon")) {
+      const label = el("span", { className: "secLabel", textContent: sb.textContent.trim() });
+      sb.replaceChildren(el("span", { className: "secIcon" }, svg(ICON.book)), label);
+    }
+  }
+  decorate();
+  new MutationObserver(() => { decorate(); syncResults(); }).observe(panel, { childList: true });
 
   // ----------------------------------------------------------- map buttons ----
   const camera = () => viewer.camera;
