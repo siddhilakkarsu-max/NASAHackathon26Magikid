@@ -3,6 +3,44 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-14, gear page, app hookup and run scripts
+
+PRs #9 to #16 (merged just after midnight UTC, 2026-11-15).
+
+### Changed
+
+- **One server for everything (#10).** `app.py` includes the gear router, so `uvicorn app:app` serves the planner,
+  `/api/gear/*` and `/kit.html`. `gear_server.py` is now `from app import app as server`, kept so old commands work.
+- **Loose ground from measured thermal inertia (#11).** Rules T1 and T4 judge loose ground by thermal inertia below
+  300 when the route has at least 3 measured pixels, otherwise by night-IR firmness as before. 82 % of the Jezero
+  cube's measured pixels are TI 150-300 (sand), so T4 now fires on most Jezero routes.
+
+### Added
+
+- "Gear for this route" link under Manual planning in `frontend/index.html`. It opens `kit.html` with the
+  traverse archetype and the planner's region, vehicle, base and target (#10).
+- **Published kit survives a restart (#9).** Saved to `gear/state/published_kit.json` (folder set by
+  `MARSWALK_GEAR_STATE_DIR`) and restored at start. `GET /api/gear/published` gains `source` (`memory`, `disk` or
+  `null`); `DELETE /api/gear/published` clears it. `gear/state/.gitignore` keeps the file out of git.
+- Route terrain signals `ti_mean`, `ti_min`, `ti_samples`, `dust_fraction` (TI < 150), `sand_fraction` (150-300) and
+  `ti_loose_fraction` (< 300); thresholds `ti_dust` and `ti_sand`; source `putzig_ti`. New rule **T13** "Fine dust
+  along the route" fires when a fifth of the route is fine dust: suit dust removal, HEPA filtration and an air
+  monitor, plus array cleaning for solar vehicles (#11).
+- **`run.bat` (Windows) and `run.sh` (macOS/Linux) (#12).** Find Python 3.10+, create `.venv`, reinstall only when
+  `requirements.txt` changes (`.venv/.requirements.sha256`), retry without `rasterio` if the full install fails,
+  start the server and open the browser. Port as an argument or `PORT`; a busy port gets a message and a free
+  port suggestion. Flags `--reload`, `--no-browser`, `--help`; env `MARSWALK_PYTHON`, `MARSWALK_NO_PAUSE` (Windows).
+- **Compare kits (#14).** "Pin for comparison" keeps the current kit (in `sessionStorage`); change the mission and
+  "Compared with pinned kit" lists the differences. Debug params `?compare=<archetype>`,
+  `?compare_vehicle=<vehicle>`. `frontend/kit-compare.js`, `kit-compare.css`.
+- **Packing list, CSV and link (#15).** Packing-list mode with tick boxes saved in `localStorage` per kit,
+  "Clear ticks", and empty boxes in print. "Download CSV" (UTF-8 with BOM, CRLF) and "Copy link". Debug params
+  `?pack=1`, `?packdemo=1`. `frontend/kit-pack.js`, `kit-pack.css`.
+- **Scenarios and season (#16).** Seven one-click presets (`delta-walk`, `delta-dust`, `crew-rover`, `opportunity`,
+  `spirit`, `cave`, `long-base`), shareable as `?preset=<id>`. A Season (Ls) input sent as `route_request.ls`,
+  also `?ls=`. `frontend/kit-presets.js`, `kit-presets.css`.
+- 28 tests (78 total).
+
 ## [Unreleased] - 2026-11-14, terrain, load and battery realism
 
 From the team's resource research (Gia's section of the planning doc).

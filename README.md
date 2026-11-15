@@ -8,6 +8,12 @@ a cost map, a safe route, a walk-back zone and a time-to-shelter map.
 build_cube.py  ──►  cubes/<region>.npz  ──►  app.py (FastAPI, all the math)  ──►  frontend/index.html (Cesium globe)
 ```
 
+## Quick start (one command)
+Double-click `run.bat` on Windows, or run `./run.sh` on macOS/Linux. It finds Python 3.10+, creates `.venv`,
+installs `requirements.txt` (again only when it changes), starts the server and opens http://localhost:8000.
+Options: a port number (`run.bat 8001`), `--reload`, `--no-browser`, `--help`. The committed Jezero cube is used,
+so no demo data is needed. To do the same by hand, follow steps 1 and 2.
+
 ## 1. Set up (once)
 ```bash
 python -m venv .venv && source .venv/bin/activate      # Windows: .venv\Scripts\activate
@@ -16,10 +22,12 @@ pip install -r requirements.txt
 
 ## 2. Run it right away with demo data
 ```bash
-python make_demo_cube.py          # FAKE Jezero-shaped terrain so everyone can start building
+python make_demo_cube.py          # only without cubes/jezero.npz: FAKE terrain, overwrites the real cube
 uvicorn app:app --reload --port 8000
 ```
 Open http://localhost:8000 → the globe starts on the global temperature layer. Use **Zoom to region** for Jezero. Open **Manual planning** to set a base and a target, then press **Plan route**.
+The gear page is at http://localhost:8000/kit.html; **Gear for this route** under Manual planning opens it for the
+planned route (see `gear/README.md`).
 
 ## 3. Swap in real NASA data
 ```bash
@@ -190,6 +198,10 @@ Rules the planner applies:
   reserve, at the pace and terrain of the route you just planned.
 - Routing itself is still time-based only. An over-capacity trip is drawn and flagged rather than refused —
   state-space pathfinding on remaining energy would be the next step, not something this pretends to do.
+
+The gear page (`/kit.html`) costs the same route with the kit's hand-carried load. Its **Season (Ls)** input
+(`?ls=250`) shows the dust-season reserve and sunlight; the `delta-walk` and `delta-dust` scenarios compare the
+two seasons.
 
 ## Optional: Cesium Mars 3D terrain
 The globe works without an account (NASA Mars Trek imagery). For 3D terrain, create a free
