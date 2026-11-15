@@ -35,7 +35,9 @@ def box_geometry():
 
 def sphere_geometry():
     positions, normals, indices = [], [], []
-    slices, rings = 16, 10
+    # Mid-poly route assets: smooth enough for close inspection while still
+    # staying comfortably below the application's streaming budget.
+    slices, rings = 24, 16
     for row in range(rings + 1):
         latitude = math.pi * (row / rings - .5)
         for col in range(slices):
@@ -53,7 +55,7 @@ def sphere_geometry():
 
 def cylinder_geometry():
     positions, normals, indices = [], [], []
-    sides = 16
+    sides = 24
     ring = [(math.cos(i * math.tau / sides), math.sin(i * math.tau / sides)) for i in range(sides)]
     for x, z in ring:
         positions.extend(((x / 2, -.5, z / 2), (x / 2, .5, z / 2)))
@@ -109,7 +111,7 @@ def beveled_box_geometry():
 
 def rover_tire_geometry(chevron=False):
     facets = Facets()
-    segments = 24
+    segments = 32
     def ring(radius, y):
         return [(radius * math.cos(a), y, radius * math.sin(a))
                 for a in (i * math.tau / segments for i in range(segments))]
@@ -304,6 +306,10 @@ def astronaut():
         body("Glove locking ring", "cylinder", "metal", (0, -.268, .02), (.176, .054, .186), elbow)
         body("Glove", "sphere", "white", (0, -.341, .025), (.152, .155, .159), elbow)
         body("Glove grip", "sphere", "dark", (0, -.374, .053), (.112, .096, .117), elbow)
+        for finger in (-.070, 0, .070):
+            body("Glove finger segment", "box", "white", (finger, -.395, .035), (.045, .050, .070), elbow)
+        detail_bolt_ring(asset, (side * .068, 1.558, 0), .085, count=8, bolt=.018,
+                         color="metal", parent=shoulder, name="Shoulder fastener")
         hips = (-.10, -.33, .08, .29, -.10)
         knees = (.10, .42, .16, .06, .10)
         ankles = (0, -.14, -.06, .03, 0)
@@ -316,6 +322,12 @@ def astronaut():
         asset.animate(foot, "rotation", times, [rotation(AXLE, angle) for angle in ankles])
         asset.animate(shoulder, "rotation", times, [rotation(AXLE, -angle * .74) for angle in hips])
         asset.animate(elbow, "rotation", times, [rotation(AXLE, -.22 + angle * .14) for angle in hips])
+    for y in (1.22, 1.29, 1.36):
+        body("Torso fabric seam", "cylinder", "metal", (0, y, .246), (.39, .012, .34), carrier)
+    for side in (-1, 1):
+        rover_strut(asset, "Life support hose", (side * .24, 1.49, -.31),
+                    (side * .34, 1.08, -.30), .035, "dark", carrier)
+        body("Hip bearing cap", "cylinder", "metal", (side * .152, 1.035, .02), (.20, .060, .20), carrier)
     asset.animate(carrier, "translation", times, [(0, rise, 0) for rise in (.023, .006, .023, .006, .023)])
     return asset
 
@@ -328,11 +340,14 @@ def wheel(asset, x, z, radius, width, hub, rim="rubber"):
     for side in (-1, 1):
         asset.part("Wheel hub", "cylinder", hub, (side * width * .53, 0, 0),
                    (1.02 * radius, width * .10, 1.02 * radius), rotor, across, (0, 0, 1))
-    for step in range(12):
-        a = math.tau * step / 12
+    for step in range(20):
+        a = math.tau * step / 20
         asset.part("Tread", "box", "metal" if rim == "metal" else "dark",
                    (0, radius * math.cos(a), radius * math.sin(a)), (width * .93, .075 * radius, .29 * radius),
                    rotor, a)
+    for side in (-1, 1):
+        detail_bolt_ring(asset, (side * width * .54, 0, 0), radius * .34, count=8, bolt=radius * .055,
+                         color="metal" if rim == "metal" else "dark", parent=rotor, name="Hub bolt")
     asset.animate(rotor, "rotation", [0, .32, .64, .96, 1.28],
                   [rotation(AXLE, math.tau * i / 4) for i in range(5)])
     return rotor
@@ -364,6 +379,29 @@ def rover_flange(asset, name, center, diameter, depth, color, parent=0):
                       parent, math.pi / 2, (0, 0, 1))
 
 
+def detail_bolt_ring(asset, center, radius, count=8, bolt=.035, color="metal", parent=0, name="Detail fastener"):
+    """Add a compact ring of visible fasteners around a mechanical joint."""
+    p = asset.part
+    x0, y0, z0 = center
+    for step in range(count):
+        angle = math.tau * step / count
+        p(name, "sphere", color,
+          (x0, y0 + radius * math.cos(angle), z0 + radius * math.sin(angle)),
+          (bolt, bolt, bolt), parent)
+
+
+def detail_panel_grid(asset, center, width, height, rows, cols, color="dark", parent=0, name="Panel seam"):
+    """Lay narrow seams across a panel so close views read as manufactured hardware."""
+    p = asset.part
+    x0, y0, z0 = center
+    for row in range(1, rows):
+        z = z0 - height / 2 + height * row / rows
+        p(name, "box", color, (x0, y0, z), (width, .012, .010), parent)
+    for col in range(1, cols):
+        x = x0 - width / 2 + width * col / cols
+        p(name, "box", color, (x, y0, z0), (.010, .012, height), parent)
+
+
 def science_wheel(asset, x, z, radius, width, chevron=False, small=False):
     p = asset.part
     rotor = asset.node("Wheel axle", (x, radius, z), 0)
@@ -381,6 +419,8 @@ def science_wheel(asset, x, z, radius, width, chevron=False, small=False):
                         (flange_x * .80, radius * .26 * math.cos(a), radius * .26 * math.sin(a)),
                         (flange_x, radius * .82 * math.cos(curve), radius * .82 * math.sin(curve)),
                         radius * .104, "metal", rotor)
+        detail_bolt_ring(asset, (flange_x, 0, 0), radius * .27, count=8, bolt=radius * .045,
+                         color="gold" if chevron else "metal", parent=rotor, name="Suspension hub bolt")
     asset.animate(rotor, "rotation", [0, .32, .64, .96, 1.28],
                   [rotation(AXLE, math.tau * i / 4) for i in range(5)])
 
@@ -473,6 +513,18 @@ def msl_rover(name, reference):
     if is_msl:
         p("Raised MAHLI instrument", "cylinder", "metal", (cuff[0] - .16, cuff[1] + .105, cuff[2] + .07),
           (.145, .19, .145), angle=math.pi / 2)
+    # Mid-poly close-up pass: deck seams, fasteners, lens bezels, and a visible
+    # arm cable make the two MSL silhouettes read as engineered vehicles.
+    detail_panel_grid(asset, (0, 1.201, -.06), 1.46, 1.93, 5, 4, "dark", name="Deck panel seam")
+    for px, pz in ((-.67, -.76), (.67, -.76), (-.67, .64), (.67, .64)):
+        p("Deck corner fastener", "sphere", "gold" if is_msl else "metal", (px, 1.225, pz), (.042, .026, .042))
+    detail_bolt_ring(asset, start, .105, count=8, bolt=.032, color="gold" if is_msl else "metal",
+                     name="Robot arm joint fastener")
+    detail_bolt_ring(asset, elbow, .105, count=8, bolt=.030, color="dark",
+                     name="Robot elbow fastener")
+    rover_strut(asset, "Arm service cable", (start[0] + .06, start[1] + .10, start[2] + .08),
+                (elbow[0] + .04, elbow[1] + .08, elbow[2] + .04), .024, "gold")
+    p("Front sensor bezel", "cylinder", "dark", (-.38, .93, 1.335), (.235, .035, .235), angle=math.pi / 2)
     return asset
 
 
@@ -510,6 +562,15 @@ def mer_rover(reference):
     rover_strut(asset, "Instrument arm boom", (.36, .36, .43), (.53, .29, .73), .087, "cream")
     rover_strut(asset, "Instrument arm cuff", (.53, .29, .73), (.42, .23, .88), .066, "metal")
     p("Instrument arm end package", "beveled_box", "dark", (.42, .23, .89), (.16, .13, .14))
+    for px, pz in ((-.34, -.42), (.34, -.42), (-.34, .42), (.34, .42)):
+        p("MER chassis fastener", "sphere", "gold", (px, .565, pz), (.032, .028, .032))
+    detail_bolt_ring(asset, (x, 1.22, z), .095, count=10, bolt=.026, color="gold",
+                     name="Pancam pivot fastener")
+    for step in range(6):
+        angle = math.tau * step / 6
+        rover_strut(asset, "Dish support spoke", (.42, .903, -.255),
+                    (.42 + .22 * math.cos(angle), .903, -.255 + .22 * math.sin(angle)), .018, "metal")
+    rover_strut(asset, "Instrument arm service cable", (.36, .42, .46), (.50, .33, .72), .021, "gold")
     return asset
 
 
@@ -612,6 +673,17 @@ def sojourner_body(asset, width, length, r, hub):
     rover_strut(asset, "Antenna stalk", antenna, elbow, .015, "metal")
     rover_strut(asset, "Antenna bend", elbow, stem, .014, "metal")
     rover_strut(asset, "Antenna whip", stem, (-.166, .535, -.277), .010, "metal")
+    # The real Sojourner reads as a solar-panel box on a very open rocker
+    # suspension. Add the panel perimeter, harness clamps, and visible fasteners
+    # without changing its compact route footprint.
+    for side in (-1, 1):
+        rover_strut(asset, "Canopy edge rail", (side * width * .57, .222, -.55),
+                    (side * width * .57, .222, .53), .018, "metal")
+        p("Canopy harness clamp", "sphere", "gold", (side * .17, .235, -.27), (.026, .026, .026))
+    for px, pz in ((-.19, -.48), (.19, -.48), (-.19, .46), (.19, .46)):
+        p("Solar canopy fastener", "sphere", "metal", (px, .238, pz), (.028, .024, .028))
+    detail_bolt_ring(asset, (0, .14, 0), .22, count=8, bolt=.022, color="metal",
+                     name="Sojourner chassis fastener")
 
 
 def zhurong_body(asset, width, length, r, hub):
@@ -636,9 +708,18 @@ def zhurong_body(asset, width, length, r, hub):
         x = -.31 + side * .123
         p("Stereo camera housing", "beveled_box", "gold", (x, 1.766, .546), (.22, .122, .182))
         p("Stereo lens", "sphere", "black", (x, 1.773, .641), (.080, .077, .033))
+        p("Stereo lens bezel", "cylinder", "metal", (x, 1.773, .670), (.098, .018, .098), angle=math.pi / 2)
     rover_strut(asset, "Dish support", (.35, .533, -.59), (.35, .861, -.59), .060, "foil")
     p("High gain dish", "sphere", "white", (.35, .893, -.57), (.340, .085, .340), angle=.46)
     p("Deck antenna cylinder", "cylinder", "metal", (-.49, .659, -.32), (.119, .236, .119))
+    for side in (-1, 1):
+        for z in (-.40, .35):
+            detail_panel_grid(asset, (side * .79, .579, z), .60, .62, 4, 4, "solar", name="Zhurong petal cell seam")
+            p("Petal hinge fastener", "sphere", "gold", (side * .46, .56, z), (.040, .030, .040))
+    for step in range(8):
+        angle = math.tau * step / 8
+        rover_strut(asset, "Dish radial brace", (.35, .893, -.57),
+                    (.35 + .20 * math.cos(angle), .90, -.57 + .20 * math.sin(angle)), .016, "metal")
 
 
 def rosalind_body(asset, width, length, r, hub):
@@ -660,6 +741,17 @@ def rosalind_body(asset, width, length, r, hub):
     p("Drill housing cover", "box", "dark", (.231, .466, 1.00), (.264, .446, .026))
     p("Stowed drill collar", "cylinder", "metal", (.21, .13, .85), (.148, .147, .148))
     p("Close-up imager", "sphere", "black", (.055, .327, .983), (.096, .092, .079))
+    detail_panel_grid(asset, (0, .768, -.28), .72, 1.02, 5, 4, "dark", name="Central deck seam")
+    for side in (-1, 1):
+        detail_panel_grid(asset, (side * .79, .768, -.30), .56, .98, 5, 4, "dark", name="Wing panel seam")
+        for z in (-.65, -.30, .05):
+            rover_strut(asset, "Wing harness", (side * .52, .62, z), (side * .79, .63, z), .016, "gold")
+    detail_bolt_ring(asset, (.231, .49, .985), .105, count=10, bolt=.024, color="gold",
+                     name="Drill housing fastener")
+    for step in range(8):
+        angle = math.tau * step / 8
+        p("Drill collar tooth", "box", "metal",
+          (.21 + .16 * math.cos(angle), .13, .85 + .16 * math.sin(angle)), (.025, .045, .055), angle=angle)
 
 
 ROBOT_PROFILES = {
@@ -931,6 +1023,30 @@ def crew(name, kind):
             p("Rear airlock face", "cylinder", "white", (0, 1.771, -2.149), (.781, .076, .781), angle=math.pi / 2)
             rail("Roof dish mast", (.613, 2.56, -1.38), (.613, 2.952, -1.38), .053, "metal")
             dish(.613, 2.958, -1.38, .264, "metal")
+    # Mid-poly crew-vehicle detail pass. These are deliberately small exterior
+    # parts: harnesses, rack crossbars, panel seams, and service fasteners.
+    if kind == "bike":
+        detail_panel_grid(asset, (0, .36, -.06), .66, .52, 3, 4, "dark", name="Bike battery seam")
+        for z in (-.98, 1.00):
+            detail_bolt_ring(asset, (0, .40, z), .15, count=10, bolt=.018, color="metal", name="Bike axle bolt")
+        for side in (-1, 1):
+            rail("Bike brake cable", (side * .21, 1.08, .48), (side * .17, .62, .91), .012, "dark")
+    elif kind == "open":
+        for x in (-.35, .35):
+            p("Seat lap belt", "box", "red" if apollo else "dark", (x, .835, -.02), (.055, .025, .42), angle=.10)
+            p("Seat buckle", "box", "metal", (x, .83, .18), (.075, .048, .06))
+        for z in (-wheelbase * 1.10, wheelbase * 1.10):
+            rail("Rack upper crossbar", (-track * .78, 1.02, z), (track * .78, 1.02, z), .034, "metal")
+            rail("Rack lower crossbar", (-track * .78, .73, z), (track * .78, .73, z), .027, "dark")
+        detail_bolt_ring(asset, (0, .55, 0), .22, count=8, bolt=.025, color="metal", name="Open chassis bolt")
+    else:
+        for z in (-1.20, -.55, .10, .75, 1.40):
+            p("Cabin side service seam", "box", "dark", (1.12, 1.48, z), (.025, .025, .48))
+        for side in (-1, 1):
+            detail_bolt_ring(asset, (side * 1.07, 1.90, .25), .38, count=12, bolt=.024,
+                             color="gold", name="Airlock fastener")
+            rail("Cabin sensor cable", (side * .48, 2.48, .98), (side * 1.02, 2.16, .88), .020, "gold")
+        detail_panel_grid(asset, (0, 2.65, -.45), 1.28, 1.78, 5, 6, "dark", name="Roof panel seam")
     return asset
 
 
