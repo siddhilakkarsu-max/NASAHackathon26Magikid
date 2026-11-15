@@ -28,11 +28,25 @@ const state = () => page.evaluate(() => ({ choice: plannerLayout.globalChoice(),
   planDisabled: document.querySelector('#runMission').disabled, status: document.querySelector('#areaStatus').textContent }));
 try {
   await page.addInitScript(() => localStorage.setItem('mapManualSeen', '1'));
+  // Keep two planning downloads pending in this browser even if the developer
+  // has already built every cube locally. Preserve all other metadata and files.
+  const base = process.env.MARSWALK_TEST_URL || 'http://127.0.0.1:8001';
+  const catalogResponse = await page.request.get(base + '/api/sites');
+  assert(catalogResponse.ok(), 'The live region catalog must be available');
+  const pendingKeys = (await catalogResponse.json()).sites.slice(0, 2).map(site => site.site);
+  assert.equal(pendingKeys.length, 2, 'Two named regions are needed for cancellation checks');
+  await page.route('**/api/regions', async route => {
+    const response = await route.fetch();
+    assert(response.ok(), 'The live planning metadata must be available');
+    const metadata = await response.json();
+    await route.fulfill({ response, json: { ...metadata,
+      regions: metadata.regions.filter(region => !pendingKeys.includes(region.region)) } });
+  });
   await page.route('**/api/sites/build', route => route.fulfill({ json: {
     region: route.request().postDataJSON().site, ready: false, status: 'building' } }));
   await page.route('**/api/sites/build/*', route => route.fulfill({ json: {
     region: route.request().url().split('/').pop(), ready: false, status: 'building' } }));
-  await page.goto((process.env.MARSWALK_TEST_URL || 'http://127.0.0.1:8001') + '/', { waitUntil: 'domcontentloaded' });
+  await page.goto(base + '/', { waitUntil: 'domcontentloaded' });
   await page.locator('#startExploring').click();
   await page.waitForFunction(() => current && namedSites.length && murray.defs.length);
   await page.evaluate(scale => {
@@ -100,7 +114,7 @@ try {
   await page.evaluate(() => routePlayback.clear());
   pass('Walker view selects topography; switching maps exits it and cancels its tilted camera');
   // An API ignoring cancellation deliberately completes after a newer region wins.
-  const first = catalog[0], second = catalog[1];
+  const [first, second] = pendingKeys;
   await page.evaluate(key => {
     window.originalRegionApi = api;
     window.buildHeld = false;
