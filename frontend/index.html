@@ -320,7 +320,7 @@
     <p class="small">Shared by mission planning, weather layers and globe lighting.</p>
   <label for="ls">Season: <b id="lsVal"></b></label>
   <input type="range" id="ls" min="0" max="360" step="0.1" value="90" />
-  <label>Local solar time: <b id="hourVal"></b></label>
+  <label for="hour">Local solar time: <b id="hourVal"></b></label>
   <input type="range" id="hour" min="0" max="24" step="0.25" value="11" />
   <label class="check"><input type="checkbox" id="globeLighting" checked aria-describedby="lightingNote" /> Sunlight and atmosphere</label>
   <div class="small" id="lightingNote">Move your mouse over the night side to reveal the map. Globe lighting follows the selected region’s solar time.</div>
@@ -328,9 +328,9 @@
 
   <details id="globalMaps" class="panel-section" name="workspace">
     <summary>Mars global maps</summary>
-    <p class="small">Explore planet-wide imagery, weather and radiation. A data layer can be shown over a background map.</p>
-    <label for="globalLayer">Weather &amp; radiation</label>
-    <select id="globalLayer"><option value="">No global data layer</option></select>
+    <p class="small">Choose one planet-wide view. Add names, rover tracks and photo outlines below.</p>
+    <label for="globalLayer">Map view (choose one)</label>
+    <select id="globalLayer"><option value="">The planner's own map</option></select>
   <div id="radiationControls" hidden>
     <label for="radiationSolar">Solar activity scenario</label>
     <select id="radiationSolar">
@@ -391,7 +391,6 @@
     <option value="temperature">Regional simulated surface temperature</option>
     <optgroup id="globalWeather" label="Global weather">
       <option value="global_temperature">Global simulated surface temperature</option>
-      <option value="openmars_surface_temperature">OpenMARS ground temperature reference</option>
       <option value="air_temperature">Near-surface air temperature</option>
       <option value="surface_pressure">Surface pressure</option>
       <option value="wind_speed">Near-surface wind speed</option>
@@ -477,10 +476,11 @@ const viewer = new Cesium.Viewer("map", {
   baseLayerPicker: false, geocoder: false, timeline: false, animation: false,
   sceneModePicker: false, homeButton: false, navigationHelpButton: false, infoBox: false, selectionIndicator: false,
 });
-viewer.imageryLayers.addImageryProvider(marsTiles);
+const trekLayer = viewer.imageryLayers.addImageryProvider(marsTiles);
 if (viewer.scene.sun) viewer.scene.sun.show = false;
 if (viewer.scene.moon) viewer.scene.moon.show = false;
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
+viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#171b21");
 const globeLighting = createMarsLighting(viewer, MARS, $("marsSun"));
 const routePlayback = createRoutePlayback({ viewer, ellipsoid: MARS, controls: {
   panel: $("routePlayback"), button: $("playRoute"), status: $("routePlaybackStatus"),
@@ -675,6 +675,8 @@ async function showAnalysisOverlay({ image, rect, name, label, requestAtStart, i
   const request = ++layerRequest;
   layerLoad?.abort();
   $("layer").value = "";
+  plannerLayout.resetGlobalMap();
+  applyGlobalMap();
   wasGlobal = false;
   timeline?.setEnabled(false);
   clearOverlay();
@@ -1644,16 +1646,28 @@ function murrayLabel(ds, lon, lat, text, maxDist, color = Cesium.Color.WHITE) {
 }
 const sizeDist = (km) => Math.min(9e6, Math.max(2.5e5, (km || 10) * 1.5e4));   // big features show from farther
 
-// Traverses are drawn whole. Names, craters and the tile map have thousands of features: they are kept in memory
-// and only the ones in view are drawn (biggest first, capped), refreshed when the camera stops.
-const VIEW_CAP = { names: 250, craters: 250, quads: 200 };
+// Keep features in memory and refresh the visible ones when the camera stops. Names and craters are
+// capped by size; every visible photo tile boundary is needed for a complete grid (labels hide at distance).
+const VIEW_CAP = { names: 250, craters: 250, quads: Infinity };
 function viewBoxes() {
   const r = viewer.camera.computeViewRectangle(MARS);
   if (!r) return null;
   const [w, s, e, n] = [r.west, r.south, r.east, r.north].map(Cesium.Math.toDegrees);
   return w <= e ? [[w, s, e, n]] : [[w, s, 180, n], [-180, s, e, n]];       // split at the antimeridian
 }
-const inView = (boxes, b) => boxes.some(([w, s, e, n]) => b[0] <= e && b[2] >= w && b[1] <= n && b[3] >= s);
+const inView = (boxes, b) => boxes.some(([w, s, e, n]) => b[1] <= n && b[3] >= s &&
+  [-360, 0, 360].some(shift => b[0] <= e + shift && b[2] >= w + shift));
+function murrayRingBounds(ring) {
+  // A cached tile can contain 176° and -180°: unwrap adjacent vertices so it stays a 4° tile,
+  // with its label and visibility on the dateline rather than across the opposite hemisphere.
+  const xs = [], ys = [];
+  for (const [lon, lat] of ring) {
+    let x = lon;
+    if (xs.length) x += 360 * Math.round((xs.at(-1) - x) / 360);
+    xs.push(x); ys.push(lat);
+  }
+  return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+}
 
 async function murrayGeojson(def) {
   const data = await api(def.url), ds = new Cesium.CustomDataSource(def.id);
@@ -1670,10 +1684,9 @@ async function murrayGeojson(def) {
     } else if (g.type === "Polygon" || g.type === "MultiPolygon") {
       const polygons = g.type === "Polygon" ? [g.coordinates] : g.coordinates;
       for (const polygon of polygons) {
-        const ring = polygon[0], xs = ring.map((c) => c[0]), ys = ring.map((c) => c[1]);
+        const ring = polygon[0], box = murrayRingBounds(ring);
         items.push({ ring, name: p.name, size: def.id === "quads" ? 1 : p.diameter_km || 1,
-                   box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
-                   lon: xs.reduce((a, b) => a + b, 0) / xs.length, lat: ys.reduce((a, b) => a + b, 0) / ys.length });
+                   box, lon: ((box[0] + box[2]) / 2 + 540) % 360 - 180, lat: (box[1] + box[3]) / 2 });
       }
     } else if (g.type === "Point" && p.name) {
       const [lon, lat] = g.coordinates;
@@ -1703,17 +1716,22 @@ function refreshViewLayers() {
     const color = id === "quads" ? C("#ffd27a").withAlpha(0.6) : Cesium.Color.WHITE.withAlpha(0.75);
     const shown = boxes ? st.items.filter((it) => inView(boxes, it.box)).slice(0, VIEW_CAP[id]) : [];
     const visible = st.visibleItems || (st.visibleItems = new Map()), wanted = new Set(shown);
-    for (const [item, entities] of visible) if (!wanted.has(item)) {
-      for (const entity of entities) st.ds.entities.remove(entity);
-      visible.delete(item);
-    }
-    for (const it of shown) {
-      if (visible.has(it)) continue;
-      const entities = [];
-      if (it.ring) entities.push(murrayLine(st.ds, it.ring, color, id === "quads" ? 1.5 : 2));
-      if (it.name) entities.push(murrayLabel(st.ds, it.lon, it.lat, it.name, id === "quads" ? 2e6 : sizeDist(it.size),
-                               id === "names" ? C("#ffe9c7") : Cesium.Color.WHITE));
-      visible.set(it, entities.filter(Boolean));
+    st.ds.entities.suspendEvents();
+    try {
+      for (const [item, entities] of visible) if (!wanted.has(item)) {
+        for (const entity of entities) st.ds.entities.remove(entity);
+        visible.delete(item);
+      }
+      for (const it of shown) {
+        if (visible.has(it)) continue;
+        const entities = [];
+        if (it.ring) entities.push(murrayLine(st.ds, it.ring, color, id === "quads" ? 1.5 : 2));
+        if (it.name) entities.push(murrayLabel(st.ds, it.lon, it.lat, it.name, id === "quads" ? 2e6 : sizeDist(it.size),
+                                 id === "names" ? C("#ffe9c7") : Cesium.Color.WHITE));
+        visible.set(it, entities.filter(Boolean));
+      }
+    } finally {
+      st.ds.entities.resumeEvents();
     }
     if (id === "names") murrayStatus(id, shown.length ? `${shown.length} place names in view; smaller features appear as you zoom in.`
       : "No named feature centres in this view. Zoom out to see nearby places.");
@@ -1762,7 +1780,9 @@ function murrayStatus(id, message) {
   if (status) { status.textContent = message; status.hidden = !message; }
 }
 function syncBasemapVisibility() {
-  const own = !murray.selectedMap;
+  const own = !globalLayerSelected() && (!murray.selectedMap || murray.selectedMap === "terrain");
+  baseMap.show = own;
+  trekLayer.show = own;
   if (ctxLayer) ctxLayer.show = own;
   if (photoLayer) photoLayer.show = own;
   if (boxEntity) boxEntity.show = own;
@@ -1872,11 +1892,12 @@ async function murrayToggle(def, on) {
       : `${MURRAY_PLAIN[def.id] || def.title} is on.`);
   } catch (e) {
     if (!latest()) return;
-    st.on = false; $(`murray_${def.id}`).checked = false;
+    st.on = false;
+    const checkbox = $(`murray_${def.id}`);
+    if (checkbox) checkbox.checked = false;
     if (focus) focus.hidden = true;
     if (def.kind === "tiles") {
       if (st.layer) { coll.remove(st.layer, true); st.layer = null; }
-      murray.selectedMap = null; $("murray_none").checked = true; syncBasemapVisibility();
     }
     murrayStatus(def.id, `${def.title} could not load: ${e.message || e}. Toggle to retry.`);
   }
@@ -1904,48 +1925,37 @@ async function murrayPointLinks(p, request) {
   } catch (e) { /* the panel already shows the pixel values */ }
 }
 
-// Background maps are radio buttons (one at a time: each one hides the others completely); the rest draw on top
-// of any map, so they stay checkboxes. Plain names for everyone, the catalogue title in advanced mode.
+// One surface view at a time; annotation overlays remain independent.
 const MURRAY_PLAIN = { ctx: "Detailed photos (black and white)", mola: "Height map (coloured by height)",
   viking: "Colour photos", terrain: "3D hills and craters", m2020: "Perseverance rover's path",
   msl: "Curiosity rover's path", names: "Place names", craters: "Crater names",
   quads: "Photo tile grid (with download links)", hirise: "Where close-up photos exist" };
-async function pickMurrayMap(def) {
-  const request = murray.mapRequest = (murray.mapRequest || 0) + 1;
-  murray.selectedMap = def?.id || null;
-  syncBasemapVisibility();
-  for (const m of murray.defs) {
-    if (request !== murray.mapRequest) return;
-    if (m.kind === "tiles" && m !== def && murrayOn(m.id)) await murrayToggle(m, false);
+function applyGlobalMap() {
+  const choice = plannerLayout.globalChoice();
+  const id = choice.startsWith("map:") ? choice.slice(4) : null;
+  const def = murray.defs.find(layer => layer.id === id);
+  murray.selectedMap = id;
+  // Turn off old surfaces synchronously before starting the chosen provider.
+  // Each provider also guards its pending load, so a late response cannot revive it.
+  for (const layer of murray.defs) {
+    if (["tiles", "terrain"].includes(layer.kind) && layer !== def && murrayOn(layer.id)) {
+      murrayToggle(layer, false);
+    }
   }
-  if (request !== murray.mapRequest) return;
-  if (def) await murrayToggle(def, true);
-  $("murrayInfo").textContent = !def ? "Planner imagery restored. Terrain, labels and tracks keep their own checkbox settings." : "";
+  syncBasemapVisibility();
+  if (def && !murrayOn(def.id)) murrayToggle(def, true);
 }
 api("/api/murray/layers").then((d) => {
   murray.defs = d.layers;
   plannerLayout.mapCredits(d.layers);
+  plannerLayout.setGlobalMaps(d.layers.filter(def => ["tiles", "terrain"].includes(def.kind))
+    .map(def => ({ id: def.id, label: MURRAY_PLAIN[def.id] || def.title })));
   const box = $("murrayLayers");
   const label = (def, input) => el("label", { className: "check" }, input,
     MURRAY_PLAIN[def.id] || def.title, el("span", { className: "adv", textContent: def.title }));
   const status = def => el("div", { id: `murray_${def.id}_status`, className: "small", role: "status", hidden: true });
-  box.append(el("div", { className: "small murrayHead", textContent: "Background map (choose one)" }));
-  const none = el("input", { type: "radio", name: "murrayMap", id: "murray_none", checked: true });
-  none.onchange = () => pickMurrayMap(null);
-  box.append(el("label", { className: "check" }, none, "The planner's own map"));
-  for (const def of d.layers.filter((x) => x.kind === "tiles")) {
-    const r = el("input", { type: "radio", name: "murrayMap", id: `murray_${def.id}` });
-    r.onchange = () => { if (r.checked) pickMurrayMap(def); };
-    box.append(label(def, r), status(def));
-  }
-  box.append(el("div", { className: "small", textContent: "Backgrounds change the imagery. Terrain and labels below can be combined with any background." }));
-  box.append(el("div", { className: "small murrayHead", textContent: "Terrain" }));
-  for (const def of d.layers.filter(x => x.kind === "terrain")) {
-    const c = el("input", { type: "checkbox", id: `murray_${def.id}` });
-    c.onchange = () => murrayToggle(def, c.checked);
-    box.append(label(def, c), status(def));
-  }
-  box.append(el("div", { className: "small murrayHead", textContent: "Labels & tracks (combine as needed)" }));
+  for (const def of d.layers.filter(x => ["tiles", "terrain"].includes(x.kind))) box.append(status(def));
+  box.append(el("div", { className: "small murrayHead", textContent: "Labels, tracks & photo outlines (combine as needed)" }));
   for (const def of d.layers.filter((x) => x.kind !== "tiles" && x.kind !== "terrain")) {
     const c = el("input", { type: "checkbox", id: `murray_${def.id}` });
     c.onchange = () => murrayToggle(def, c.checked);
@@ -1960,6 +1970,8 @@ api("/api/murray/layers").then((d) => {
       box.append(focus);
     }
   }
+  box.append(el("div", { className: "small", textContent: "The photo tile grid follows the published mosaic index: 88°S–88°N. It does not include the poles." }));
+  applyGlobalMap();
 }).catch((e) => { $("murrayInfo").textContent = "Global maps unavailable: " + e.message; });
 
 
@@ -2279,10 +2291,16 @@ if (initialLayer && [...$("layer").options].some(option => option.value === init
 plannerLayout.syncLayers();
 if (initialLayer && $("layer").value) $(globalLayerSelected() ? "globalMaps" : "regionalMaps").open = true;
 let wasGlobal = globalLayerSelected();
+applyGlobalMap();
 showWholeMars();
 $("wholeMars").onclick = () => showWholeMars();   // just the view: weather layers only when picked in the menu
 $("zoomRegion").onclick = () => { if (current) flyTo(current.rect); };
-["hour", "ls", "budget"].forEach((id) => $(id).addEventListener("input", labels));
+["hour", "ls", "budget"].forEach((id) => {
+  $(id).addEventListener("input", labels);
+  // A text selection spanning a range can start native HTML dragging and cancel
+  // the slider after one step. Keep the browser's range gesture in control.
+  $(id).addEventListener("dragstart", event => event.preventDefault());
+});
 ["hour", "ls", "vehicle"].forEach((id) => $(id).addEventListener("change", () => {
   if (id === "vehicle") applyVehicleLimits();
   invalidatePlan();
@@ -2292,6 +2310,7 @@ $("zoomRegion").onclick = () => { if (current) flyTo(current.rect); };
   refreshLayer();
 }));
 $("layer").onchange = () => {
+  applyGlobalMap();
   const isGlobal = globalLayerSelected();
   if (isGlobal && !wasGlobal) showWholeMars();
   else if (!isGlobal && $("layer").value && current) flyTo(current.rect);

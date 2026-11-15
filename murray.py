@@ -130,7 +130,9 @@ def _names():
 def _quads():
     feats = []
     for f in _raw("MurrayLab_CTX_V01_Quad-Map")["features"]:
-        ring = [[_r(_lon(x)), _r(y)] for x, y, *_ in f["geometry"]["coordinates"][0]]
+        # The source's east edge can be 180.0000000000001. Round before wrapping
+        # so a 176..180 tile does not acquire a misleading -180..176 bounding box.
+        ring = [[_lon(_r(x)), _r(y)] for x, y, *_ in f["geometry"]["coordinates"][0]]
         feats.append({"type": "Feature", "geometry": {"type": "Polygon", "coordinates": [ring]},
                       "properties": {"name": f["properties"]["Quad"], "link": f["properties"]["Data"]}})
     return {"type": "FeatureCollection", "features": feats}
@@ -336,14 +338,20 @@ _quad_boxes = None
 def murray_quad_at(lat: float, lon: float):
     """The CTX mosaic tile containing a point, with its download page."""
     global _quad_boxes
+    if not (math.isfinite(lat) and math.isfinite(lon) and -90 <= lat <= 90 and -180 <= lon <= 180):
+        raise HTTPException(422, "Use latitude -90..90 and longitude -180..180.")
     if _quad_boxes is None:
         murray_features("quads")                       # make sure the cache exists
         feats = json.loads((CACHE / "quads.geojson").read_text(encoding="utf-8"))["features"]
-        _quad_boxes = [(min(x for x, _ in f["geometry"]["coordinates"][0]), min(y for _, y in f["geometry"]["coordinates"][0]),
-                        max(x for x, _ in f["geometry"]["coordinates"][0]), max(y for _, y in f["geometry"]["coordinates"][0]),
-                        f["properties"]) for f in feats]
+        boxes = []
+        for f in feats:
+            ring = np.asarray(f["geometry"]["coordinates"][0])
+            # Also support caches generated before the east-edge rounding fix.
+            xs = np.degrees(np.unwrap(np.radians(ring[:, 0])))
+            boxes.append((xs.min(), ring[:, 1].min(), xs.max(), ring[:, 1].max(), f["properties"]))
+        _quad_boxes = boxes
     for w, s_, e, n, props in _quad_boxes:
-        if w <= lon <= e and s_ <= lat <= n:
+        if s_ <= lat <= n and any(w <= lon + shift <= e for shift in (-360, 0, 360)):
             return props
     return {"name": None, "link": None}
 

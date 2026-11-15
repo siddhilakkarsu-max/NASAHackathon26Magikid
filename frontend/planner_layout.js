@@ -9,15 +9,29 @@ function createPlannerLayout() {
     return node;
   };
   const canonical = byId("layer");
+  let mapChoice = "", mapDefinitions = [];
+  const optionMarkup = new Map();
+  const globalChoice = () => canonical.selectedOptions[0]?.parentElement.id === "globalWeather"
+    ? canonical.value : mapChoice;
   function syncLayers() {
     const global = canonical.selectedOptions[0]?.parentElement.id === "globalWeather";
     for (const [id, wantGlobal, empty] of [
-      ["globalLayer", true, "No global data layer"],
+      ["globalLayer", true, "The planner's own map"],
       ["regionalLayer", false, "No regional data layer"],
     ]) {
       const select = byId(id), first = make("option", empty);
       first.value = "";
       const nodes = [first];
+      if (wantGlobal && mapDefinitions.length) {
+        const group = make("optgroup");
+        group.label = "Imagery & 3D terrain";
+        for (const def of mapDefinitions) {
+          const option = make("option", def.label);
+          option.value = `map:${def.id}`;
+          group.append(option);
+        }
+        nodes.push(group);
+      }
       for (const child of canonical.children) {
         if (child.tagName === "OPTION") {
           if (!wantGlobal && child.value) nodes.push(child.cloneNode(true));
@@ -27,13 +41,19 @@ function createPlannerLayout() {
           nodes.push(group);
         }
       }
-      select.replaceChildren(...nodes);
-      select.value = global === wantGlobal ? canonical.value : "";
+      const markup = nodes.map(node => node.outerHTML).join("");
+      if (optionMarkup.get(id) !== markup) {
+        select.replaceChildren(...nodes);
+        optionMarkup.set(id, markup);
+      }
+      select.value = wantGlobal ? globalChoice() : (global ? "" : canonical.value);
     }
   }
   for (const id of ["globalLayer", "regionalLayer"]) {
     byId(id).addEventListener("change", () => {
-      canonical.value = byId(id).value;
+      const value = byId(id).value;
+      mapChoice = id === "globalLayer" && value.startsWith("map:") ? value : "";
+      canonical.value = mapChoice ? "" : value;
       syncLayers();
       canonical.dispatchEvent(new Event("change", { bubbles: true }));
     });
@@ -42,6 +62,8 @@ function createPlannerLayout() {
     childList: true, subtree: true, attributes: true, attributeFilter: ["disabled", "hidden", "label"],
   });
   syncLayers();
+  function setGlobalMaps(definitions) { mapDefinitions = definitions; syncLayers(); }
+  function resetGlobalMap() { mapChoice = ""; syncLayers(); }
 
   const sourcesButton = byId("sourcesButton"), sources = byId("sourcesPanel");
   sourcesButton.addEventListener("click", () => {
@@ -126,5 +148,6 @@ function createPlannerLayout() {
     delete byId("mResult").dataset.missionId;
     byId("missionSources").replaceChildren();
   }
-  return { syncLayers, captureMissionSections, organizeMission, revealResults, mapCredits, clearMission };
+  return { syncLayers, globalChoice, setGlobalMaps, resetGlobalMap,
+    captureMissionSections, organizeMission, revealResults, mapCredits, clearMission };
 }

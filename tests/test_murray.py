@@ -24,6 +24,34 @@ def footprint_index(rings):
 
 
 class MurrayServices(unittest.TestCase):
+    def test_quad_source_east_edge_rounds_before_longitude_wrapping(self):
+        source = {"features": [{"properties": {"Quad": "E176_N0", "Data": "https://example.org/tile"},
+                               "geometry": {"coordinates": [[[176, 4], [180.0000000000001, 4],
+                                                               [180.0000000000001, 0], [176, 0], [176, 4]]]}}]}
+        with patch.object(murray, "_raw", return_value=source):
+            tile = murray._quads()["features"][0]
+        self.assertEqual(tile["geometry"]["coordinates"][0], [[176, 4], [180, 4], [180, 0], [176, 0], [176, 4]])
+        self.assertEqual(tile["properties"]["name"], "E176_N0")
+
+    def test_cached_quad_at_dateline_does_not_cover_opposite_hemisphere(self):
+        # Older cached rings wrapped the floating-point east edge to -180.
+        tile = {"type": "Feature", "properties": {"name": "E176_N0", "link": "https://example.org/tile"},
+                "geometry": {"type": "Polygon", "coordinates": [[[176, 4], [-180, 4], [-180, 0], [176, 0], [176, 4]]]}}
+        with tempfile.TemporaryDirectory() as temp, patch.object(murray, "CACHE", Path(temp)), patch.object(murray, "_quad_boxes", None):
+            (Path(temp) / "quads.geojson").write_text(json.dumps({"features": [tile]}), encoding="utf-8")
+            for lon in (178, 180, -180):
+                self.assertEqual(murray.murray_quad_at(2, lon)["name"], "E176_N0")
+            for lat, lon in ((2, 0), (2, -178), (89, 178), (-89, 178)):
+                self.assertIsNone(murray.murray_quad_at(lat, lon)["name"])
+
+    def test_quad_at_invalid_point_rejected_before_reading_cache(self):
+        with patch.object(murray, "murray_features") as features:
+            for lat, lon in ((91, 0), (0, 181), (float("nan"), 0), (0, float("inf"))):
+                with self.assertRaises(HTTPException) as raised:
+                    murray.murray_quad_at(lat, lon)
+                self.assertEqual(raised.exception.status_code, 422)
+            features.assert_not_called()
+
     def test_utf8_iau_names_load_on_windows_and_survive_caching(self):
         data = {"type": "FeatureCollection", "features": [{"type": "Feature",
                 "properties": {"name": "Test \u010f crater", "origin": "J\u00fcrgen", "diameter": 3,
