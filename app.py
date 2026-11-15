@@ -32,7 +32,7 @@ import murray
 import physics
 import search
 from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
-                    PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, SITE_SIZE_DEG, SITES, VEHICLES,
+                    PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, SITE_SIZE_DEG, BASE_SEASONS, season_for_ls, SITES, VEHICLES,
                     region_box, region_label, site_id)
 from gear.api import router as gear_router
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
@@ -229,6 +229,7 @@ class MissionRequest(BaseModel):
     goal: str = Field(..., min_length=1, max_length=300, description='e.g. "sample clay where water once flowed"')
     vehicle: str = "on_foot"
     season: str = "northern_summer"
+    ls: float | None = Field(None, ge=0, le=360, description="season slider (solar longitude); overrides 'season'")
     priority: str = "safety"
     green_only: bool = Field(False, description="stick to green, rover-verified tracks where possible")
 
@@ -962,7 +963,7 @@ _missions = {}   # mission id -> facts for the explanation (last 50)
 def mission_options():
     return {"vehicles": {k: {"label": v["label"], "max_slope": v["max_slope"], "range_km": v["range_km"]}
                          for k, v in MISSION_VEHICLES.items()},
-            "seasons": {k: v["label"] for k, v in SEASONS.items()},
+            "seasons": {k: SEASONS[k]["label"] for k in BASE_SEASONS},
             "priorities": {k: v["label"] for k, v in PRIORITIES.items()},
             "criteria": {k: {"label": v[0], "weight": v[1]} for k, v in MATRIX_CRITERIA.items()}}
 
@@ -974,28 +975,31 @@ def plan_mission(req: MissionRequest):
     try:
         res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only)
     except mission.NoLandingSpot as e:
-        raise HTTPException(400, _no_landing(c, e)["text"])
+        nl = _no_landing(c, e)
+        raise HTTPException(400, f"{nl['text']} | {nl['detail']}")
     except ValueError as e:
         raise HTTPException(400, _loading_hint(c.region, str(e)))
     return _finish_mission(res)
 
 
 def _no_landing(cube, err):
-    """Error payload for an area with no landing spot: the reason, plus the nearest firm ground if dust is why."""
+    """Error for an area with no landing spot: the plain reason ("text"), the technical one ("detail") and, when
+    dust is why, the nearest firm ground ("suggest")."""
     near = None
     if err.dusty:
         try:
             near = mission.nearest_firm_ground(cube)
         except Exception:
             near = None
-    text = str(err)
+    text, _, detail = str(err).partition(" | ")
     if near:
-        text += (f" Nearest firm ground (thermal inertia {near['ti']}): about {near['km']} km {near['direction']}, "
-                 f"at {abs(near['lat']):.2f}°{'S' if near['lat'] < 0 else 'N'} "
-                 f"{abs(near['lon']):.2f}°{'W' if near['lon'] < 0 else 'E'}.")
+        text += f" The nearest firm ground is about {near['km']} km {near['direction']}."
+        detail += (f" Nearest firm ground: thermal inertia {near['ti']} at {abs(near['lat']):.2f}°"
+                   f"{'S' if near['lat'] < 0 else 'N'} {abs(near['lon']):.2f}°{'W' if near['lon'] < 0 else 'E'} "
+                   "(THEMIS 1 km map).")
     elif err.dusty:
-        text += " No firm ground was found within about 300 km; try another part of Mars."
-    return {"text": text, "suggest": near}
+        text += " There is no firm ground within about 300 km; try another part of Mars."
+    return {"text": text, "detail": detail.strip(), "suggest": near}
 
 
 def _loading_hint(region, text):
@@ -1004,12 +1008,14 @@ def _loading_hint(region, text):
     if b and b["proc"].poll() is None and "band in this cube" in text:
         st = _build_status(region)
         done = f" ({st['crism_done']}/{st['crism_total']} observations)" if st.get("crism_total") else ""
-        return (f"The CRISM mineral maps for this area are still loading{done}. Mineral goals work here in a few "
-                "minutes; try again then.")
+        return ("The mineral maps for this area are still loading. Mineral goals work here in a few minutes; try "
+                f"again then. | CRISM observations read so far: {done.strip(' ()') or 'starting'}.")
     return text
 
 
 def _mission_cube(req):
+    if req.ls is not None:
+        req.season = season_for_ls(req.ls)
     for name, value, allowed in (("vehicle", req.vehicle, MISSION_VEHICLES), ("season", req.season, SEASONS),
                                  ("priority", req.priority, PRIORITIES)):
         if value not in allowed:
@@ -1043,20 +1049,20 @@ def plan_mission_stream(req: MissionRequest):
     def events():
         spec, parser, notes = search.keyword_parse(req.goal), "keywords", []
         if spec["unknown"] or not spec["criteria"]:
-            yield event(type="status", text="The AI model is reading the goal…")
+            yield event(type="status", text="The AI is reading your goal…")
             for kind, *rest in search.ai_parse_stream(req.goal):
                 if kind in ("reasoning", "content"):
                     yield event(type="ai", phase="goal", kind=kind, text=rest[0])
                 elif kind == "spec" and rest[0]["criteria"]:
                     spec, parser = rest[0], "ai"
                 elif kind == "error":
-                    notes.append(rest[0])
-        yield event(type="status", text="Scoring every pixel, finding landing spots, routing 3 candidates…")
+                    notes.append(f"| {rest[0]}")
+        yield event(type="status", text="Finding the best places, landing spots and routes…")
         try:
             res = _finish_mission(mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
                                                goal_spec=(spec, parser, notes)))
         except mission.NoLandingSpot as e:
-            yield event(type="status", text=str(e) + " Looking for the nearest firm ground…")
+            yield event(type="status", text=str(e).split(" | ")[0] + " Looking for the nearest firm ground…")
             yield event(type="error", **_no_landing(c, e))
             return
         except ValueError as e:
@@ -1064,7 +1070,7 @@ def plan_mission_stream(req: MissionRequest):
             return
         yield event(type="result", mission=res)
         if res["candidates"]:
-            yield event(type="status", text="The AI model is explaining the choice…")
+            yield event(type="status", text="The AI is explaining the choice…")
             text = None
             for kind, *rest in mission.explain_stream(_missions[res["id"]]):
                 if kind in ("reasoning", "content"):
