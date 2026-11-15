@@ -67,11 +67,23 @@ def read_raster_into_grid(path_or_url, grid, nodata=None, resampling="bilinear")
         with rasterio.open(src_path) as src:
             vrt_kw = {"src_nodata": nodata} if nodata is not None and src.nodata is None else {}
             with WarpedVRT(src, crs=MARS_LONLAT_CRS, resampling=rs, **vrt_kw) as vrt:
+                # Read only the part of the grid the source covers, into its own rows/columns. (Reading the whole
+                # box would clip the window at the source's edge and then stretch the rest over the full grid,
+                # shifting every value, e.g. a small mineral map smeared over the whole Jezero box.)
                 w, s, e, n = grid["bounds"]
-                win = window_from_bounds(w, s, e, n, transform=vrt.transform)
-                data = vrt.read(1, window=win, out_shape=(grid["height"], grid["width"]),
-                                resampling=rs, masked=True)
-                arr = data.astype("float32").filled(np.nan)
+                H, W = grid["height"], grid["width"]
+                vb = vrt.bounds
+                c0 = max(0, math.ceil((vb.left - w) / (e - w) * W - 1e-6))
+                c1 = min(W, math.floor((vb.right - w) / (e - w) * W + 1e-6))
+                r0 = max(0, math.ceil((n - vb.top) / (n - s) * H - 1e-6))
+                r1 = min(H, math.floor((n - vb.bottom) / (n - s) * H + 1e-6))
+                arr = np.full((H, W), np.nan, "float32")
+                if c1 <= c0 or r1 <= r0:
+                    return arr
+                win = window_from_bounds(w + c0 * (e - w) / W, n - r1 * (n - s) / H,
+                                         w + c1 * (e - w) / W, n - r0 * (n - s) / H, transform=vrt.transform)
+                data = vrt.read(1, window=win, out_shape=(r1 - r0, c1 - c0), resampling=rs, masked=True)
+                arr[r0:r1, c0:c1] = data.astype("float32").filled(np.nan)
                 scale = (src.scales or [1.0])[0] or 1.0
                 offset = (src.offsets or [0.0])[0] or 0.0
                 arr = arr * scale + offset

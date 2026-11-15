@@ -878,9 +878,40 @@ def plan_mission(req: MissionRequest):
     c = _mission_cube(req)
     try:
         res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only)
+    except mission.NoLandingSpot as e:
+        raise HTTPException(400, _no_landing(c, e)["text"])
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, _loading_hint(c.region, str(e)))
     return _finish_mission(res)
+
+
+def _no_landing(cube, err):
+    """Error payload for an area with no landing spot: the reason, plus the nearest firm ground if dust is why."""
+    near = None
+    if err.dusty:
+        try:
+            near = mission.nearest_firm_ground(cube)
+        except Exception:
+            near = None
+    text = str(err)
+    if near:
+        text += (f" Nearest firm ground (thermal inertia {near['ti']}): about {near['km']} km {near['direction']}, "
+                 f"at {abs(near['lat']):.2f}°{'S' if near['lat'] < 0 else 'N'} "
+                 f"{abs(near['lon']):.2f}°{'W' if near['lon'] < 0 else 'E'}.")
+    elif err.dusty:
+        text += " No firm ground was found within about 300 km; try another part of Mars."
+    return {"text": text, "suggest": near}
+
+
+def _loading_hint(region, text):
+    """A goal that needs CRISM minerals fails while an area's minerals are still loading: say so."""
+    b = _builds.get(region)
+    if b and b["proc"].poll() is None and "band in this cube" in text:
+        st = _build_status(region)
+        done = f" ({st['crism_done']}/{st['crism_total']} observations)" if st.get("crism_total") else ""
+        return (f"The CRISM mineral maps for this area are still loading{done}. Mineral goals work here in a few "
+                "minutes; try again then.")
+    return text
 
 
 def _mission_cube(req):
@@ -929,8 +960,12 @@ def plan_mission_stream(req: MissionRequest):
         try:
             res = _finish_mission(mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
                                                goal_spec=(spec, parser, notes)))
+        except mission.NoLandingSpot as e:
+            yield event(type="status", text=str(e) + " Looking for the nearest firm ground…")
+            yield event(type="error", **_no_landing(c, e))
+            return
         except ValueError as e:
-            yield event(type="error", text=str(e))
+            yield event(type="error", text=_loading_hint(c.region, str(e)))
             return
         yield event(type="result", mission=res)
         if res["candidates"]:

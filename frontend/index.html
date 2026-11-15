@@ -1094,7 +1094,20 @@ async function runMission() {
       else if (e.type === "explanation" && res) {
         res.explanation = e.text; res.explanation_source = e.source; res.explain_ai.live = false;
         $("mStatus").textContent = ""; updateExplain();
-      } else if (e.type === "error") $("mStatus").textContent = e.text;
+      } else if (e.type === "error") {
+        $("mStatus").textContent = e.text;
+        if (e.suggest) {                                   // e.g. a dust-covered area: offer the nearest firm ground
+          const go = document.createElement("button");
+          go.className = "secondary"; go.type = "button"; go.style.marginTop = "8px";
+          go.textContent = `Go there and plan (${e.suggest.km} km ${e.suggest.direction})`;
+          go.onclick = () => {
+            if (!anywhere()) { $("region").value = ANYWHERE; $("region").onchange(); }
+            viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(e.suggest.lon, e.suggest.lat, 90000, MARS),
+                                  complete: () => runMission() });
+          };
+          $("mStatus").append(document.createElement("br"), go);
+        }
+      }
       else if (e.type === "done" && res && !res.explain_ai.live) $("mStatus").textContent = "";
     }, ctl.signal);
   } catch (err) {
