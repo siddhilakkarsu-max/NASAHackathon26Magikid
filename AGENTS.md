@@ -102,6 +102,36 @@ If a merge conflict occurs:
    git commit -m "resolve conflict in [filename]"
    ```
 
+### Before keeping one side of a conflict
+
+5. Never keep one whole side of a file ("ours"/"theirs") without first checking what the other side changed:
+   ```bash
+   git diff $(git merge-base HEAD MERGE_HEAD) MERGE_HEAD -- path/to/file   # what main/the other branch added
+   ```
+   Every line it added must still be in the result, unless we decided together to drop it.
+6. Write the resolution into the PR's changelog file (below): file, which version was kept or how they were
+   combined, and why.
+
+---
+
+## 📝 Changelog: one file per merged PR (every teammate and every agent)
+
+The shared `CHANGELOG.md` caused merge conflicts, so it is now history only: **don't add to it**.
+Each pull request gets its own file in `docs/changelog/`, so two people never edit the same changelog file.
+
+1. Open the PR first to get its number, then on your branch create
+   `docs/changelog/PR-<NNN>-<branch>.md` (3-digit number, e.g. `PR-034-feat-alice.md`) with a short
+   human summary: what changed, why, how to try it, and any merge conflicts you resolved and how.
+2. Run the generator; it adds the facts (commits, files changed, conflicts it detects by re-running every merge)
+   between its AUTO markers and keeps your summary:
+   ```bash
+   python tools/pr_changelog.py          # rewrites docs/changelog/ (needs a full clone, not --depth 1)
+   python tools/pr_changelog.py --check  # fails if any merged PR has no changelog file
+   ```
+3. Commit the changelog file with the PR. After the merge, whoever merged it runs the generator on main again
+   so the merge itself is recorded, and commits it in their next PR.
+4. A PR without its changelog file is not ready to merge.
+
 ---
 
 ## ⛔ Never Do These
@@ -111,6 +141,7 @@ If a merge conflict occurs:
 - Never delete a branch without asking
 - Never commit `.env` files, API keys, or passwords (even test ones)
 - Never edit a file last touched by another developer's branch without asking first
+- Never add entries to the shared `CHANGELOG.md`: use `docs/changelog/PR-<NNN>-<branch>.md`
 
 ---
 
