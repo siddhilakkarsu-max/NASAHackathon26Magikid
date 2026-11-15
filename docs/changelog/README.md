@@ -40,3 +40,4 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#34](PR-034-feat-siddhi.md) | docs: one changelog file per merged PR, with merge conflicts; team ru… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#35](PR-035-feat-siddhi.md) | regions: list 22 named places in the Region menu and load them on dem… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#36](PR-036-feat-siddhi.md) | docs: record PR #35's merge in its changelog file | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#37](PR-037-feat-siddhi.md) | docs: AI use disclosure and the reference list for the Space Apps pro… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
