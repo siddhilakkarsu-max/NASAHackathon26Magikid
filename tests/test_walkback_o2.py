@@ -65,7 +65,8 @@ class WalkbackOxygen(unittest.TestCase):
         self.assertEqual(reserve, 0.15)
 
     def test_rover_battery(self):
-        res = self.plan(vehicle="pressurized_rover", ls=250, budget_hours=8, reserve=0.1)
+        # a full 12 h rated day: the 60 kWh battery runs out before the time budget does
+        res = self.plan(vehicle="pressurized_rover", ls=250, budget_hours=12, reserve=0.1)
         self.assertEqual(res["walkback_basis"], "energy")
         self.assertIsNotNone(res["walkback_energy_usable_kwh"])
         self.assertIsNone(res["walkback_o2_usable_kg"])

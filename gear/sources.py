@@ -69,6 +69,9 @@ SOURCES = {
     "costes_lrv": ("Costes, mobility performance of the Apollo rover (NASA TR R-401)",
                    "https://ntrs.nasa.gov/api/citations/19730008090/downloads/19730008090.pdf"),
     "wiki_sev": ("NASA Space Exploration Vehicle (2008 concept)", "https://en.wikipedia.org/wiki/Space_Exploration_Vehicle"),
+    "nasa_mars_pr": ("Chappell, Hoffman and Bekdash 2022, Human Mars mission surface power impacts on timeline and "
+                     "traverse capabilities (NASA Mars pressurized rover)",
+                     "https://ntrs.nasa.gov/api/citations/20210022250/downloads/MarsSurfacePowerOps_IEEE_final.pdf"),
     "wiki_met": ("Modular Equipment Transporter (Apollo hand cart)", "https://en.wikipedia.org/wiki/Modular_Equipment_Transporter"),
     "nasa_moonbase": ("NASA Moon Base systems (lunar rover requirements)", "https://www.nasa.gov/moonbase-systems/"),
     "nasa_rover_page": ("NASA, Perseverance rover components", "https://mars.nasa.gov/mars2020/spacecraft/rover/"),
