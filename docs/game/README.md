@@ -69,6 +69,33 @@ and integrity raise the score (grades S to D, weighted by the plan's decision-ma
 breach), `tools` (every charge spent more than 30 m from A: 20 s countdown), `offlimits` (4.5 s on red ground),
 `storm` (12 s more than 150 m off the corridor in a storm).
 
+## Leaderboard and callsigns
+
+On the title screen, pick a callsign (3 to 16 letters, digits, spaces, hyphens or underscores) and press
+**Claim callsign**. From then on, every successful mission you fly yourself at normal speed is posted. The end
+screen shows your rank on that mission and route with its top ten; the title screen shows the overall board
+(the total of each crew's best score per mission). Runs that used the autopilot or a speed multiplier, and
+missions that ended in death or abort, are not posted. The leaderboard needs the server, so it is hidden when
+the game is opened from a file.
+
+Server side (`leaderboard.py`, routes under `/api/game`, included by `app.py`):
+
+| Call | Body / params | Returns |
+|---|---|---|
+| `POST /api/game/players` | `{"name"}` | `{"name", "token"}`; 409 if taken, 400 if invalid or reserved |
+| `POST /api/game/scores` | `{"name", "token", "mission", "goal", "vehicle", "route", "difficulty", "score", "grade", "met_h", "samples"}` | `{"rank", "best", "improved", "players", "board"}`; 403 wrong token, 404 unknown callsign, 429 too soon |
+| `GET /api/game/leaderboard` | `?mission=<key>&limit=20`; no `mission` gives the overall board | `{"mission", "board", "players"}` |
+
+Scores live in one SQLite file, `game_state/leaderboard.sqlite3` (not in git; set `MARSWALK_GAME_STATE_DIR` to
+move it). All URLs are relative, so it works on whatever host serves the site, including an sslip.io address.
+The browser keeps `{name, token}` in `localStorage["marswalk.game.player"]`.
+
+Limits to say out loud: scores are reported by the player's browser, so a determined person can post a made-up
+one; the server checks ranges, the callsign's token and a 4-second gap between posts. A callsign has no
+password and cannot be recovered on another device or after clearing the browser. There is no name filter
+beyond the character rule and a short reserved list, and no admin page: to remove an entry, edit the SQLite
+file. Each server has its own board.
+
 ## URL parameters
 
 | Param | Meaning |

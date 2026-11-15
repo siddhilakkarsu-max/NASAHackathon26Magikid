@@ -225,6 +225,8 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
 #cutHint{position:absolute;right:18px;bottom:calc(13vh - 22px);font:11px var(--mono);color:var(--muted)}
 #cut.garble #cutTxt{letter-spacing:.06em;color:#cdb9aa}
 #cut.solid{background:rgba(5,3,2,.93)}
+.lbt{width:100%;border-collapse:collapse;font:12px/1.5 var(--mono);margin-top:4px} .lbt td{padding:1px 6px 1px 0;white-space:nowrap} .lbt td:nth-child(2){width:99%;overflow:hidden;text-overflow:ellipsis;max-width:0}
+.lbt tr.me td{color:var(--accent);font-weight:600} .lbrow{display:flex;gap:6px;margin:4px 0} .lbrow input{flex:1;min-width:0} .lbrow button{white-space:nowrap}
 #toast{position:fixed;left:50%;top:150px;transform:translateX(-50%);z-index:70;background:var(--bg);border:1px solid var(--line);border-radius:6px;padding:6px 12px;font-size:12px;
   pointer-events:none;opacity:0;transition:opacity .25s}
 #toast.on{opacity:1}
@@ -343,6 +345,8 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
         <div id="handoff"></div>
         <h2 style="margin-top:12px">Best runs</h2>
         <div id="bests" class="small"></div>
+        <h2 style="margin-top:12px">Leaderboard</h2>
+        <div id="lb" class="small"></div>
       </div>
       <div class="pane">
         <h2>Mission Planner console</h2>
@@ -1568,7 +1572,8 @@ function simStep() {
   const W = R.W, dt = SIM_DT, dtH = dt * W.TS / 3600;
   const o2p = R.o2, batp = R.bat, intp = R.integ;
   R.tick++; R.real += dt; R.t += dtH; R.px = R.x; R.py = R.y;
-  if (G.autopilot) botThink(R);
+  if (G.autopilot) { botThink(R); R.bot = true; }
+  if (G.speed > 1) R.fast = true;
   else { R.mvx = IN.mx; R.mvy = IN.my; R.careful = IN.careful; }
   if (R.site) { siteTick(R, dt); R.mvx = 0; R.mvy = 0; }
   if (R.phase === 'site') R.siteH += dtH;                    // everything at the site (walking between spots, mini-games) is site time, not travel
@@ -2165,6 +2170,7 @@ function finishRun(R) {
   const rec = { key: key, goal: N.goal, vehicle: N.veh.label, season: N.season.label, priority: N.priority.label, cand: W.C.rank, difficulty: W.diff.label, outcome: R.outcome, cause: R.cause,
     score: R.score.total, grade: R.score.grade, met_h: Math.round(R.t * 1000) / 1000, o2_left_pct: R.hasO2 ? Math.round(100 * R.o2 / W.o2Cap) : null,
     bat_left_pct: R.hasBat ? Math.round(100 * R.bat / W.batCap) : null, integrity: Math.round(R.integ), samples: R.samples.length, tools_left: chargesLeft(R), when: Date.now() };
+  R.lb = null; lbSubmit(R, rec);
   R.prevRec = store.get('marswalk.game.last', null);
   store.set('marswalk.game.last', rec);
   if (R.outcome === 'success') {
@@ -3884,7 +3890,71 @@ function fillSelect(el, obj, labelOf, def) {
   el.textContent = '';
   Object.keys(obj).forEach((k) => { const o = mk('option', '', labelOf(obj[k], k)); o.value = k; if (k === def) o.selected = true; el.appendChild(o); });
 }
+// ---- leaderboard + callsign (server: leaderboard.py). Needs the app's API; silent when offline. Names are untrusted text.
+const LB = { board: null, players: 0, msg: '', busy: false };
+function lbPlayer() { const p = store.get('marswalk.game.player', null); return p && typeof p === 'object' && typeof p.name === 'string' && typeof p.token === 'string' ? p : null; }
+async function lbPost(path, body) {             // -> { ok, status, data }
+  if (!API.on) return { ok: false, status: 0, data: null };
+  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), CFG.NET_DECOR_MS);
+  try { const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body), signal: ctl.signal }); let d = null; try { d = await r.json(); } catch (e) { d = null; }
+    return { ok: r.ok, status: r.status, data: d }; } catch (e) { return { ok: false, status: 0, data: null }; } finally { clearTimeout(to); }
+}
+function lbTable(rows, cols, me) {              // cols: [[key, format]]
+  const t = mk('table', 'lbt');
+  rows.forEach((r) => { if (!r || typeof r !== 'object') return; const tr = mk('tr', me && str(r.name).toLowerCase() === me.toLowerCase() ? 'me' : '');
+    cols.forEach((c) => tr.appendChild(mk('td', '', c[1](r[c[0]], r)))); t.appendChild(tr); });
+  return t;
+}
+async function lbClaim() {
+  const inp = $('lbName'); if (!inp || LB.busy) return; const name = inp.value.trim(); if (!name) { LB.msg = 'Type a callsign first.'; lbRender(); return; }
+  LB.busy = true; const r = await lbPost('/api/game/players', { name: name }); LB.busy = false;
+  if (r.ok && r.data && typeof r.data.token === 'string') { store.set('marswalk.game.player', { name: str(r.data.name, name), token: r.data.token }); LB.msg = ''; }
+  else LB.msg = r.status ? detailText(r.data && r.data.detail) || 'The server refused that callsign.' : 'No link to the server.';
+  lbRender(); lbLoad();
+}
+async function lbLoad() { const d = await apiJSON('/api/game/leaderboard?limit=10'); if (d && Array.isArray(d.board)) { LB.board = d.board; LB.players = num(d.players, 0); lbRender(); } }
+function lbRender() {
+  const el = $('lb'); if (!el) return; el.textContent = '';
+  if (!API.on) { el.textContent = 'The leaderboard needs the Marswalk server. Open the game from the site to compete.'; return; }
+  const p = lbPlayer();
+  if (p) el.appendChild(mk('div', '', 'Flying as ' + p.name + '. Successful runs you fly yourself at normal speed are posted.'));
+  else { const row = mk('div', 'lbrow'), inp = mk('input'), b = mk('button', 'secondary', 'Claim callsign'); inp.type = 'text'; inp.id = 'lbName'; inp.maxLength = 16; inp.placeholder = 'Pick a callsign (3-16 characters)'; inp.setAttribute('aria-label', 'Callsign');
+    b.type = 'button'; b.addEventListener('click', lbClaim); inp.addEventListener('keydown', (e) => { if (e.key === 'Enter') lbClaim(); }); row.appendChild(inp); row.appendChild(b); el.appendChild(row); }
+  if (LB.msg) el.appendChild(mk('div', 'bad', LB.msg));
+  if (LB.board && LB.board.length) { el.appendChild(mk('div', '', 'Top crews · total of each crew\'s best score per mission · ' + LB.players + ' callsign' + (LB.players === 1 ? '' : 's')));
+    el.appendChild(lbTable(LB.board, [['rank', (v) => '#' + num(v, 0)], ['name', (v) => str(v)], ['points', (v) => fx(num(v, 0), 1) + ' pts'], ['missions', (v) => num(v, 0) + ' mission' + (num(v, 0) === 1 ? '' : 's')]], p && p.name)); }
+  else if (LB.board) el.appendChild(mk('div', '', 'No scores yet. Be the first crew home.'));
+}
+async function lbSubmit(R, rec) {               // called once per finished run; fills R.lb for the end screen
+  const p = lbPlayer(), W = R.W;
+  if (!API.on) { R.lb = { note: '' }; return; }
+  if (R.outcome !== 'success') { R.lb = { note: 'Only successful missions go on the leaderboard.' }; }
+  else if (R.bot || R.fast) { R.lb = { note: 'Not posted: this run used the autopilot or a speed multiplier.' }; }
+  else if (!p) { R.lb = { note: 'Claim a callsign on the title screen to post your scores.' }; }
+  else {
+    R.lb = { note: 'Posting your score…' }; lbEnd(R);
+    const r = await lbPost('/api/game/scores', { name: p.name, token: p.token, mission: rec.key.slice(0, 400), goal: str(rec.goal).slice(0, 300), vehicle: str(rec.vehicle).slice(0, 80), route: clamp(Math.round(num(rec.cand, 1)), 1, 9),
+      difficulty: str(rec.difficulty).slice(0, 20), score: clamp(num(rec.score, 0), 0, 100), grade: str(rec.grade).slice(0, 2), met_h: clamp(num(rec.met_h, 0), 0, 200), samples: clamp(Math.round(num(rec.samples, 0)), 0, 20) });
+    if (r.ok && r.data) { R.lb = { rank: num(r.data.rank, 0), best: num(r.data.best, 0), improved: !!r.data.improved, players: num(r.data.players, 0), board: Array.isArray(r.data.board) ? r.data.board : [], me: p.name }; lbEnd(R); return; }
+    R.lb = { note: r.status === 403 || r.status === 404 ? 'Score not posted: this browser no longer holds the callsign "' + p.name + '".' : r.status === 429 ? 'Score not posted: too soon after your last one.' : 'Score not posted: no answer from the server.' };
+    if (r.status === 403 || r.status === 404) store.set('marswalk.game.player', null);
+  }
+  const d = await apiJSON('/api/game/leaderboard?limit=10&mission=' + encodeURIComponent(rec.key.slice(0, 400)));
+  if (d && Array.isArray(d.board)) { R.lb.board = d.board; R.lb.players = d.board.length; }
+  lbEnd(R);
+}
+function lbEnd(R) {                              // the end screen's leaderboard block
+  const el = $('endLB'); if (!el || G.R !== R || !R.lb) return; el.textContent = '';
+  const lb = R.lb, p = lbPlayer();
+  if (!lb.note && !lb.board) return;
+  el.appendChild(mk('h3', '', 'Leaderboard · this mission and route'));
+  if (lb.rank) el.appendChild(mk('p', lb.improved ? 'ok' : '', (lb.improved ? 'New personal best. ' : 'Your best here stays ' + fx(lb.best, 1) + '. ') + 'You are #' + lb.rank + ' of ' + lb.players + ' crew' + (lb.players === 1 ? '' : 's') + ' as ' + lb.me + '.'));
+  if (lb.note) el.appendChild(mk('p', 'small', lb.note));
+  if (lb.board && lb.board.length) el.appendChild(lbTable(lb.board, [['rank', (v) => '#' + num(v, 0)], ['name', (v) => str(v)], ['score', (v, r) => fx(num(v, 0), 1) + ' ' + str(r.grade)], ['met_h', (v) => fmtHM(num(v, 0)) + ' h'], ['difficulty', (v) => str(v)]], (lb.me || (p && p.name)) || ''));
+  else if (lb.board) el.appendChild(mk('p', 'small', 'No crew has posted a score on this mission and route yet.'));
+}
 function titleRender() {
+  lbRender(); lbLoad();
   const q = $('quick'); q.textContent = '';
   G.baked.forEach((N, i) => {
     if (!N || !N.cands.length) return;
@@ -4231,10 +4301,12 @@ function showEnd() {
       row('Score', fx(num(pv.score, 0), 1) + ' ' + esc(str(pv.grade)), fx(sc.total, 1) + ' ' + esc(sc.grade)) + row('Mission time', fmtHM(num(pv.met_h, 0)) + ' h', fmtHM(R.t) + ' h') +
       row('Samples', esc(num(pv.samples, 0)), R.samples.length) + row('Integrity', esc(num(pv.integrity, 0)) + '%', Math.round(R.integ) + '%') + row('Tool charges left', esc(num(pv.tools_left, 0)), chargesLeft(R)) + '</table>';
   }
+  s += '<div id="endLB"></div>';
   s += '<div class="btnrow"><button type="button" id="eRetry">Retry this route</button>' + (N.cands.length > 1 ? '<button type="button" id="eNext" class="secondary">Fly route #' + esc(N.cands[(W.ci + 1) % N.cands.length].rank) + '</button>' : '') +
     '<button type="button" id="eDossier" class="secondary">Mission dossier</button><button type="button" id="eTitle" class="secondary">New mission</button></div>' +
     '<p class="small" style="margin-top:10px"><a href="' + esc(kitHref(N, C)) + '" target="_blank" rel="noopener">Gear for this route</a> · <a href="index.html">Back to the Marswalk Planner</a> · seed ' + W.seed + '</p>';
   $('endBody').innerHTML = s;
+  lbEnd(R);
   $('eRetry').onclick = () => startMission(N, W.ci, W.diffKey);
   if ($('eNext')) $('eNext').onclick = () => startMission(N, (W.ci + 1) % N.cands.length, W.diffKey);
   $('eDossier').onclick = () => { N.selected = W.ci; openBriefing(N); };

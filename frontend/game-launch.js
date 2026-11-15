@@ -192,7 +192,18 @@
       var style = document.createElement("style");
       style.textContent = ".game-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}" +
         ".game-actions button,#gameSection button{width:auto;margin:0;padding:8px 12px}" +
-        ".game-actions[hidden]{display:none}";
+        ".game-actions[hidden]{display:none}" +
+        // "mission ready" button: top right of the map, clear of the map controls and the chat
+        "#playFab{position:fixed;top:68px;right:16px;z-index:60;width:auto;margin:0;padding:12px 20px 12px 16px;border:0;border-radius:999px;" +
+        "background:#22b455;color:#fff;font:700 15px/1.1 system-ui,sans-serif;letter-spacing:.02em;cursor:pointer;display:flex;align-items:center;gap:10px;" +
+        "box-shadow:0 6px 22px rgba(0,0,0,.45),0 0 0 0 rgba(34,180,85,.7);animation:playFabPulse 1.6s ease-out infinite,playFabIn .5s cubic-bezier(.2,1.4,.4,1)}" +
+        "#playFab:hover{background:#27c960} #playFab:focus-visible{outline:3px solid #fff;outline-offset:2px} #playFab[hidden]{display:none}" +
+        "#playFab small{display:block;font:500 11px/1.2 system-ui,sans-serif;opacity:.9;letter-spacing:0}" +
+        "#playFab .tri{width:0;height:0;border-style:solid;border-width:9px 0 9px 15px;border-color:transparent transparent transparent #fff}" +
+        "@keyframes playFabPulse{0%{box-shadow:0 6px 22px rgba(0,0,0,.45),0 0 0 0 rgba(34,180,85,.75)}100%{box-shadow:0 6px 22px rgba(0,0,0,.45),0 0 0 22px rgba(34,180,85,0)}}" +
+        "@keyframes playFabIn{0%{transform:translateY(-24px) scale(.6);opacity:0}100%{transform:none;opacity:1}}" +
+        "@media (prefers-reduced-motion:reduce){#playFab{animation:none}}" +
+        "@media (max-width:700px){#playFab{top:auto;bottom:86px;right:12px}}";
       document.head.appendChild(style);
       var actions = byId("gameMissionActions");
       if (!actions) {
@@ -213,6 +224,16 @@
         note.textContent = "Survival game · opens a new tab";
         actions.appendChild(note);
       }
+      var fab = byId("playFab"), fabText;
+      if (!fab) {
+        fab = document.createElement("button");
+        fab.id = "playFab"; fab.type = "button"; fab.hidden = true;
+        var tri = document.createElement("span"); tri.className = "tri"; tri.setAttribute("aria-hidden", "true");
+        fabText = document.createElement("span"); fabText.id = "playFabText";
+        fab.appendChild(tri); fab.appendChild(fabText);
+        document.body.appendChild(fab);
+        fab.addEventListener("click", function () { try { if (currentMission()) openGame(); } catch (_) {} });
+      } else { fabText = byId("playFabText"); }
       var section = byId("gameSection"), gameButton, gameNote;
       if (!section) {
         section = document.createElement("details");
@@ -240,6 +261,13 @@
           last = key;
           actions.hidden = !show; btn.disabled = !show;
           btn.textContent = "Play route #" + n;
+          fab.hidden = !show;                                    // appears (and animates in) the moment a plan is ready
+          if (show) {
+            fabText.textContent = "";
+            fabText.appendChild(document.createTextNode("MISSION READY \u00b7 PLAY"));
+            var sm = document.createElement("small"); sm.textContent = "Route #" + n + " \u00b7 first-person game \u00b7 new tab"; fabText.appendChild(sm);
+            fab.setAttribute("aria-label", "Mission ready: play route " + n + " in the survival game (opens a new tab)");
+          }
           gameButton.disabled = run.disabled;
           gameButton.textContent = show ? "Play route #" + n : "Browse game missions";
           gameNote.textContent = show
