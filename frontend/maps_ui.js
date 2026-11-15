@@ -41,18 +41,39 @@
   rail.setAttribute("aria-label", "Planner tools");
   document.body.append(rail);
   let openSection = null;
+  // Each rail button shows only its own menu (plus the few controls that belong with it); "Menu" shows everything.
+  const MENU_PARTS = {
+    missionSetup: ["region", "areaStatus", "missionSetup", "mStatus"],
+    missionResults: ["mStatus", "missionResults"],
+    globalMaps: ["globalMaps", "mapKey"],
+    regionalMaps: ["region", "areaStatus", "regionalMaps", "mapKey"],
+    conditionsPanel: ["conditionsPanel"],
+    pointDetails: ["pointDetails"],
+  };
+  const topChild = (node) => { while (node && node.parentElement !== panel) node = node.parentElement; return node; };
+  function showOnly(sectionId) {
+    const keep = sectionId && MENU_PARTS[sectionId] ? new Set(MENU_PARTS[sectionId].map((id) => topChild($(id)))) : null;
+    for (const child of panel.children) child.classList.toggle("gm-off", !!keep && child !== closeX && !keep.has(child));
+    if (keep) panel.dataset.only = sectionId; else delete panel.dataset.only;
+  }
+  // in a single menu its title doesn't fold it away (that would leave an empty drawer)
+  panel.addEventListener("click", (e) => {
+    const summary = e.target.closest("summary");
+    if (summary && panel.dataset.only && summary.parentElement.id === panel.dataset.only) e.preventDefault();
+  });
   function drawer(on, sectionId = null) {
     document.body.classList.toggle("drawer", on);
     openSection = on ? sectionId || "all" : null;
     for (const b of rail.querySelectorAll("button[data-section]")) b.classList.toggle("on", on && b.dataset.section === openSection);
+    showOnly(on && sectionId !== "all" ? sectionId : null);
     if (on && sectionId && sectionId !== "all") {
       const sec = $(sectionId);
       if (sec) {
         sec.hidden = false;
         sec.open = true;
-        setTimeout(() => sec.scrollIntoView({ block: "start", behavior: "smooth" }), 230);
       }
-    } else if (on) panel.scrollTop = 0;
+    }
+    if (on) panel.scrollTop = 0;
     setTimeout(() => window.viewer?.scene.requestRender(), 250);
   }
   const railBtn = (icon, label, onclick, section) => {
@@ -73,7 +94,11 @@
   railBtn("pin", "Point info", toggle("pointDetails"), "pointDetails");
   rail.append(el("div", { className: "grow" }));
   railBtn("help", "Help", () => window.openMapManual?.());
-  const syncResults = () => { resultsBtn.disabled = $("missionResults").hidden; };
+  const syncResults = () => {
+    resultsBtn.disabled = $("missionResults").hidden;
+    // a plan started from the Plan menu: follow it to Results, where its progress and the AI's thinking appear
+    if (!$("missionResults").hidden && openSection === "missionSetup") drawer(true, "missionResults");
+  };
   new MutationObserver(syncResults).observe($("missionResults"), { attributes: true, attributeFilter: ["hidden"] });
   syncResults();
   // A click on the map shows the point's values: open the drawer there, like a place card.

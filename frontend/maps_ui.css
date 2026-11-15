@@ -89,3 +89,7 @@ body.gm.drawer #gmChips { left: 768px; }
   body.gm #panel { width: calc(100vw - 72px); }
   body.gm.drawer #marsSearch, body.gm.drawer #gmChips { left: 14px; }
 }
+
+/* one menu per rail button: everything else in the panel is set aside (maps_ui.js showOnly) */
+#panel > .gm-off { display: none !important; }
+#panel[data-only] > details[open] > summary { cursor: default; }
