@@ -182,6 +182,41 @@ def murray_features(name: str):
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
+# ------------------------------------------------------------ place names ----
+_places = None
+
+
+def place_name(lat, lon):
+    """A plain name for a spot from the IAU feature names: the smallest named feature it lies in ("Gale crater"),
+    else "Near <nearest feature>". None if the names can't be loaded. Albedo features (telescope-era shading
+    names) are skipped."""
+    global _places
+    if _places is None:
+        try:
+            murray_features("names")                     # downloads and caches names.geojson once
+            feats = json.loads((CACHE / "names.geojson").read_text())["features"]
+        except Exception:
+            return None
+        rows = []
+        for f in feats:
+            p = f["properties"]
+            kind = (p.get("type") or "")
+            if not p.get("name") or kind.startswith("Albedo"):
+                continue
+            name = p["name"] + (" crater" if kind.startswith("Crater") else "")
+            lo, la = f["geometry"]["coordinates"]
+            rows.append((la, lo, max(float(p.get("diameter_km") or 0), 1.0) / 2, name))
+        _places = (np.array([r[0] for r in rows]), np.array([r[1] for r in rows]), np.array([r[2] for r in rows]),
+                   [r[3] for r in rows])
+    la, lo, rad, names = _places
+    p1, p2, dl = math.radians(lat), np.radians(la), np.radians(lo - lon)
+    km = 2 * MARS_R / 1000 * np.arcsin(np.sqrt(np.sin((p2 - p1) / 2) ** 2 + math.cos(p1) * np.cos(p2) * np.sin(dl / 2) ** 2))
+    inside = np.flatnonzero(km <= rad)
+    if inside.size:
+        return names[int(inside[np.argmin(rad[inside])])]
+    return "Near " + names[int(np.argmin(km - rad))]
+
+
 # --------------------------------------------------------- HiRISE index ----
 _hirise = None
 

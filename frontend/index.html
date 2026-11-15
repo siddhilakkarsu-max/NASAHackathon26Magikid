@@ -199,7 +199,9 @@
               color: #1c1d22; font-weight: 600; padding: 8px 16px; border-radius: 999px; font-size: 12px;
               transition: opacity .3s; pointer-events: none; }
   #advToast.hide { opacity: 0; }
-  #areaStatus:empty { display: none; } #areaStatus { margin: -4px 0 12px; }
+  #areaStatus:empty { display: none; }
+  ul.notes { list-style: none; padding-left: 0; } ul.notes li { cursor: pointer; margin: 3px 0; }
+  ul.notes .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 7px; border: 1px solid #fff; } #areaStatus { margin: -4px 0 12px; }
   #landing button:focus { outline: none; } #landing button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 </style>
 </head>
@@ -1107,18 +1109,20 @@ async function streamEvents(path, body, onEvent, signal) {
 
 function scrollEnd(node) { if (node) node.scrollTop = node.scrollHeight; }
 
+const waitText = (n) => `Waiting for the AI: ${n} request${n === 1 ? "" : "s"} ahead of yours…`;
 function renderLiveGoal(g) {                 // the AI reading the goal, before the plan exists
   let box = $("mGoalLive");
   if (!box) {
     $("mResult").innerHTML = "";
-    box = el("details", { className: "ai adv", id: "mGoalLive", open: true });
+    box = el("details", { className: "ai", id: "mGoalLive", open: true });
     box.append(el("summary", { id: "mGoalSum" }), el("pre", { className: "thinking", id: "mGoalThink" }),
                el("pre", { className: "thinking answer", id: "mGoalAns" }));
     $("mResult").append(box);
   }
-  $("mGoalSum").textContent = g.content ? "AI reading the goal: answering" : "AI reading the goal: thinking";
+  $("mGoalSum").textContent = g.content ? "The AI is reading your goal: answering"
+    : g.reasoning ? "The AI is reading your goal: thinking" : "The AI is reading your goal: waiting";
   $("mGoalSum").className = "live";
-  $("mGoalThink").textContent = g.reasoning || "…"; scrollEnd($("mGoalThink"));
+  $("mGoalThink").textContent = g.reasoning || (g.waiting ? waitText(g.waiting) : "Starting…"); scrollEnd($("mGoalThink"));
   $("mGoalAns").textContent = g.content; $("mGoalAns").hidden = !g.content;
 }
 
@@ -1141,11 +1145,21 @@ async function runMission() {
     await streamEvents("/api/mission/stream", { region: regionId(), goal, vehicle: $("mVehicle").value,
       ls: +$("ls").value, priority: $("mPriority").value, green_only: $("greenOnly").checked }, async (e) => {
       if (!isCurrent()) return;
+      if (e.type === "ai" && /^Waiting for the AI/.test($("mStatus").innerText))   // our turn now
+        setMsg($("mStatus"), { goal: "The AI is reading your goal…", explain: "The AI is explaining the choice…",
+                               annotate: "The AI is labelling the map…" }[e.phase] || "");
       if (e.type === "status") setMsg($("mStatus"), e.text);
+      else if (e.type === "ai_wait") {                            // another request is using the AI first
+        setMsg($("mStatus"), waitText(e.ahead));
+        if (e.phase === "goal") { goalAI.waiting = e.ahead; renderLiveGoal(goalAI); }
+        else if (e.phase === "explain" && res) { res.explain_ai.waiting = e.ahead; updateExplain(); }
+        else if (e.phase === "annotate" && res) { res.annot_ai.waiting = e.ahead; updateAnnot(); }
+      }
       else if (e.type === "ai" && e.phase === "goal") { goalAI[e.kind] += e.text; renderLiveGoal(goalAI); }
       else if (e.type === "result") {
         res = e.mission; res.goal_ai = goalAI;
         res.explain_ai = { reasoning: "", content: "", live: !!res.candidates.length };
+        res.annot_ai = { reasoning: "", content: "", live: res.candidates.some((c) => (c.map_notes || []).length) };
         if (mission) prevMission = mission;
         mission = res; selected = 0;
         $("runMission").disabled = false;                          // a new plan may start while the AI explains
@@ -1158,6 +1172,12 @@ async function runMission() {
         drawMission(scienceShown);
         if ($("showTracks").checked) await showTracks(true);
       } else if (e.type === "ai" && e.phase === "explain" && res) { res.explain_ai[e.kind] += e.text; updateExplain(); }
+      else if (e.type === "ai" && e.phase === "annotate" && res) { res.annot_ai[e.kind] += e.text; updateAnnot(); }
+      else if (e.type === "annotations" && res) {                 // the AI's captions for the map notes
+        for (const c of res.candidates) for (const n of c.map_notes || []) if (e.labels[n.id]) n.ai_label = e.labels[n.id];
+        res.annot_ai.live = false; updateAnnot(); drawMission(false);
+      }
+      else if (e.type === "note" && e.phase === "annotate" && res) { res.annot_ai.note = e.text; res.annot_ai.live = false; updateAnnot(); }
       else if (e.type === "note" && res) res.explain_ai.note = e.text;
       else if (e.type === "explanation" && res) {
         res.explanation = e.text; res.explanation_source = e.source; res.explain_ai.live = false;
@@ -1176,34 +1196,69 @@ async function runMission() {
           $("mStatus").append(document.createElement("br"), go);
         }
       }
-      else if (e.type === "done" && res && !res.explain_ai.live) $("mStatus").textContent = "";
+      else if (e.type === "done" && res) {
+        if (res.annot_ai && res.annot_ai.live) { res.annot_ai.live = false; updateAnnot(); }
+        if (!res.explain_ai.live) $("mStatus").textContent = "";
+      }
     }, ctl.signal);
   } catch (err) {
-    if (err.name !== "AbortError" && isCurrent()) setMsg($("mStatus"), err.message);
+    if (err.name !== "AbortError" && isCurrent()) {
+      const lost = err instanceof TypeError || /network|fetch|load failed/i.test(err.message);
+      setMsg($("mStatus"), lost ? "Lost the connection to the server (it may be restarting or offline). Press Plan " +
+        `mission to try again. | ${err.message}` : err.message);
+      if (res) {                                             // nothing should stay "thinking" after this
+        res.explain_ai.live = false; if (res.annot_ai) res.annot_ai.live = false;
+        updateExplain(); updateAnnot();
+      }
+    }
   } finally {
     if (isCurrent()) $("runMission").disabled = false;
   }
+}
+
+const NOTE_COLOR = { cliff: "#ff3b30", steep: "#ff9500", soft: "#ffcc00", mineral: "#bf5af2" };
+const noteText = (n) => n.ai_label || n.label;
+function updateAnnot() {                     // the "Notes on the map" list and the AI writing them
+  const r = mission, a = r && r.annot_ai, list = $("mNotes");
+  if (!a || !list) return;
+  const notes = r.candidates[selected]?.map_notes || [];
+  list.replaceChildren(...notes.map((n) => {
+    const li = el("li", { title: "Show on the map" }, el("span", { className: "dot", style: `background:${NOTE_COLOR[n.kind]}` }),
+                  noteText(n), el("span", { className: "adv", textContent: n.detail }));
+    li.onclick = () => viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(n.lon, n.lat, 6000, MARS) });
+    return li;
+  }));
+  if (!notes.length) list.append(el("li", { textContent: "Nothing notable along this route." }));
+  $("mAnnotBox").hidden = !a.reasoning && !a.live;
+  if (a.live && a.reasoning && !a.content) $("mAnnotBox").open = true;
+  $("mAnnotSum").textContent = a.live && !a.content ? "The AI's thinking about the labels (thinking…)" : "The AI's thinking about the labels";
+  $("mAnnotSum").className = a.live && !a.content ? "live" : "";
+  $("mAnnotThink").textContent = a.reasoning || (a.waiting ? waitText(a.waiting)
+    : "Waiting for the AI (it labels the map after explaining the plan)…"); scrollEnd($("mAnnotThink"));
+  setMsg($("mAnnotNote"), a.live ? "The AI is writing the labels; labels from the data are shown meanwhile."
+    : notes.some((n) => n.ai_label) ? "Labels written by the AI from the data along the route."
+    : "Labels from the data along the route." + (a.note ? ` ${a.note}` : ""));
 }
 
 function updateExplain() {                   // fill the "Why" section from the streamed state
   const ai = mission && mission.explain_ai;
   if (!ai || !$("mExplain")) return;
   const box = $("mThinkBox"), think = $("mThinking");
-  box.hidden = !ai.reasoning;
+  box.hidden = !ai.reasoning && !ai.live;      // shown while waiting too, so the AI never looks absent
   if (ai.live && ai.reasoning && !ai.content) box.open = true;     // follow the thinking while it streams
-  $("mThinkSum").textContent = ai.live && !ai.content ? "AI reasoning (thinking…)" : "AI reasoning";
+  $("mThinkSum").textContent = ai.live && !ai.content ? "The AI's thinking (thinking…)" : "The AI's thinking";
   $("mThinkSum").className = ai.live && !ai.content ? "live" : "";
-  think.textContent = ai.reasoning; scrollEnd(think);
+  think.textContent = ai.reasoning || (ai.waiting ? waitText(ai.waiting) : "Waiting for the AI to start…"); scrollEnd(think);
   $("mExplain").textContent = ai.content || mission.explanation;
   $("mExplain").className = ai.live && ai.content ? "live" : "";
-  $("mExplainNote").textContent = ai.live
-    ? (ai.content ? "AI model is writing…" : ai.reasoning ? "AI model is thinking; summary from the numbers shown meanwhile."
-                                                         : "Waiting for the AI model; summary from the numbers shown meanwhile.")
-    : mission.explanation_source === "ai" ? "Written by the AI model from the numbers above."
-    : (ai.note ? ai.note + " " : "") + "Summary from the numbers above.";
+  setMsg($("mExplainNote"), ai.live
+    ? (ai.content ? "The AI is writing…" : ai.reasoning ? "The AI is thinking; a quick summary is shown meanwhile."
+                                                       : "Waiting for the AI; a quick summary is shown meanwhile.")
+    : mission.explanation_source === "ai" ? "Written by the AI from the plan's numbers."
+    : "A quick summary from the plan's numbers (the AI didn't answer)." + (ai.note ? ` | ${ai.note}` : ""));
 }
 
-function selectRoute(i) { selected = i; renderMission(); drawMission(true); }
+function selectRoute(i) { selected = i; renderMission(); drawMission(true); }   // renderMission also lists its notes
 
 function renderMission() {
   const r = mission, s = r.settings, out = $("mResult"), h3 = (t) => out.append(el("h3", { textContent: t }));
@@ -1228,8 +1283,8 @@ function renderMission() {
   for (const n of r.notes) { const d = el("div", { className: "small" }); setMsg(d, n); out.append(d); }
   const g = r.goal_ai;
   if (g && (g.reasoning || g.content)) {                       // how the AI read the goal (collapsed)
-    const d = el("details", { className: "ai adv" });
-    d.append(el("summary", { textContent: `How ${s.model || "the AI model"} read the goal` }),
+    const d = el("details", { className: "ai" });
+    d.append(el("summary", {}, "How the AI read your goal", el("span", { className: "adv", textContent: s.model || "" })),
              el("pre", { className: "thinking", textContent: g.reasoning || "(no reasoning returned)" }),
              el("pre", { className: "thinking answer", textContent: g.content }));
     out.append(d);
@@ -1262,10 +1317,17 @@ function renderMission() {
   }
 
   h3("Why this plan");
-  const think = el("details", { className: "ai adv", id: "mThinkBox" });
+  const think = el("details", { className: "ai", id: "mThinkBox" });
   think.append(el("summary", { id: "mThinkSum" }), el("pre", { className: "thinking", id: "mThinking" }));
-  out.append(think, el("div", { id: "mExplain" }), el("div", { className: "small adv", id: "mExplainNote" }));
+  out.append(think, el("div", { id: "mExplain" }), el("div", { className: "small", id: "mExplainNote" }));
   updateExplain();
+  if (r.candidates.some((c) => (c.map_notes || []).length)) {
+    h3("Notes on the map");
+    const ab = el("details", { className: "ai", id: "mAnnotBox" });
+    ab.append(el("summary", { id: "mAnnotSum" }), el("pre", { className: "thinking", id: "mAnnotThink" }));
+    out.append(el("ul", { id: "mNotes", className: "notes" }), ab, el("div", { className: "small", id: "mAnnotNote" }));
+    updateAnnot();
+  }
   if (selected > 0) {
     const a = r.candidates[0], b = r.candidates[selected];
     out.append(el("div", { className: "small", textContent: `Showing #${b.rank}: ${(a.total - b.total).toFixed(1)} points ` +
@@ -1357,6 +1419,14 @@ function drawMission(fly) {
         }
       }
       if (!c.resources.turnaround.at_B) marker(missionLayer, c.resources.turnaround, Cesium.Color.RED, "turn back", 8);
+      for (const n of c.map_notes || []) missionLayer.entities.add({            // notes along the route
+        position: Cesium.Cartesian3.fromDegrees(n.lon, n.lat, 0, MARS),
+        point: { pixelSize: 9, color: C(NOTE_COLOR[n.kind] || "#ffffff"), outlineColor: Cesium.Color.WHITE, outlineWidth: 1.5,
+                 heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
+        label: { text: noteText(n), font: "12px Inter, sans-serif", fillColor: Cesium.Color.WHITE, showBackground: true,
+                 backgroundColor: C("#1c1d22").withAlpha(0.85), backgroundPadding: new Cesium.Cartesian2(6, 4),
+                 horizontalOrigin: Cesium.HorizontalOrigin.LEFT, pixelOffset: new Cesium.Cartesian2(9, 0),
+                 disableDepthTestDistance: 1e9 } });
     }
     const sel = i === selected;
     marker(missionLayer, c.A, sel ? C("#2f8fff") : C("#2f8fff").withAlpha(0.5), `A${c.rank}${c.A.kind === "NASA candidate" ? " NASA" : ""}`);
