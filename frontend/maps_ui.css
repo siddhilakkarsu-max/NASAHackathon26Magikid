@@ -136,3 +136,25 @@ body.gm.drawer #gmChips { left: 818px; }
 #panel #manual > summary, #panel #mapKey > summary { min-height: 52px; font-size: 14px; --cut: 26px; }
 #panel #manual > summary .secIcon svg, #panel #mapKey > summary .secIcon svg { width: 26px; height: 26px; }
 #panel > .panel-section[open] > summary { top: -2px; }
+
+/* ---- autoplay tour (frontend/tour.js) ---- */
+body.touring #gmRail, body.touring #marsSearch, body.touring #gmChips, body.touring #gmControls,
+body.touring #routePlayback, body.touring #panel { visibility: hidden !important; }
+body.touring.gm #map { margin-left: 0; }
+#tourCard { position: absolute; z-index: 20; left: 50%; bottom: 46px; transform: translateX(-50%);
+            min-width: min(520px, 86%); max-width: 86%; padding: 16px 26px 14px; text-align: center;
+            background: #120c0acc; border-top: 2px solid #c98a5e; border-bottom: 2px solid #c98a5e;
+            backdrop-filter: blur(6px); color: #f3dfd1; font-family: "Rajdhani", "Inter", system-ui, sans-serif; }
+#tourCard[hidden] { display: none; }
+#tourCard.show { animation: tourIn .6s ease; }
+@keyframes tourIn { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+#tourCard .tourTitle { font-size: 26px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: #e8b48c; }
+#tourCard .tourLine { margin-top: 4px; font-size: 17px; font-weight: 500; letter-spacing: .03em; }
+#tourCard .tourDots { display: flex; gap: 6px; justify-content: center; margin-top: 10px; }
+#tourCard .tourDots span { width: 7px; height: 7px; border-radius: 50%; background: #ffffff40; }
+#tourCard .tourDots span.on { background: #e0703a; }
+#tourCard .tourStop { position: absolute; top: -38px; right: 0; width: auto !important; margin: 0 !important;
+                      padding: 5px 12px !important; border-radius: 14px !important; font-size: 11px;
+                      background: #120c0acc !important; color: #e8b48c !important; border: 1px solid #c98a5e88 !important;
+                      text-transform: none; letter-spacing: .04em; min-height: 0; }
+@media (prefers-reduced-motion: reduce) { #tourCard.show { animation: none; } }
