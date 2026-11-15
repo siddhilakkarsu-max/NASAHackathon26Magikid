@@ -18,9 +18,82 @@ REGIONS = {
     "jezero": dict(west=77.0, east=78.0, south=18.0, north=18.8, px_per_deg=2048),
     # HiRISE close-up of the landing site + delta at ~10 m/px (HiRISE 1 m elevation, resampled)
     "jezero_hirise": dict(west=77.25, east=77.55, south=18.35, north=18.65, px_per_deg=6144),
-    "gale":   dict(west=137.0, east=138.0, south=-5.2, north=-4.2, px_per_deg=256),
     "global": dict(west=-180.0, east=180.0, south=-90.0, north=90.0, px_per_deg=16),
 }
+
+# ---------------------------------------------------------------------------
+# PLANNING ANYWHERE ELSE. Any other place is a square SITE_SIZE_DEG box built on demand from global data
+# (HRSC-MOLA 200 m elevation, THEMIS, TES albedo, THEMIS thermal inertia, CRISM): pick a named site below or
+# click the globe. A spot's region id is "site_<lat>_<lon>" (e.g. site_-4.59_137.44), so the builder and the
+# server can rebuild it from the name alone:  python build_cube.py gale   /   python build_cube.py site_-4.59_137.44
+# ---------------------------------------------------------------------------
+SITE_SIZE_DEG = 0.8          # ~47 km across at the equator: room for a 100 km buggy round trip
+SITE_PX_PER_DEG = 512        # ~115 m/px, the scale the mineral thresholds and landing rules were tuned at
+# Named places. lat/lon (east-positive) is the box centre; "landed" marks a real landing site (a NASA
+# candidate spot for the landing check). Coordinates from NASA/JPL mission pages; ~0.01 deg.
+SITES = {
+    "gale": dict(label="Gale crater (Curiosity)", lat=-4.5895, lon=137.4417, landed="Curiosity (Bradbury Landing, 2012)"),
+    "gusev": dict(label="Gusev crater (Spirit)", lat=-14.5684, lon=175.4726, landed="Spirit (Columbia Memorial Station, 2004)"),
+    "meridiani": dict(label="Meridiani Planum (Opportunity)", lat=-1.9462, lon=-5.5266, landed="Opportunity (Eagle crater, 2004)"),
+    "utopia": dict(label="Utopia Planitia (Zhurong)", lat=25.066, lon=109.925, landed="Zhurong (2021)"),
+    "elysium": dict(label="Elysium Planitia (InSight)", lat=4.5024, lon=135.6234, landed="InSight (Homestead hollow, 2018)"),
+    "ares_vallis": dict(label="Ares Vallis (Pathfinder)", lat=19.13, lon=-33.22, landed="Mars Pathfinder (Carl Sagan Memorial Station, 1997)"),
+    "chryse": dict(label="Chryse Planitia (Viking 1)", lat=22.27, lon=-47.95, landed="Viking 1 (Thomas Mutch Memorial Station, 1976)"),
+    "mawrth": dict(label="Mawrth Vallis (clay-rich layers)", lat=24.0, lon=-19.0),
+    "eberswalde": dict(label="Eberswalde delta", lat=-23.8, lon=-33.6),
+    "holden": dict(label="Holden crater", lat=-26.4, lon=-34.0),
+    "melas": dict(label="Melas Chasma (Valles Marineris)", lat=-9.8, lon=-76.5),
+    "arcadia": dict(label="Arcadia Planitia (shallow ice)", lat=40.0, lon=-160.0),
+}
+_SITE_ID = r"site_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)"
+
+
+def site_id(lat, lon):
+    """Region id for a box centred on (lat, lon), rounded to 0.01 deg."""
+    return f"site_{round(lat, 2):g}_{round((lon + 180) % 360 - 180, 2):g}"
+
+
+def region_box(name):
+    """Bounds + grid density of any region: one of REGIONS, a named SITE or a site_<lat>_<lon> id. None if unknown."""
+    import re
+    if name in REGIONS:
+        return dict(REGIONS[name])
+    m = re.fullmatch(_SITE_ID, name)
+    lat, lon = (SITES[name]["lat"], SITES[name]["lon"]) if name in SITES else \
+               (float(m.group(1)), float(m.group(2))) if m else (None, None)
+    if lat is None or not (-88 <= lat <= 88 and -180 <= lon <= 180):
+        return None
+    h = SITE_SIZE_DEG / 2
+    return dict(west=lon - h, east=lon + h, south=max(-89.9, lat - h), north=min(89.9, lat + h),
+                px_per_deg=SITE_PX_PER_DEG)
+
+
+def region_label(name):
+    import re
+    if name in SITES:
+        return SITES[name]["label"]
+    m = re.fullmatch(_SITE_ID, name)
+    if m:
+        lat, lon = float(m.group(1)), float(m.group(2))
+        return f"Site {abs(lat):.2f}°{'S' if lat < 0 else 'N'} {abs(lon):.2f}°{'W' if lon < 0 else 'E'}"
+    return {"jezero": "Jezero crater (Perseverance)", "jezero_hirise": "Jezero close-up (HiRISE)"}.get(
+        name, name.replace("_", " ").capitalize())
+
+
+def mc_quadrangle(lat, lon):
+    """Mars Chart quadrangle number (MC-01..30) holding (lat, lon east-positive)."""
+    x = (lon + 180) % 360
+    if lat > 65:
+        return 1
+    if lat < -65:
+        return 30
+    if lat >= 30:
+        return 2 + int(x // 60)
+    if lat >= 0:
+        return 8 + int(x // 45)
+    if lat >= -30:
+        return 16 + int(x // 45)
+    return 24 + int(x // 60)
 
 # ---------------------------------------------------------------------------
 # DATA SOURCES (one entry per band). These kinds are supported:
@@ -143,10 +216,8 @@ REGION_SOURCES = {
         "thermal_inertia": [JEZ_TI, themis_ti(13)],
         "minerals":  [JEZ_MIN],
     },
-    "gale": {
-        "thermal_inertia": [themis_ti(23)],          # MC-23 Aeolis
-    },
 }
+# Every other region gets the THEMIS thermal-inertia tile of its quadrangle automatically (build_cube.sources_for).
 
 # Hand-placed science targets per region (replace with Siddhi's CRISM-based picks).
 # Coordinates are approximate and for the demo only.
@@ -155,6 +226,8 @@ _JEZERO_TARGETS = [
         {"name": "Western delta front (approx.)", "lat": 18.50, "lon": 77.40},
 ]
 SCIENCE_TARGETS = {"jezero": _JEZERO_TARGETS, "jezero_hirise": _JEZERO_TARGETS}
+SCIENCE_TARGETS.update({k: [{"name": f"{s['landed']} landing site", "lat": s["lat"], "lon": s["lon"]}]
+                        for k, s in SITES.items() if s.get("landed")})
 
 # Approximate places for the text target search when the cube has NO band for that material (e.g. a
 # region without CRISM coverage). Each zone is a circle; "tags" are the search words that select it.
@@ -395,8 +468,10 @@ NASA_SITES = {
              bounds=[75.154, 15.906, 78.872, 19.445]),
     ],
 }
+NASA_SITES.update({k: [dict(name=f"{s['landed']} landing site", kind="past landing site", lat=s["lat"], lon=s["lon"],
+                            radius_km=0.6)] for k, s in SITES.items() if s.get("landed")})
 
 # COSPAR planetary-protection Special Regions (where liquid water or Earth microbes might survive, e.g.
 # recurring slope lineae, gullies, shallow ice). None are known inside the current regions; add circles as
 # dict(name=..., lat=..., lon=..., radius_km=..., source=...).
-SPECIAL_REGIONS = {"jezero": [], "jezero_hirise": [], "gale": []}
+SPECIAL_REGIONS = {"jezero": [], "jezero_hirise": []}

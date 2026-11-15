@@ -188,6 +188,7 @@
   #landing button { width: auto; margin: 0; padding: 10px 26px; background: #fff; color: #111; border-radius: 999px;
                     font-size: clamp(10px, 1.5vmin, 13px); font-weight: 500; letter-spacing: .12em; }
   #landing button:hover { background: #ffe9d6; }
+  #areaStatus:empty { display: none; } #areaStatus { margin: -4px 0 12px; }
   #landing button:focus { outline: none; } #landing button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 </style>
 </head>
@@ -212,6 +213,7 @@
   <div class="small" id="status">Connecting to back end…</div>
 
   <label>Region <select id="region"></select></label>
+  <div class="small" id="areaStatus"></div>
 
   <h2>Mission</h2>
   <label for="goal">Goal</label>
@@ -483,7 +485,7 @@ let replanHint = "";
 let planRequest = 0, planBusy = false;
 
 function conditions() {
-  return { region: $("region").value || "jezero", vehicle: $("vehicle").value || "astronaut", local_hour: +$("hour").value,
+  return { region: regionId(), vehicle: $("vehicle").value || "astronaut", local_hour: +$("hour").value,
            ls: +$("ls").value, budget_hours: +$("budget").value };
 }
 function labels() {
@@ -768,7 +770,7 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
   if (mode === "target") { target = p; pin("target", p, Cesium.Color.ORANGE, "Target"); invalidatePlan(); }
   mode = null; $("setBase").classList.remove("active"); $("setTarget").classList.remove("active");
   try {
-    const px = await api(`/api/pixel?lat=${p.lat}&lon=${p.lon}&region=${$("region").value}`);
+    const px = await api(`/api/pixel?lat=${p.lat}&lon=${p.lon}&region=${regionId()}`);
     if (request !== pointRequest) return;
     const lines = Object.entries(px.values).map(([k, v]) => `${k.padEnd(13)} ${v ?? "no data"}`);
     const minerals = px.minerals && px.minerals.length ? `minerals: ${px.minerals.join("; ")}\n` : "";
@@ -799,13 +801,13 @@ $("prefetchBtn").onclick = async () => {
 $("setBase").onclick = () => { mode = "base"; $("setBase").classList.add("active"); };
 $("setTarget").onclick = () => { mode = "target"; $("setTarget").classList.add("active"); };
 $("gearLink").onclick = () => {
-  const q = new URLSearchParams({ archetype: "traverse", region: $("region").value || "jezero", vehicle: $("vehicle").value || "astronaut" });
+  const q = new URLSearchParams({ archetype: "traverse", region: regionId(), vehicle: $("vehicle").value || "astronaut" });
   if (base) q.set("base", `${base.lat},${base.lon}`);
   if (target) q.set("target", `${target.lat},${target.lon}`);
   $("gearLink").href = "kit.html?" + q;
 };
 $("targets").onchange = () => {
-  const t = current.targets[+$("targets").value]; if (!t) return;
+  const t = current?.targets[+$("targets").value]; if (!t) return;
   target = { lat: t.lat, lon: t.lon }; pin("target", target, Cesium.Color.ORANGE, t.name);
   invalidatePlan();
 };
@@ -837,6 +839,8 @@ async function findTarget() {
   const isCurrent = () => id === findRequest;
   $("findInfo").textContent = "Searching…"; clearMatches();
   try {
+    if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) $("findInfo").textContent = t; });
+    if (!isCurrent()) return;
     const res = await api("/api/find", { ...conditions(), query, base, focus: viewCenter() });
     if (!isCurrent()) return;
     const heatmapShown = await showAnalysisOverlay({
@@ -994,6 +998,9 @@ $("plan").onclick = async () => {
   planBusy = true;
   const requestAtStart = layerRequest;
   try {
+    if (anywhere()) await ensureArea({ lat: (base.lat + target.lat) / 2, lon: (base.lon + target.lon) / 2 },
+                                     (t) => { if (planId === planRequest) $("explain").textContent = t; }, [base, target]);
+    if (planId !== planRequest) return;
     const res = await api("/api/plan", { ...conditions(), base, target });
     if (planId !== planRequest) return;
     await showAnalysisOverlay({
@@ -1103,7 +1110,9 @@ async function runMission() {
   $("mStatus").textContent = "Planning…";
   $("runMission").disabled = true;
   try {
-    await streamEvents("/api/mission/stream", { region: $("region").value, goal, vehicle: $("mVehicle").value,
+    if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) $("mStatus").textContent = t; });
+    if (!isCurrent()) return;
+    await streamEvents("/api/mission/stream", { region: regionId(), goal, vehicle: $("mVehicle").value,
       season: $("mSeason").value, priority: $("mPriority").value, green_only: $("greenOnly").checked }, async (e) => {
       if (!isCurrent()) return;
       if (e.type === "status") $("mStatus").textContent = e.text;
@@ -1127,7 +1136,20 @@ async function runMission() {
       else if (e.type === "explanation" && res) {
         res.explanation = e.text; res.explanation_source = e.source; res.explain_ai.live = false;
         $("mStatus").textContent = ""; updateExplain();
-      } else if (e.type === "error") $("mStatus").textContent = e.text;
+      } else if (e.type === "error") {
+        $("mStatus").textContent = e.text;
+        if (e.suggest) {                                   // e.g. a dust-covered area: offer the nearest firm ground
+          const go = document.createElement("button");
+          go.className = "secondary"; go.type = "button"; go.style.marginTop = "8px";
+          go.textContent = `Go there and plan (${e.suggest.km} km ${e.suggest.direction})`;
+          go.onclick = () => {
+            if (!anywhere()) { $("region").value = ANYWHERE; $("region").onchange(); }
+            viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(e.suggest.lon, e.suggest.lat, 90000, MARS),
+                                  complete: () => runMission() });
+          };
+          $("mStatus").append(document.createElement("br"), go);
+        }
+      }
       else if (e.type === "done" && res && !res.explain_ai.live) $("mStatus").textContent = "";
     }, ctl.signal);
   } catch (err) {
@@ -1311,7 +1333,7 @@ async function showTracks(on) {
   $("trackInfo").textContent = "";
   if (on) {
     try {
-      const region = $("region").value, vehicle = $("mVehicle").value;
+      const region = regionId(), vehicle = $("mVehicle").value;
       const key = `${region}|${vehicle}`;
       const data = tracksData?.key === key ? tracksData
         : { key, ...(await api(`/api/tracks?${new URLSearchParams({ region, vehicle })}`)) };
@@ -1670,6 +1692,70 @@ $("startExploring").onclick = startExploring;
 document.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") startExploring(); });
 $("startExploring").focus();
 
+// ------------------------------------------------ plan anywhere on Mars ----
+function fillRegions(selected = $("region").value) {
+  $("region").innerHTML = `<option value="${ANYWHERE}">Anywhere on Mars (where you're looking)</option>` +
+    '<optgroup label="Loaded areas">' +
+    regions.map((r) => `<option value="${r.region}">${r.label || r.region}</option>`).join("") + "</optgroup>";
+  if (selected && regions.some((r) => r.region === selected)) $("region").value = selected;
+}
+const ANYWHERE = "here";
+const anywhere = () => $("region").value === ANYWHERE;
+const regionId = () => current?.region || "jezero";
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Make sure the area around `p` is loaded (and every point in `need` lies inside it), building it from the
+// globe's 3D terrain if needed; it becomes `current`. Minerals keep loading in the background (watchArea).
+async function ensureArea(p, say = () => {}, need = [p]) {
+  if (!p) throw new Error("Point the map at the surface of Mars first.");
+  const inside = (r, q, m = 0.05) => q.lat > r.rect.south + m && q.lat < r.rect.north - m &&
+                                      q.lon > r.rect.west + m && q.lon < r.rect.east - m;
+  if (current && need.every((q) => inside(current, q))) return current.region;
+  say(`Loading the 3D terrain around ${pointLabel(p)}…`);
+  let st = await api("/api/sites/build", { lat: p.lat, lon: p.lon });
+  const t0 = Date.now();
+  while (!st.ready) {
+    if (st.status === "failed") throw new Error("Couldn't load this area: " + (st.log || []).slice(-1).join(" "));
+    say(`Loading the 3D terrain, thermal inertia and night-time IR around ${pointLabel(p)}… ` +
+        `${Math.round((Date.now() - t0) / 1000)} s (usually under a minute)`);
+    await sleep(2000);
+    st = await api(`/api/sites/build/${st.region}`);
+  }
+  await useArea(st.region);
+  if (!need.every((q) => inside(current, q, 0))) throw new Error("Base and target are too far apart for one area " +
+    `(about ${(current.rect.north - current.rect.south).toFixed(1)}° across); move them closer together.`);
+  if (st.status !== "done") watchArea(st.region);
+  return st.region;
+}
+async function useArea(region) {
+  regions = (await api("/api/regions")).regions;
+  fillRegions();
+  current = regions.find((r) => r.region === region);
+  showRegionInfo(); setSharpBox(current.rect); syncGlobeLighting(); refreshLayer();
+  if ($("showTracks").checked) showTracks(true);
+}
+const watching = new Set();
+async function watchArea(region) {                // CRISM minerals arrive a few minutes after the terrain
+  if (watching.has(region)) return;
+  watching.add(region);
+  try {
+    for (;;) {
+      const st = await api(`/api/sites/build/${region}`);
+      const mine = current?.region === region;
+      if (st.status === "done" || st.status === "failed") {
+        regions = (await api("/api/regions")).regions; fillRegions();
+        if (current?.region === region) { current = regions.find((r) => r.region === region); showRegionInfo(); }
+        if (mine) $("areaStatus").textContent = st.status === "done"
+          ? `${st.label}: CRISM minerals loaded. Mineral goals (clay, sulfate…) now work here.` : "";
+        return;
+      }
+      if (mine) $("areaStatus").textContent = `${st.label}: terrain ready. Loading CRISM minerals` +
+        (st.crism_total ? ` (${st.crism_done}/${st.crism_total} observations)` : "") + "… mineral goals work once done.";
+      await sleep(5000);
+    }
+  } catch (e) { /* the server restarted: the next plan reloads the area */ }
+  finally { watching.delete(region); }
+}
+
 // ------------------------------------------------------------------ boot ----
 function flyTo(r) {
   viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
@@ -1716,6 +1802,9 @@ $("layer").onchange = () => {
 };
 ["budget", "region"].forEach((id) => $(id).addEventListener("change", invalidatePlan));
 $("region").onchange = () => {
+  $("areaStatus").textContent = anywhere() ? "Plan mission, Find and Plan route work wherever the map is centred: " +
+    "move the globe anywhere on Mars. New areas load from the 3D terrain in under a minute." : "";
+  if (anywhere()) { if (current) { showRegionInfo(); refreshLayer(); } return; }
   current = regions.find((r) => r.region === $("region").value);
   syncGlobeLighting();
   findRequest++; missionRequest++; if (missionCtl) missionCtl.abort();
@@ -1723,6 +1812,14 @@ $("region").onchange = () => {
   clearMatches(); $("findInfo").textContent = "";
   mission = prevMission = null; tracksData = null; missionLayer.entities.removeAll(); $("mResult").innerHTML = "";
   if ($("showTracks").checked) showTracks(true);
+  showRegionInfo();
+  if (!globalLayerSelected()) flyTo(current.rect);
+  setSharpBox(current.rect);
+  if (!USE_GLOBAL_CTX) setTimeout(() => loadHiresPhoto(current.region), 0);
+  refreshLayer();
+};
+// Mineral layer list, science targets and the size/bands line for the current region.
+function showRegionInfo() {
   const mineralLayers = $("mineralLayers");
   mineralLayers.innerHTML = "";
   for (const [key, label] of Object.entries(current.minerals || {})) {
@@ -1731,13 +1828,9 @@ $("region").onchange = () => {
   mineralLayers.hidden = !mineralLayers.children.length;
   $("targets").innerHTML = '<option value="">…or pick a science target</option>' +
     current.targets.map((t, i) => `<option value="${i}">${t.name}</option>`).join("");
-  if (!globalLayerSelected()) flyTo(current.rect);
   $("status").textContent = `${current.size[0]}×${current.size[1]} px · ~${current.pixel_m[1]} m/px · ` +
     `bands: ${current.bands.join(", ")}`;
-  setSharpBox(current.rect);
-  if (!USE_GLOBAL_CTX) setTimeout(() => loadHiresPhoto(current.region), 0);
-  refreshLayer();
-};
+}
 labels();
 api("/api/weather/calendar").then(calendar => {
   timeline = createWeatherTimeline({
@@ -1765,16 +1858,16 @@ api("/api/weather/calendar").then(calendar => {
     regions = meta.regions;
     Object.assign(SPECS, meta.vehicle_specs || {});
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
-    const regionName = (id) => ({ jezero: "Jezero", jezero_hirise: "Jezero close-up (HiRISE)" }[id]
-                                 || id.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()));
-    $("region").innerHTML = regions.map((r) => `<option value="${r.region}">${regionName(r.region)}</option>`).join("");
+    fillRegions(ANYWHERE);
+    current = regions.find((r) => r.region === "jezero") || regions[0] || null;
     applyVehicleLimits();
     renderConsumables();
-    if (regions.length) $("region").onchange();
-    else {
-      $("status").textContent = "Global view available. Load a region cube for route planning.";
-      refreshLayer();
-    }
+    if (current) {
+      showRegionInfo(); syncGlobeLighting(); setSharpBox(current.rect);
+      if (!globalLayerSelected()) flyTo(current.rect);
+    } else $("status").textContent = "Move the globe anywhere on Mars and plan: the area loads from the 3D terrain.";
+    refreshLayer();
+    $("region").onchange();
   } catch (e) {
     $("status").textContent = "Regional layers could not load: " + e.message;
     if (globalLayerSelected()) refreshLayer();

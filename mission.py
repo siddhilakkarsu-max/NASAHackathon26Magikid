@@ -29,6 +29,7 @@ from skimage.draw import line as draw_line
 
 import physics
 import search
+from config import MARS_RADIUS_M
 from config import (CONSUMABLE_RESERVE, ESSENTIALS, LANDING_RULES, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
                     NASA_SITES, PRIORITIES, SEARCH_ZONES, SEASONS, SITE_HOURS, SPECIAL_REGIONS, SUIT, TOOLS,
                     TRACK_RULES, VEHICLE_POWER, WALKER)
@@ -136,7 +137,10 @@ def offlimits(cube, v):
 def landing_mask(cube):
     """Pixels where a lander can touch down: config.LANDING_RULES hold over (90 % of) a circle around the spot.
     Slope is judged over a ~100 m baseline, as for a landing-site survey, so a sharp cube (e.g. 9 m from the
-    1 m HiRISE elevation model) isn't failed by metre-scale bumps."""
+    1 m HiRISE elevation model) isn't failed by metre-scale bumps.
+    Elevation and latitude limits belong to the lander (air for the parachute, sun and cold), not to the spot: in an
+    area where no spot meets them (highlands, high latitudes) spots are chosen on the ground rules alone and the
+    relaxed rules are listed in landing_relaxed(cube), so the plan can say so."""
     def make():
         from scipy.ndimage import uniform_filter
         R = LANDING_RULES
@@ -154,14 +158,109 @@ def landing_mask(cube):
         ok &= np.nan_to_num(rough, nan=1e9) <= np.nanpercentile(rough, R["max_rough_percentile"])
         ti = _ti(cube)
         ok &= (np.nan_to_num(ti, nan=0) >= R["min_ti"]) if ti is not None else (np.nan_to_num(b["firmness"]) >= 0.35)
-        ok &= np.nan_to_num(b["elevation"], nan=1e9) <= R["max_elevation_m"]
-        lat = (cube.n - (np.arange(cube.H) + 0.5) * (cube.n - cube.s) / cube.H)[:, None]
-        ok &= np.abs(lat) <= R["max_abs_lat"]
         ok &= ~special_mask(cube)
         r_px = max(1, int(round(R["area_radius_m"] / px)))
-        share = uniform_filter(ok.astype("float32"), 2 * r_px + 1, mode="constant")
-        return ok & (share >= 0.9)
+
+        def spots(mask):
+            return mask & (uniform_filter(mask.astype("float32"), 2 * r_px + 1, mode="constant") >= 0.9)
+        lat = (cube.n - (np.arange(cube.H) + 0.5) * (cube.n - cube.s) / cube.H)[:, None]
+        low = np.nan_to_num(b["elevation"], nan=1e9) <= R["max_elevation_m"]
+        mid = np.broadcast_to(np.abs(lat) <= R["max_abs_lat"], ok.shape)
+        relaxed = landing_relaxed(cube)
+        for lander, why in (((low & mid), []), (mid, ["elevation"]), (low, ["latitude"]),
+                            (np.ones_like(ok), ["elevation", "latitude"])):
+            found = spots(ok & lander)
+            if found.any():
+                relaxed[:] = why
+                return found
+        return found
     return _cached(cube, "landing", make)
+
+
+class NoLandingSpot(ValueError):
+    """No spot in the area passes the ground rules for landing; .dusty when loose dust is the cause."""
+    def __init__(self, text, dusty=False):
+        super().__init__(text)
+        self.dusty = dusty
+
+
+def no_landing_reason(cube):
+    """Why no landing spot exists here, in words, and whether loose dust is the cause."""
+    R, b = LANDING_RULES, cube.bands
+    ti = _ti(cube)
+    if ti is not None and float(np.nanmean(np.nan_to_num(ti, nan=0) >= R["min_ti"])) < 0.02:
+        lo, hi = np.nanpercentile(ti, [5, 95])
+        return (f"No safe landing spot here: the whole area is covered in fine dust (thermal inertia {lo:.0f}-{hi:.0f}; "
+                f"a lander or rover needs at least {R['min_ti']:.0f} to avoid sinking in)."), True
+    flat = float(np.nanmean(np.nan_to_num(b["slope"], nan=90) <= R["max_slope_deg"]))
+    if flat < 0.05:
+        return (f"No safe landing spot here: the ground is too steep (only {100 * flat:.0f}% is flatter than "
+                f"{R['max_slope_deg']:.0f}°)."), False
+    return ("No safe landing spot here: no 1 km circle is flat, smooth and firm enough all round "
+            f"(slope ≤ {R['max_slope_deg']:.0f}°, thermal inertia ≥ {R['min_ti']:.0f})."), False
+
+
+def nearest_firm_ground(cube, min_ti=None, search_deg=5.0):
+    """Nearest place outside this area with room for a mission, from the THEMIS thermal-inertia map (1 km): a ~9 km
+    patch all >= min_ti to land on, inside ~27 km where most ground (60 %) is drivable (not loose, TI >= 150).
+    {lat, lon, km, direction, ti}; None if none within search_deg. Downloads the quadrangle tiles it needs."""
+    import build_cube
+    from scipy.ndimage import uniform_filter
+    from config import mc_quadrangle, themis_ti
+    min_ti = min_ti or LANDING_RULES["min_ti"]
+    lat0, lon0 = (cube.s + cube.n) / 2, (cube.w + cube.e) / 2
+    south, north = max(-35.0, lat0 - search_deg), min(45.0, lat0 + search_deg)   # the TI maps cover 35S-45N
+    if south >= north:
+        return None
+    w, e = lon0 - search_deg, lon0 + search_deg
+    ppd = 20                                                         # ~3 km cells
+    W, H = int(round((e - w) * ppd)), int(round((north - south) * ppd))
+    from rasterio.transform import from_bounds
+    grid = dict(bounds=(w, south, e, north), width=W, height=H, transform=from_bounds(w, south, e, north, W, H))
+    ti = np.full((H, W), np.nan, "float32")
+    quads = {mc_quadrangle(la, lo) for la in np.linspace(south, north, 9) for lo in np.linspace(w, e, 9)}
+    for mc in sorted(q for q in quads if 2 <= q <= 29):
+        spec = themis_ti(mc)
+        try:
+            a = build_cube.read_raster_into_grid(str(build_cube.download(spec["url"], spec["path"])), grid)
+        except Exception:
+            continue
+        ti = np.where(np.isnan(ti), a, ti)
+    t = np.nan_to_num(ti, nan=0)
+    firm = uniform_filter((t >= min_ti).astype(float), 3, mode="constant") >= 0.99
+    firm &= uniform_filter((t >= 150).astype(float), 9, mode="constant") >= 0.6
+    lat = north - (np.arange(H) + 0.5) / ppd
+    lon = w + (np.arange(W) + 0.5) / ppd
+    LA, LO = np.meshgrid(lat, lon, indexing="ij")
+    firm &= ~((LA >= cube.s) & (LA <= cube.n) & (LO >= cube.w) & (LO <= cube.e))
+    if not firm.any():
+        return None
+    p1, p2, dl = np.radians(lat0), np.radians(LA), np.radians(LO - lon0)
+    km = 2 * MARS_RADIUS_M / 1000 * np.arcsin(np.sqrt(np.sin((p2 - p1) / 2) ** 2 + np.cos(p1) * np.cos(p2) * np.sin(dl / 2) ** 2))
+    i = np.unravel_index(np.argmin(np.where(firm, km, np.inf)), km.shape)
+    bearing = (np.degrees(np.arctan2(np.sin(dl[i]) * np.cos(p2[i]),
+                                     np.cos(p1) * np.sin(p2[i]) - np.sin(p1) * np.cos(p2[i]) * np.cos(dl[i]))) + 360) % 360
+    direction = ["north", "northeast", "east", "southeast", "south", "southwest", "west", "northwest"][int((bearing + 22.5) // 45) % 8]
+    return {"lat": round(float(LA[i]), 3), "lon": round(float((LO[i] + 180) % 360 - 180), 3),
+            "km": round(float(km[i])), "direction": direction, "ti": round(float(ti[i]))}
+
+
+def landing_relaxed(cube):
+    """Lander limits ('elevation', 'latitude') no spot in this area could meet, so they were not applied."""
+    return _cached(cube, "landing_relaxed", list)
+
+
+def sites_in(cube):
+    """NASA's known sites overlapping this cube, found by location (an area loaded anywhere sees them too)."""
+    def make():
+        seen, out = set(), []
+        for s in (x for lst in NASA_SITES.values() for x in lst):
+            w, so, e, n = s["bounds"] if "bounds" in s else (s["lon"], s["lat"], s["lon"], s["lat"])
+            if s["name"] not in seen and w <= cube.e and e >= cube.w and so <= cube.n and n >= cube.s:
+                seen.add(s["name"])
+                out.append(s)
+        return out
+    return _cached(cube, "sites_in", make)
 
 
 def nasa_sites(cube):
@@ -169,7 +268,7 @@ def nasa_sites(cube):
     def make():
         mask = np.zeros((cube.H, cube.W), bool)
         owner = np.full((cube.H, cube.W), -1, int)
-        sites = NASA_SITES.get(cube.region, [])
+        sites = sites_in(cube)
         for i, s in enumerate(sites):
             if "radius_km" in s:
                 m = _circle_mask(cube, s["lat"], s["lon"], s["radius_km"])
@@ -202,7 +301,7 @@ def nearest_landing(cube, b_rc):
         if d_n[r, c] <= 1.5 * d_any[r, c] + 500:
             rc = (int(idx_n[0][r, c]), int(idx_n[1][r, c]))
             _, owner, _ = nasa_sites(cube)
-            site = NASA_SITES[cube.region][owner[rc]]
+            site = sites_in(cube)[owner[rc]]
             best = dict(rc=rc, dist_m=float(d_n[r, c]), kind="NASA candidate", site=site["name"])
     return best
 
@@ -408,11 +507,34 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
     nearest_landing(cube, (0, 0))                                   # builds the distance-to-landing maps
     edts = _cached(cube, "landing_edt", dict)
     if "any" not in edts:
-        raise ValueError("No spot in this region passes the landing rules.")
+        raise NoLandingSpot(*no_landing_reason(cube))
+    if "thermal_inertia" not in cube.bands and "themis_night" not in cube.bands:
+        notes.append("Ground firmness: no thermal data here (THEMIS maps stop near 60° latitude), so firmness is "
+                     "unknown and assumed medium everywhere. Check for sand and dust traps on orbital images.")
+    relaxed = landing_relaxed(cube)
+    if relaxed:
+        R = LANDING_RULES
+        why = {"elevation": f"lies above {R['max_elevation_m']:+.0f} m, where the air is too thin for a parachute "
+                            "landing like Perseverance's",
+               "latitude": f"lies poleward of {R['max_abs_lat']:.0f}°, where landers face weak sun and deep cold"}
+        notes.append("Landing: every spot in this area " + " and ".join(why[r] for r in relaxed) +
+                     ". Landing spots were chosen on slope, roughness and firm ground only; landing here needs a "
+                     "lander with powered descent, as planned for crewed missions.")
     reach = edts["any"][0] <= 0.8 * v["range_km"] * 1000            # routes run ~25 % longer than straight
     if not (safe & reach & (score > 0.05)).any():
-        raise ValueError(f"Nothing matching the goal lies within {v['range_km']:.0f} km of a safe landing spot "
-                         f"for {v['label'].lower()}. Try a vehicle with more range.")
+        loose = float(_loose(cube).mean())
+        if loose > 0.5:
+            raise NoLandingSpot(f"Nothing matching the goal can be reached on firm ground here: {100 * loose:.0f}% of "
+                                "this area is loose dust or sand, which is off-limits for every vehicle.", dusty=True)
+        if (safe & (score > 0.05)).any():                          # it exists, just too far from a landing spot
+            raise ValueError(f"Nothing matching the goal lies within {v['range_km']:.0f} km of a safe landing spot "
+                             f"for {v['label'].lower()}. Try a vehicle with more range.")
+        if (score > 0.05).any():
+            raise ValueError(f"What the goal asks for is here only on ground {v['label'].lower()} can't drive "
+                             f"(steeper than {v['max_slope']:.0f}°, loose, or protected). Try another vehicle or "
+                             "another part of Mars.")
+        raise ValueError("Nothing in this area matches the goal. Move the map somewhere that has it (e.g. a crater "
+                         "wall for steep slopes, a valley or delta for clays) and plan again.")
     safe &= reach
     peaks = search.pick_peaks(score, safe, cube.pixel_m, 3, sep_m=3000)
     if not peaks:

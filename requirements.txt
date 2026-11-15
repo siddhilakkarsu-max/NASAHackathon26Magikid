@@ -8,3 +8,4 @@ fastapi
 uvicorn
 pydantic
 certifi
+lerc            # decodes the 3D terrain tiles (Esri MDEM200M) for planning anywhere on Mars

@@ -9,6 +9,10 @@ import base64
 import io
 import json
 import math
+import subprocess
+import sys
+import threading
+import time
 import uuid
 from functools import lru_cache
 from pathlib import Path
@@ -28,7 +32,8 @@ import murray
 import physics
 import search
 from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
-                    PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, VEHICLES)
+                    PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, SITE_SIZE_DEG, SITES, VEHICLES,
+                    region_box, region_label, site_id)
 from gear.api import router as gear_router
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
 from surface_temperature import temperature_overlay
@@ -84,9 +89,49 @@ class Cube:
         return {"west": self.w, "south": self.s, "east": self.e, "north": self.n}
 
 
-@lru_cache(maxsize=4)
+def _cube_path(region):
+    return ROOT / "cubes" / f"{region}.npz"
+
+
 def get_cube(region):
+    """The cube for a region, reloaded when build_cube.py replaces its file (site cubes are saved twice)."""
+    p = _cube_path(region)
+    return _load_cube(region, p.stat().st_mtime if p.exists() else 0)
+
+
+@lru_cache(maxsize=4)
+def _load_cube(region, mtime):
     return Cube(region)
+
+
+@lru_cache(maxsize=128)
+def _cube_meta(region, mtime):
+    """What /api/regions lists, read without decompressing the bands (a cube can be >100 MB)."""
+    z = np.load(_cube_path(region), allow_pickle=False)
+    names = [str(n) for n in z["band_names"]]
+    w, s, e, n = [float(v) for v in z["bounds"]]
+    H, W = z["coverage_fraction"].shape
+    mid = math.radians((s + n) / 2)
+    return {"region": region, "label": region_label(region), "rect": {"west": w, "south": s, "east": e, "north": n},
+            "size": [W, H], "bands": names,
+            "pixel_m": [round((e - w) / W * math.pi / 180 * MARS_RADIUS_M * math.cos(mid)),
+                        round((n - s) / H * math.pi / 180 * MARS_RADIUS_M)],
+            "provenance": [str(p) for p in z["provenance"]],
+            "targets": list({t["name"]: t for lst in SCIENCE_TARGETS.values() for t in lst
+                             if s <= t["lat"] <= n and w <= t["lon"] <= e}.values()),
+            "minerals": {k: m["label"] for k, m in MINERALS.items() if k in names}}
+
+
+def _region_order(region):
+    return (0 if region.startswith("jezero") else 1 if region in SITES else 2, region)
+
+
+def cube_metas():
+    out = []
+    for p in sorted((ROOT / "cubes").glob("*.npz"), key=lambda p: _region_order(p.stem)):
+        if not p.name.startswith("."):
+            out.append(_cube_meta(p.stem, p.stat().st_mtime))
+    return out
 
 
 # -------------------------------------------------------------- helpers ----
@@ -373,14 +418,7 @@ def consumables_block(v, seconds, distance_m, veh_key="", route=None):
 # ------------------------------------------------------------ endpoints ----
 @app.get("/api/regions")
 def regions():
-    out = []
-    for p in sorted((ROOT / "cubes").glob("*.npz")):
-        c = get_cube(p.stem)
-        out.append({"region": c.region, "rect": c.rect, "size": [c.W, c.H], "bands": c.names,
-                    "pixel_m": [round(c.pixel_m[0]), round(c.pixel_m[1])], "provenance": c.provenance,
-                    "targets": SCIENCE_TARGETS.get(c.region, []),
-                    "minerals": {n: m["label"] for n, m in MINERALS.items() if n in c.bands}})
-    return {"regions": out, "vehicles": {k: v["label"] for k, v in VEHICLES.items()},
+    return {"regions": cube_metas(), "vehicles": {k: v["label"] for k, v in VEHICLES.items()},
             "vehicle_specs": {k: vehicle_spec(v) for k, v in VEHICLES.items()}}
 
 
@@ -478,15 +516,15 @@ def point_query(lat: float, lon: float):
 @app.get("/api/pixel")
 def pixel(lat: float, lon: float, region: str = "jezero"):
     """Values stored in a cube pixel. Falls back to other regions, then a live global lookup."""
-    candidates = [region] + [p.stem for p in sorted((ROOT / "cubes").glob("*.npz")) if p.stem != region]
+    metas = cube_metas()
+    candidates = [m["region"] for m in metas if m["region"] == region] + \
+                 [m["region"] for m in metas if m["region"] != region]
+    rects = {m["region"]: m["rect"] for m in metas}
     c = None
     for reg in candidates:
-        try:
-            cc = get_cube(reg)
-        except HTTPException:
-            continue
-        if cc.s <= lat <= cc.n and cc.w <= lon <= cc.e:
-            c = cc
+        b = rects[reg]
+        if b["south"] <= lat <= b["north"] and b["west"] <= lon <= b["east"]:
+            c = get_cube(reg)
             break
     if c is None:
         return point_query(lat, lon)
@@ -935,9 +973,40 @@ def plan_mission(req: MissionRequest):
     c = _mission_cube(req)
     try:
         res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only)
+    except mission.NoLandingSpot as e:
+        raise HTTPException(400, _no_landing(c, e)["text"])
     except ValueError as e:
-        raise HTTPException(400, str(e))
+        raise HTTPException(400, _loading_hint(c.region, str(e)))
     return _finish_mission(res)
+
+
+def _no_landing(cube, err):
+    """Error payload for an area with no landing spot: the reason, plus the nearest firm ground if dust is why."""
+    near = None
+    if err.dusty:
+        try:
+            near = mission.nearest_firm_ground(cube)
+        except Exception:
+            near = None
+    text = str(err)
+    if near:
+        text += (f" Nearest firm ground (thermal inertia {near['ti']}): about {near['km']} km {near['direction']}, "
+                 f"at {abs(near['lat']):.2f}°{'S' if near['lat'] < 0 else 'N'} "
+                 f"{abs(near['lon']):.2f}°{'W' if near['lon'] < 0 else 'E'}.")
+    elif err.dusty:
+        text += " No firm ground was found within about 300 km; try another part of Mars."
+    return {"text": text, "suggest": near}
+
+
+def _loading_hint(region, text):
+    """A goal that needs CRISM minerals fails while an area's minerals are still loading: say so."""
+    b = _builds.get(region)
+    if b and b["proc"].poll() is None and "band in this cube" in text:
+        st = _build_status(region)
+        done = f" ({st['crism_done']}/{st['crism_total']} observations)" if st.get("crism_total") else ""
+        return (f"The CRISM mineral maps for this area are still loading{done}. Mineral goals work here in a few "
+                "minutes; try again then.")
+    return text
 
 
 def _mission_cube(req):
@@ -986,8 +1055,12 @@ def plan_mission_stream(req: MissionRequest):
         try:
             res = _finish_mission(mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
                                                goal_spec=(spec, parser, notes)))
+        except mission.NoLandingSpot as e:
+            yield event(type="status", text=str(e) + " Looking for the nearest firm ground…")
+            yield event(type="error", **_no_landing(c, e))
+            return
         except ValueError as e:
-            yield event(type="error", text=str(e))
+            yield event(type="error", text=_loading_hint(c.region, str(e)))
             return
         yield event(type="result", mission=res)
         if res["candidates"]:
@@ -1213,6 +1286,104 @@ def prefetch(box: Box):
 @app.get("/api/prefetch")
 def prefetch_status():
     return _prefetch
+
+
+# ------------------------------------------------- plan anywhere on Mars ----
+# A site cube is built by build_cube.py in a child process (a few minutes for the CRISM minerals); the cube is
+# saved once its terrain is ready (~1 min), so planning can start before the minerals arrive.
+_builds = {}                 # region -> {"proc", "log", "started"}
+_builds_lock = threading.Lock()
+MAX_BUILDS = 2
+
+
+class SiteRequest(BaseModel):
+    site: str | None = None              # a named site from config.SITES
+    lat: float | None = Field(None, ge=-88, le=88)
+    lon: float | None = Field(None, ge=-180, le=360)
+
+
+def _build_status(region):
+    b = _builds.get(region)
+    ready = _cube_path(region).exists()
+    if b is None:
+        return {"region": region, "label": region_label(region), "status": "done" if ready else "not built",
+                "ready": ready}
+    log = b["log"].read_text(errors="replace") if b["log"].exists() else ""
+    code = b["proc"].poll()
+    if code is None:
+        status = "minerals" if "STAGE terrain ready" in log else "terrain"
+    else:
+        status = "done" if code == 0 and ready else "failed"
+    lines = [l for l in log.splitlines() if l.strip() and "Warning" not in l and "DatasetReader" not in l]
+    crism = next((l for l in lines if "CRISM:" in l), "")
+    done_products = sum(1 for l in lines if l.startswith("    [ok]") or l.startswith("    [--]"))
+    total = int(crism.split("CRISM:")[1].split()[0]) if crism else 0
+    return {"region": region, "label": region_label(region), "status": status, "ready": ready,
+            "seconds": round(time.time() - b["started"]), "crism_done": done_products, "crism_total": total,
+            "log": lines[-6:]}
+
+
+def covering_cube(lat, lon, margin=0.12):
+    """The loaded cube holding (lat, lon) at least `margin` degrees from its edges, most central first."""
+    lon = (lon + 180) % 360 - 180
+    best, best_m = None, margin
+    for m in cube_metas():
+        r = m["rect"]
+        inner = min(lat - r["south"], r["north"] - lat, lon - r["west"], r["east"] - lon)
+        if m["region"] != "global" and inner >= best_m:
+            best, best_m = m, inner
+    return best
+
+
+@app.get("/api/sites")
+def sites():
+    """Named places to plan at, and which have a cube already. Any other spot: POST /api/sites/build with lat/lon."""
+    return {"size_deg": SITE_SIZE_DEG,
+            "sites": [{"site": k, "label": s["label"], "lat": s["lat"], "lon": s["lon"],
+                       "ready": _cube_path(k).exists(), "building": k in _builds and _builds[k]["proc"].poll() is None}
+                      for k, s in SITES.items()]}
+
+
+@app.post("/api/sites/build")
+def build_site(req: SiteRequest):
+    if req.site:
+        if req.site not in SITES:
+            raise HTTPException(400, f"site must be one of {list(SITES)}")
+        region = req.site
+    elif req.lat is not None and req.lon is not None:
+        region = site_id(req.lat, req.lon)
+    else:
+        raise HTTPException(400, "give a named site or lat and lon")
+    if region_box(region) is None:
+        raise HTTPException(400, f"can't build a region at {region}")
+    # a loaded area with the spot well inside it is reused (the one where it sits most centrally)
+    if not req.site:
+        m = covering_cube(req.lat, req.lon)
+        if m:
+            return {**_build_status(m["region"]), "reused": True, "rect": m["rect"]}
+    with _builds_lock:
+        b = _builds.get(region)
+        if b and b["proc"].poll() is None:
+            return _build_status(region)
+        if _cube_path(region).exists() and not b:
+            return _build_status(region)
+        running = sum(1 for x in _builds.values() if x["proc"].poll() is None)
+        if running >= MAX_BUILDS:
+            raise HTTPException(429, f"{running} regions are already being built; try again in a few minutes")
+        log = ROOT / "cubes" / f".build_{region}.log"
+        log.parent.mkdir(exist_ok=True)
+        with open(log, "w") as fh:
+            proc = subprocess.Popen([sys.executable, "-u", str(ROOT / "build_cube.py"), region], cwd=ROOT,
+                                    stdout=fh, stderr=subprocess.STDOUT)
+        _builds[region] = {"proc": proc, "log": log, "started": time.time()}
+    return _build_status(region)
+
+
+@app.get("/api/sites/build/{region}")
+def build_site_status(region: str):
+    if region_box(region) is None:
+        raise HTTPException(404, f"unknown region {region}")
+    return _build_status(region)
 
 
 app.include_router(murray.router)          # every map from the Murray Lab CTX viewer (murray.py)

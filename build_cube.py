@@ -17,6 +17,7 @@ import hashlib
 import io
 import json
 import math
+import os
 import re
 import sys
 import time
@@ -32,7 +33,8 @@ from rasterio.transform import from_bounds
 from rasterio.vrt import WarpedVRT
 from rasterio.windows import from_bounds as window_from_bounds
 
-from config import MARS_LONLAT_CRS, MARS_RADIUS_M, MINERALS, REGION_SOURCES, REGIONS, SOURCES
+from config import (MARS_LONLAT_CRS, MARS_RADIUS_M, MINERALS, REGION_SOURCES, REGIONS, SOURCES, mc_quadrangle,
+                    region_box, themis_ti)
 
 ROOT = Path(__file__).parent
 OUT_DIR = ROOT / "cubes"
@@ -43,7 +45,9 @@ WMS_MAX_PX = 2048  # request big areas in blocks so the server doesn't refuse
 
 # ----------------------------------------------------------------- grid ----
 def make_grid(region, px_per_deg=None):
-    r = dict(REGIONS[region])
+    r = region_box(region)
+    if r is None:
+        raise ValueError(f"unknown region '{region}': use one of {list(REGIONS)}, a named site or site_<lat>_<lon>")
     if px_per_deg:
         r["px_per_deg"] = px_per_deg
     width = int(round((r["east"] - r["west"]) * r["px_per_deg"]))
@@ -63,11 +67,23 @@ def read_raster_into_grid(path_or_url, grid, nodata=None, resampling="bilinear")
         with rasterio.open(src_path) as src:
             vrt_kw = {"src_nodata": nodata} if nodata is not None and src.nodata is None else {}
             with WarpedVRT(src, crs=MARS_LONLAT_CRS, resampling=rs, **vrt_kw) as vrt:
+                # Read only the part of the grid the source covers, into its own rows/columns. (Reading the whole
+                # box would clip the window at the source's edge and then stretch the rest over the full grid,
+                # shifting every value, e.g. a small mineral map smeared over the whole Jezero box.)
                 w, s, e, n = grid["bounds"]
-                win = window_from_bounds(w, s, e, n, transform=vrt.transform)
-                data = vrt.read(1, window=win, out_shape=(grid["height"], grid["width"]),
-                                resampling=rs, masked=True)
-                arr = data.astype("float32").filled(np.nan)
+                H, W = grid["height"], grid["width"]
+                vb = vrt.bounds
+                c0 = max(0, math.ceil((vb.left - w) / (e - w) * W - 1e-6))
+                c1 = min(W, math.floor((vb.right - w) / (e - w) * W + 1e-6))
+                r0 = max(0, math.ceil((n - vb.top) / (n - s) * H - 1e-6))
+                r1 = min(H, math.floor((n - vb.bottom) / (n - s) * H + 1e-6))
+                arr = np.full((H, W), np.nan, "float32")
+                if c1 <= c0 or r1 <= r0:
+                    return arr
+                win = window_from_bounds(w + c0 * (e - w) / W, n - r1 * (n - s) / H,
+                                         w + c1 * (e - w) / W, n - r0 * (n - s) / H, transform=vrt.transform)
+                data = vrt.read(1, window=win, out_shape=(r1 - r0, c1 - c0), resampling=rs, masked=True)
+                arr[r0:r1, c0:c1] = data.astype("float32").filled(np.nan)
                 scale = (src.scales or [1.0])[0] or 1.0
                 offset = (src.offsets or [0.0])[0] or 0.0
                 arr = arr * scale + offset
@@ -182,11 +198,59 @@ def fetch_wms(spec, grid):
     return out
 
 
+FIRMNESS_UNKNOWN = 0.5      # placeholder firmness where no thermal data exists
+TERRAIN_LEVEL = 7            # MDEM200M level 7: 0.00275 deg (~160 m) per sample, 512 x 512 per tile
+
+
+def terrain_into_grid(grid, level=TERRAIN_LEVEL):
+    """Elevation from the globe's own 3D terrain (Esri MDEM200M: MOLA + HRSC, 200 m), so routes are planned on
+    the surface the user sees. Tiles are LERC, 513 x 513 samples on a 512-step lat/lon lattice from (-180, 90)."""
+    import lerc
+    from scipy.ndimage import map_coordinates
+    import murray
+    w, s, e, n = grid["bounds"]
+    res = 0.3515625 / 2 ** level
+    tdeg = res * 512
+    per_row = int(round(360 / tdeg))
+    c0, c1 = int(math.floor((w + 180) / tdeg)), int(math.floor((e + 180 - 1e-9) / tdeg))
+    r0, r1 = int(math.floor((90 - n) / tdeg)), int(math.floor((90 - s - 1e-9) / tdeg))
+    mosaic = np.full(((r1 - r0 + 1) * 512 + 1, (c1 - c0 + 1) * 512 + 1), np.nan, "float32")
+
+    def tile(rc):
+        r, c = rc
+        code, data, valid = lerc.decode(murray.elevation_tile_bytes(level, r, c % per_row))[:3]
+        if code != 0:
+            raise RuntimeError(f"LERC tile {level}/{r}/{c} failed to decode ({code})")
+        data = np.asarray(data, "float32")
+        if valid is not None:
+            data = np.where(np.asarray(valid) > 0, data, np.nan)
+        return r, c, data
+
+    with ThreadPoolExecutor(8) as pool:
+        for r, c, data in pool.map(tile, [(r, c) for r in range(r0, r1 + 1) for c in range(c0, c1 + 1)]):
+            y, x = (r - r0) * 512, (c - c0) * 512
+            h, wd = min(513, data.shape[0]), min(513, data.shape[1])
+            mosaic[y:y + h, x:x + wd] = data[:h, :wd]
+    H, W = grid["height"], grid["width"]
+    lat = n - (np.arange(H) + 0.5) * (n - s) / H
+    lon = w + (np.arange(W) + 0.5) * (e - w) / W
+    rows = (90 - r0 * tdeg - lat) / res
+    cols = (lon + 180 - c0 * tdeg) / res
+    rr, cc = np.meshgrid(rows, cols, indexing="ij")
+    return map_coordinates(mosaic, [rr, cc], order=1, mode="nearest", cval=np.nan).astype("float32")
+
+
 def sources_for(region):
     """Region-specific sources first, then the global ones."""
     merged = {k: list(v) for k, v in SOURCES.items()}
     for name, specs in REGION_SOURCES.get(region, {}).items():
         merged[name] = list(specs) + merged.get(name, [])
+    if region not in REGION_SOURCES and region != "global":     # anywhere else: its quadrangle's THEMIS TI tile
+        b = region_box(region)
+        mc = mc_quadrangle((b["south"] + b["north"]) / 2, (b["west"] + b["east"]) / 2)
+        if 2 <= mc <= 29:                                       # the Zenodo record covers MC-02..29 (35S-45N)
+            merged["thermal_inertia"] = [themis_ti(mc)] + merged["thermal_inertia"]
+        merged["elevation"] = [{"kind": "terrain"}] + merged["elevation"]   # the globe's 3D terrain first
     return merged
 
 
@@ -207,12 +271,16 @@ def load_band(name, grid, specs):
                                             spec.get("nodata"), spec.get("resampling", "bilinear"))
             elif spec["kind"] == "table":
                 arr = read_table_into_grid(spec, grid)
+            elif spec["kind"] == "terrain":
+                arr = terrain_into_grid(grid)
             elif spec["kind"] == "wms":
                 arr = fetch_wms(spec, grid)
             else:
                 raise ValueError(f"unknown kind {spec['kind']}")
             if np.all(np.isnan(arr)):
                 raise RuntimeError("source returned no data for this region")
+            if spec["kind"] == "wms" and float(np.nanstd(arr)) < 1e-3:     # e.g. THEMIS poleward of ~60 deg: blank
+                raise RuntimeError("source returned a blank image for this region (outside its coverage)")
             print(f"  [ok] {name:<13} from {spec['kind']} ({time.time() - t0:.1f}s)")
             return arr, spec
         except Exception as ex:  # try the next source
@@ -257,8 +325,9 @@ def crism_labels(bounds):
     for pt in ("MTRDR", "MRDR4"):
         q = (f"{ODE}?query=product&results=fp&output=JSON&target=mars&ihid=MRO&iid=CRISM&pt={pt}"
              f"&westlon={w % 360}&eastlon={e % 360 or 360}&minlat={s}&maxlat={n}&limit=1000")
-        res = json.loads(_get(q))["ODEResults"]
-        prods = (res.get("Products") or {}).get("Product") or []
+        res = json.loads(_get(q)).get("ODEResults")
+        prods = res.get("Products") if isinstance(res, dict) else None     # "No Products Found" is a string
+        prods = (prods.get("Product") if isinstance(prods, dict) else None) or []
         for prod in [prods] if isinstance(prods, dict) else prods:
             files = prod["Product_files"]["Product_file"]
             for f in [files] if isinstance(files, dict) else files:
@@ -414,21 +483,16 @@ def normalize01(a):
 
 # ----------------------------------------------------------------- main ----
 def build(region, bands=None, px_per_deg=None):
+    """Build cubes/<region>.npz. The cube is saved twice: first without CRISM minerals (usable for planning in a
+    minute or two), then again once the mineral maps are in, which can take several minutes."""
     grid = make_grid(region, px_per_deg)
     print(f"Region '{region}': {grid['width']} x {grid['height']} px, bounds {grid['bounds']}")
     cube, provenance = {}, {}
     srcs = sources_for(region)
-    for name in (bands or srcs.keys()):
-        if any(spec["kind"] == "crism" for spec in srcs[name]):
-            try:
-                t0 = time.time()
-                minerals, used = build_minerals(grid)
-                cube.update(minerals)
-                provenance[name] = (f"CRISM summary parameters (Viviano-Beck et al. 2014) from {len(used)} "
-                                    f"products via PDS Geosciences ODE: {', '.join(used)}")
-                print(f"  [ok] {name:<13} {', '.join(minerals)} ({time.time() - t0:.1f}s)")
-            except Exception as ex:
-                print(f"  [--] {name:<13} skipped: {ex}")
+    wanted = list(bands or srcs.keys())
+    crism = [n for n in wanted if any(spec["kind"] == "crism" for spec in srcs[n])]
+    for name in wanted:
+        if name in crism:
             continue
         arr, spec = load_band(name, grid, srcs[name])
         if arr is not None:
@@ -436,6 +500,26 @@ def build(region, bands=None, px_per_deg=None):
             provenance[name] = spec
     if "elevation" not in cube:
         sys.exit("Elevation is required. Download a DEM GeoTIFF and set a 'file' source in config.py.")
+    _derive(cube, grid)
+    if crism:
+        save(region, grid, cube, provenance)
+        print("STAGE terrain ready; reading CRISM minerals next", flush=True)
+    for name in crism:
+        try:
+            t0 = time.time()
+            minerals, used = build_minerals(grid)
+            cube.update(minerals)
+            provenance[name] = (f"CRISM summary parameters (Viviano-Beck et al. 2014) from {len(used)} "
+                                f"products via PDS Geosciences ODE: {', '.join(used)}")
+            print(f"  [ok] {name:<13} {', '.join(minerals)} ({time.time() - t0:.1f}s)")
+        except Exception as ex:
+            print(f"  [--] {name:<13} skipped: {ex}")
+    _derive(cube, grid)
+    save(region, grid, cube, provenance)
+
+
+def _derive(cube, grid):
+    """Bands computed from the downloaded ones (terrain, radiation shielding, science, firmness)."""
     cube["slope"], cube["aspect"], cube["roughness"] = derive_terrain(cube["elevation"], grid)
     # Atmospheric shielding vs Gale crater (where Curiosity's RAD measured ~0.64 mSv/day).
     # Air column (pressure) scales as exp(-elevation / 11.1 km scale height); more air = more shielding.
@@ -449,7 +533,10 @@ def build(region, bands=None, px_per_deg=None):
     elif "themis_night" in cube:
         # 0 = coldest at night (loose sand/dust), 1 = warmest (bedrock)
         cube["firmness"] = normalize01(cube["themis_night"])
-    save(region, grid, cube, provenance)
+    else:
+        # No thermal data (THEMIS stops near +-60 deg latitude): firmness unknown. A neutral 0.5 keeps the planner
+        # working; mission.py tells the user (FIRMNESS_UNKNOWN) and the pixel panel shows no thermal inertia.
+        cube["firmness"] = np.full_like(cube["elevation"], FIRMNESS_UNKNOWN)
 
 
 # Mars-like colour ramp: shadow -> rust -> dusty tan (matches the Viking colour globe)
@@ -575,36 +662,16 @@ def save(region, grid, cube, provenance):
     OUT_DIR.mkdir(exist_ok=True)
     names = list(cube.keys())
     coverage = np.stack([~np.isnan(cube[n]) for n in names])
+    tmp = OUT_DIR / f".{region}.part.npz"       # write then rename: the server never reads a half-written cube
     np.savez_compressed(
-        OUT_DIR / f"{region}.npz",
+        tmp,
         bands=np.stack([cube[n] for n in names]).astype("float32"),
         band_names=np.array(names),
         coverage_fraction=coverage.mean(axis=0).astype("float32"),
         bounds=np.array(grid["bounds"]),
         provenance=np.array([f"{k}: {v}" for k, v in provenance.items()]),
     )
-    profile = dict(driver="GTiff", width=grid["width"], height=grid["height"], count=len(names),
-                   dtype="float32", crs=MARS_LONLAT_CRS, transform=grid["transform"],
-                   nodata=np.nan, compress="deflate")
-    with rasterio.open(OUT_DIR / f"{region}.tif", "w", **profile) as dst:
-        for i, n in enumerate(names, 1):
-            dst.write(cube[n], i)
-            dst.set_band_description(i, n)
-    print(f"Saved cubes/{region}.npz and cubes/{region}.tif with bands: {', '.join(names)}")
-
-
-def save(region, grid, cube, provenance):
-    OUT_DIR.mkdir(exist_ok=True)
-    names = list(cube.keys())
-    coverage = np.stack([~np.isnan(cube[n]) for n in names])
-    np.savez_compressed(
-        OUT_DIR / f"{region}.npz",
-        bands=np.stack([cube[n] for n in names]).astype("float32"),
-        band_names=np.array(names),
-        coverage_fraction=coverage.mean(axis=0).astype("float32"),
-        bounds=np.array(grid["bounds"]),
-        provenance=np.array([f"{k}: {v}" for k, v in provenance.items()]),
-    )
+    os.replace(tmp, OUT_DIR / f"{region}.npz")
     profile = dict(driver="GTiff", width=grid["width"], height=grid["height"], count=len(names),
                    dtype="float32", crs=MARS_LONLAT_CRS, transform=grid["transform"],
                    nodata=np.nan, compress="deflate")
@@ -618,11 +685,14 @@ def save(region, grid, cube, provenance):
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser(description="Build the Mars data cube for one region.")
-    ap.add_argument("region", nargs="?", default="jezero", choices=list(REGIONS))
+    ap.add_argument("region", nargs="?", default="jezero",
+                    help=f"{', '.join(REGIONS)}, a named site from config.SITES, or site_<lat>_<lon>")
     ap.add_argument("--px-per-deg", type=int, help="grid density (default: the region's value in config.py)")
     ap.add_argument("--imagery", action="store_true",
                     help="only (re)make the hi-res photo overlay cubes/<region>_imagery.webp")
     args = ap.parse_args()
+    if region_box(args.region) is None:
+        ap.error(f"unknown region '{args.region}'")
     if args.imagery:
         build_hires_imagery(args.region)
     else:
