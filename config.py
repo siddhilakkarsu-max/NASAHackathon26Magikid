@@ -29,6 +29,8 @@ REGIONS = {
 #   {"kind": "download", "url": "...", "path": "data/..."}  fetched once into data/, then read as a file
 #   {"kind": "wms",  "server": "...", "layer": "..."}  a USGS WMS layer
 #   {"kind": "crism"}                           CRISM mineral maps, found automatically (see MINERALS)
+#   {"kind": "table", "path": ..., "lon_col": 0, "lat_col": 1, "value_col": 2}   point table, interpolated
+# Optional on file/cog/download: "nodata": 0 (extra no-data value), "resampling": "nearest" (class maps).
 # The builder tries each source in the list in order and uses the first that works.
 # Set a "file" path once you have downloaded something -> it wins.
 # ---------------------------------------------------------------------------
@@ -55,7 +57,18 @@ SOURCES = {
     # CRISM (MRO) mineral maps -> one band per entry in MINERALS below. The builder asks NASA's Orbital
     # Data Explorer for every CRISM product over the region: targeted observations (MTRDR, ~18-36 m)
     # first, the multispectral mapping tile (MRDR, ~180 m) fills the gaps. Skipped for huge regions.
-    "minerals": [{"kind": "crism"}],
+    "crism": [{"kind": "crism"}],
+    # TES bolometric albedo, whole planet (USGS, 16 MB). Dark = absorbs more sunlight.
+    "albedo": [
+        {"kind": "download", "url": "https://planetarymaps.usgs.gov/mosaic/Mars_MGS_TES_Albedo_mosaic_global_7410m.tif",
+         "path": "data/Mars_MGS_TES_Albedo_mosaic_global_7410m.tif"},
+        # team table (lon, lat, albedo, TI) if someone has it:
+        {"kind": "table", "path": "data/mars_albedo_ti.txt", "lon_col": 0, "lat_col": 1, "value_col": 2, "valid_min": 0},
+    ],
+    # Calibrated thermal inertia: region-specific maps first (see REGION_SOURCES), then the team table
+    "thermal_inertia": [
+        {"kind": "table", "path": "data/mars_albedo_ti.txt", "lon_col": 0, "lat_col": 1, "value_col": 3, "valid_min": 1},
+    ],
     # Add more as the team finds them, e.g.:
     # "albedo":   [{"kind": "file", "path": "data/TES_albedo.tif"}],
     # "dust":     [{"kind": "file", "path": "data/TES_dust_cover_index.tif"}],
@@ -110,17 +123,25 @@ CTX_IMG = {"kind": "cog", "url": f"{M20}/CTX/JEZ_ctx_B_soc_008_orthoMosaic_6m_Eq
 HIRISE_DEM_FILE = {"kind": "file", "path": "data/JEZ_hirise_soc_006_DTM_MOLAtopography_DeltaGeoid_1m_Eqc_latTs0_lon0_blend40.tif"}  # 1.8 GB
 CTX_DEM_FILE = {"kind": "file", "path": "data/M20_JezeroCrater_CTXDEM_20m.tif"}
 CTX_IMG_FILE = {"kind": "file", "path": "data/JEZ_ctx_B_soc_008_orthoMosaic_6m_Eqc_latTs0_lon0.tif"}
+# Jezero thermal inertia (THEMIS, calibrated, J m-2 K-1 s-1/2) - Zenodo record 4931348
+JEZ_TI = {"kind": "download", "url": "https://zenodo.org/records/4931348/files/Jezero_Thermal_Inertia_v1.tiff?download=1",
+          "path": "data/Jezero_Thermal_Inertia_v1.tiff", "nodata": 0}
+# Jezero CRISM dominant-mineral map (classes, 0 = no data) - Zenodo record 5575824
+JEZ_MIN = {"kind": "download", "url": "https://zenodo.org/records/5575824/files/jezeroFinal.tif?download=1",
+           "path": "data/jezeroFinal.tif", "nodata": 0, "resampling": "nearest"}
 
 REGION_SOURCES = {
     "jezero": {
         "elevation": [CTX_DEM_FILE, CTX_DEM],
         "imagery":   [CTX_IMG_FILE, CTX_IMG],
-        "thermal_inertia": [themis_ti(13)],          # MC-13 Syrtis Major
+        "thermal_inertia": [JEZ_TI, themis_ti(13)],  # calibrated Jezero map, else MC-13 Syrtis Major (1 km)
+        "minerals":  [JEZ_MIN],
     },
     "jezero_hirise": {
         "elevation": [HIRISE_DEM_FILE, CTX_DEM_FILE, CTX_DEM],
         "imagery":   [CTX_IMG_FILE, CTX_IMG],
-        "thermal_inertia": [themis_ti(13)],
+        "thermal_inertia": [JEZ_TI, themis_ti(13)],
+        "minerals":  [JEZ_MIN],
     },
     "gale": {
         "thermal_inertia": [themis_ti(23)],          # MC-23 Aeolis

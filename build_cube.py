@@ -54,20 +54,67 @@ def make_grid(region, px_per_deg=None):
 
 
 # -------------------------------------------------------------- readers ----
-def read_raster_into_grid(path_or_url, grid):
-    """Read a GeoTIFF (local file or remote URL) and resample onto our grid."""
+def read_raster_into_grid(path_or_url, grid, nodata=None, resampling="bilinear"):
+    """Read a GeoTIFF (local file or remote URL) and resample onto our grid.
+    nodata: extra value to treat as missing (e.g. 0). resampling: 'nearest' for class maps."""
+    rs = Resampling.nearest if resampling == "nearest" else Resampling.bilinear
     src_path = path_or_url if not path_or_url.startswith("http") else "/vsicurl/" + path_or_url
     with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR", CPL_VSIL_CURL_ALLOWED_EXTENSIONS=".tif"):
         with rasterio.open(src_path) as src:
-            with WarpedVRT(src, crs=MARS_LONLAT_CRS, resampling=Resampling.bilinear) as vrt:
+            vrt_kw = {"src_nodata": nodata} if nodata is not None and src.nodata is None else {}
+            with WarpedVRT(src, crs=MARS_LONLAT_CRS, resampling=rs, **vrt_kw) as vrt:
                 w, s, e, n = grid["bounds"]
                 win = window_from_bounds(w, s, e, n, transform=vrt.transform)
                 data = vrt.read(1, window=win, out_shape=(grid["height"], grid["width"]),
-                                resampling=Resampling.bilinear, masked=True)
+                                resampling=rs, masked=True)
                 arr = data.astype("float32").filled(np.nan)
                 scale = (src.scales or [1.0])[0] or 1.0
                 offset = (src.offsets or [0.0])[0] or 0.0
-                return arr * scale + offset
+                arr = arr * scale + offset
+                if nodata is not None:
+                    arr[arr == nodata] = np.nan
+                return arr
+
+
+def read_table_into_grid(spec, grid):
+    """Point table (lon, lat, value per row; CSV or whitespace) -> our grid by interpolation.
+    spec: {"kind": "table", "path": ..., "lon_col": 0, "lat_col": 1, "value_col": 2}"""
+    from scipy.interpolate import griddata
+    path = Path(__file__).parent / spec["path"]
+    if not path.exists():
+        raise FileNotFoundError(f"{spec['path']} not downloaded")
+    with open(path) as fh:
+        head = [fh.readline() for _ in range(50)]
+    delim = "," if sum("," in h for h in head) > 25 else None
+
+    def numeric(line):
+        try:
+            [float(v) for v in (line.split(delim) if delim else line.split()) if v.strip()]
+            return bool(line.strip())
+        except ValueError:
+            return False
+    skip = next((i for i, h in enumerate(head) if numeric(h)), 0)
+    data = np.genfromtxt(path, delimiter=delim, skip_header=skip, invalid_raise=False, comments="#")
+    lon, lat, val = data[:, spec.get("lon_col", 0)], data[:, spec.get("lat_col", 1)], data[:, spec["value_col"]]
+    lon = np.where(lon > 180, lon - 360, lon)                      # 0..360 -> -180..180
+    ok = np.isfinite(lon) & np.isfinite(lat) & np.isfinite(val)
+    if "valid_min" in spec:
+        ok &= val >= spec["valid_min"]
+    w, s, e, n = grid["bounds"]
+    m = 1.5                                                         # margin in degrees
+    sel = ok & (lon >= w - m) & (lon <= e + m) & (lat >= s - m) & (lat <= n + m)
+    if sel.sum() < 4:
+        raise RuntimeError("table has no points in this region")
+    H, W = grid["height"], grid["width"]
+    gx = w + (np.arange(W) + 0.5) * (e - w) / W
+    gy = n - (np.arange(H) + 0.5) * (n - s) / H
+    GX, GY = np.meshgrid(gx, gy)
+    pts = np.column_stack([lon[sel], lat[sel]])
+    out = griddata(pts, val[sel], (GX, GY), method="linear")
+    gap = np.isnan(out)
+    if gap.any():
+        out[gap] = griddata(pts, val[sel], (GX[gap], GY[gap]), method="nearest")
+    return out.astype("float32")
 
 
 def _ssl_ctx():
@@ -151,11 +198,15 @@ def load_band(name, grid, specs):
             if spec["kind"] == "file":
                 if not (Path(__file__).parent / spec["path"]).exists():
                     raise FileNotFoundError(f"{spec['path']} not downloaded")
-                arr = read_raster_into_grid(str(Path(__file__).parent / spec["path"]), grid)
+                arr = read_raster_into_grid(str(Path(__file__).parent / spec["path"]), grid,
+                                            spec.get("nodata"), spec.get("resampling", "bilinear"))
             elif spec["kind"] == "cog":
-                arr = read_raster_into_grid(spec["url"], grid)
+                arr = read_raster_into_grid(spec["url"], grid, spec.get("nodata"), spec.get("resampling", "bilinear"))
             elif spec["kind"] == "download":
-                arr = read_raster_into_grid(str(download(spec["url"], spec["path"])), grid)
+                arr = read_raster_into_grid(str(download(spec["url"], spec["path"])), grid,
+                                            spec.get("nodata"), spec.get("resampling", "bilinear"))
+            elif spec["kind"] == "table":
+                arr = read_table_into_grid(spec, grid)
             elif spec["kind"] == "wms":
                 arr = fetch_wms(spec, grid)
             else:
@@ -340,19 +391,15 @@ def derive_terrain(elev, grid):
 
 
 def firmness_from_ti(ti, night, grid):
-    """Ground firmness 0..1 from THEMIS thermal inertia on a log scale matching the classes
-    <150 fine dust (0) | 150-300 sand (0-0.5) | 300-600 coarse/crusted (0.5-1) | >600 bedrock (1).
-    The TI map is 1 km, so sub-km contrast is borrowed from the 100 m night-IR picture."""
-    from scipy.ndimage import uniform_filter
-    firm = (np.log(np.maximum(ti, 1)) - np.log(150)) / (np.log(600) - np.log(150))
-    if night is not None:
-        n = normalize01(night)
-        dx, dy = pixel_size_m(grid)
-        k = max(3, int(round(1000 / math.sqrt(float(np.mean(dx)) * dy))) | 1)
-        filled = np.where(np.isnan(n), np.nanmean(n), n)
-        firm = firm + (filled - uniform_filter(filled, k))      # local night-IR anomaly
-        firm = np.where(np.isnan(firm), n, firm)                 # TI gaps: night IR alone
-    return np.clip(firm, 0, 1).astype("float32")
+    """Ground firmness 0..1 from calibrated thermal inertia (J m-2 K-1 s-1/2): <150 dust, 150-300 sand,
+    300-600 coarse/crusted, >600 bedrock. Map 100 -> 0 (loose) ... 600 -> 1 (firm), then add THEMIS
+    night-time detail for local variation. Where thermal inertia is missing, the night IR alone is used."""
+    ti_firm = np.clip((ti - 100) / 500, 0, 1)
+    if night is None:
+        return ti_firm.astype("float32")
+    n = normalize01(night)
+    firm = np.clip(ti_firm + (n - 0.5) * 0.35, 0, 1)
+    return np.where(np.isnan(firm), n, firm).astype("float32")
 
 
 def normalize01(a):
@@ -385,12 +432,160 @@ def build(region, bands=None, px_per_deg=None):
     if "elevation" not in cube:
         sys.exit("Elevation is required. Download a DEM GeoTIFF and set a 'file' source in config.py.")
     cube["slope"], cube["aspect"], cube["roughness"] = derive_terrain(cube["elevation"], grid)
+    # Atmospheric shielding vs Gale crater (where Curiosity's RAD measured ~0.64 mSv/day).
+    # Air column (pressure) scales as exp(-elevation / 11.1 km scale height); more air = more shielding.
+    GALE_ELEV_M, SCALE_HEIGHT_M = -4500.0, 11100.0
+    cube["air_column_vs_gale"] = np.exp(-(cube["elevation"] - GALE_ELEV_M) / SCALE_HEIGHT_M).astype("float32")
+    if "minerals" in cube:
+        # Science value: any CRISM mineral detection (clays, carbonates, ...) inside the mapped area
+        cube["science"] = np.where(np.isfinite(cube["minerals"]) & (cube["minerals"] > 0), 1.0, 0.0).astype("float32")
     if "thermal_inertia" in cube:
         cube["firmness"] = firmness_from_ti(cube["thermal_inertia"], cube.get("themis_night"), grid)
     elif "themis_night" in cube:
         # 0 = coldest at night (loose sand/dust), 1 = warmest (bedrock)
         cube["firmness"] = normalize01(cube["themis_night"])
     save(region, grid, cube, provenance)
+
+
+# Mars-like colour ramp: shadow -> rust -> dusty tan (matches the Viking colour globe)
+MARS_RAMP = np.array([[0.00, 38, 22, 16], [0.35, 112, 62, 38], [0.65, 176, 112, 72],
+                      [0.85, 214, 160, 116], [1.00, 238, 206, 170]], dtype="float32")
+
+
+def mars_tint(gray):
+    """Turn a 0-1 greyscale image into Mars-coloured R, G, B (0-255)."""
+    x = MARS_RAMP[:, 0]
+    return [np.interp(gray, x, MARS_RAMP[:, i]) for i in (1, 2, 3)]
+
+
+VIKING_LAYER = "Mars_Viking_MDIM21_ClrMosaic_global_232m"
+
+
+def viking_color_patch(bounds, level=7):
+    """Stitch NASA Trek Viking colour tiles covering bounds; return (rgb float array, (w, s, e, n))."""
+    import io
+    import urllib.request
+    from PIL import Image
+    w, s, e, n = bounds
+    tdeg = 180.0 / 2 ** level                          # tile size in degrees (2^(z+1) x 2^z tiles)
+    c0, c1 = int((w + 180) // tdeg), int((e + 180) // tdeg)
+    r0, r1 = int((90 - n) // tdeg), int((90 - s) // tdeg)
+    rows = []
+    for r in range(r0, r1 + 1):
+        row = []
+        for c in range(c0, c1 + 1):
+            url = (f"https://trek.nasa.gov/tiles/Mars/EQ/{VIKING_LAYER}/1.0.0/default/default028mm/"
+                   f"{level}/{r}/{c}.jpg")
+            req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0 (MarswalkPlanner)"})
+            with urllib.request.urlopen(req, timeout=30, context=_ssl_ctx()) as resp:
+                row.append(np.asarray(Image.open(io.BytesIO(resp.read())).convert("RGB"), dtype="float32"))
+        rows.append(np.hstack(row))
+    mosaic = np.vstack(rows)
+    ext = (c0 * tdeg - 180, 90 - (r1 + 1) * tdeg, (c1 + 1) * tdeg - 180, 90 - r0 * tdeg)
+    return mosaic, ext
+
+
+def pansharpen_with_viking(gray, bounds):
+    """Colour from the Viking global mosaic, sharp detail from CTX (luminance swap)."""
+    from PIL import Image
+    from scipy.ndimage import gaussian_filter
+    try:
+        mosaic, (mw, ms, me, mn) = viking_color_patch(bounds)
+    except Exception as ex:
+        print(f"      (Viking colour unavailable, using Mars tint: {ex})")
+        return None
+    w, s, e, n = bounds
+    H, W = mosaic.shape[:2]
+    x0, x1 = (w - mw) / (me - mw) * W, (e - mw) / (me - mw) * W
+    y0, y1 = (mn - n) / (mn - ms) * H, (mn - s) / (mn - ms) * H
+    crop = Image.fromarray(mosaic.astype("uint8")).crop((int(x0), int(y0), int(np.ceil(x1)), int(np.ceil(y1))))
+    color = np.asarray(crop.resize((gray.shape[1], gray.shape[0]), Image.BICUBIC), dtype="float32")
+    lum = color.mean(axis=2)
+    # Match CTX brightness to Viking's overall brightness, then swap in CTX detail
+    blur_sigma = max(gray.shape) / 150
+    ctx_low = gaussian_filter(gray, blur_sigma)
+    detail = (gray + 0.05) / (ctx_low + 0.05)
+    out = color * np.clip(detail, 0.2, 3.0)[..., None]
+    print("      (coloured with NASA Viking colour mosaic)")
+    return [np.clip(out[..., i], 0, 255) for i in range(3)]
+
+
+def feather_alpha(valid, edge_frac=0.08):
+    """Alpha channel that fades to transparent near the image border and near no-data gaps."""
+    from scipy.ndimage import distance_transform_edt
+    pad = np.pad(valid, 1, constant_values=False)
+    dist = distance_transform_edt(pad)[1:-1, 1:-1]
+    ramp = max(3.0, edge_frac * max(valid.shape))
+    a = np.clip(dist / ramp, 0, 1)
+    a = a * a * (3 - 2 * a)            # smoothstep
+    return (a * 255)
+
+
+def build_hires_imagery(region, max_px=8192):
+    """Save the photo layer at (near) native resolution as a JPEG overlay + bounds JSON,
+    so the map shows real 6 m detail instead of the coarser analysis grid."""
+    import json
+    from PIL import Image
+    from rasterio.warp import transform_bounds
+    w, s, e, n = make_grid(region)["bounds"]
+    for spec in sources_for(region).get("imagery", []):
+        try:
+            src_path = spec.get("path") or spec.get("url")
+            if spec["kind"] == "file":
+                if not (Path(__file__).parent / src_path).exists():
+                    continue
+                src_path = str(Path(__file__).parent / src_path)
+            open_path = "/vsicurl/" + src_path if src_path.startswith("http") else src_path
+            with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"), rasterio.open(open_path) as src:
+                bw, bs, be, bn = transform_bounds(src.crs, MARS_LONLAT_CRS, *src.bounds)
+                res_m = abs(src.transform.a)
+            iw, is_, ie, in_ = max(w, bw), max(s, bs), min(e, be), min(n, bn)
+            if iw >= ie or is_ >= in_:
+                continue
+            deg_m = math.pi / 180 * MARS_RADIUS_M
+            ppd = min(deg_m / res_m, max_px / max(ie - iw, in_ - is_))
+            g = dict(bounds=(iw, is_, ie, in_), width=int((ie - iw) * ppd), height=int((in_ - is_) * ppd))
+            t0 = time.time()
+            arr = read_raster_into_grid(src_path, g)
+            ok = np.isfinite(arr) & (arr > 0)
+            lo, hi = np.percentile(arr[ok], [1, 99]) if ok.any() else (0, 255)
+            gray = np.clip((np.nan_to_num(arr, nan=lo) - lo) / max(hi - lo, 1e-6), 0, 1)
+            rgb = pansharpen_with_viking(gray, (iw, is_, ie, in_))
+            if rgb is None:
+                rgb = mars_tint(gray)
+            rgba = np.dstack([*rgb, feather_alpha(ok)]).astype("uint8")
+            OUT_DIR.mkdir(exist_ok=True)
+            Image.fromarray(rgba).save(OUT_DIR / f"{region}_imagery.webp", quality=82, method=4)
+            meta = {"west": iw, "south": is_, "east": ie, "north": in_, "meters_per_px": round(deg_m / ppd, 1),
+                    "source": src_path.split("/")[-1]}
+            (OUT_DIR / f"{region}_imagery.json").write_text(json.dumps(meta))
+            print(f"  [ok] hi-res image  {g['width']}x{g['height']} px at ~{meta['meters_per_px']} m/px "
+                  f"({time.time() - t0:.1f}s)")
+            return
+        except Exception as ex:
+            print(f"  [--] hi-res image  {spec['kind']} failed: {ex}")
+
+
+def save(region, grid, cube, provenance):
+    OUT_DIR.mkdir(exist_ok=True)
+    names = list(cube.keys())
+    coverage = np.stack([~np.isnan(cube[n]) for n in names])
+    np.savez_compressed(
+        OUT_DIR / f"{region}.npz",
+        bands=np.stack([cube[n] for n in names]).astype("float32"),
+        band_names=np.array(names),
+        coverage_fraction=coverage.mean(axis=0).astype("float32"),
+        bounds=np.array(grid["bounds"]),
+        provenance=np.array([f"{k}: {v}" for k, v in provenance.items()]),
+    )
+    profile = dict(driver="GTiff", width=grid["width"], height=grid["height"], count=len(names),
+                   dtype="float32", crs=MARS_LONLAT_CRS, transform=grid["transform"],
+                   nodata=np.nan, compress="deflate")
+    with rasterio.open(OUT_DIR / f"{region}.tif", "w", **profile) as dst:
+        for i, n in enumerate(names, 1):
+            dst.write(cube[n], i)
+            dst.set_band_description(i, n)
+    print(f"Saved cubes/{region}.npz and cubes/{region}.tif with bands: {', '.join(names)}")
 
 
 def save(region, grid, cube, provenance):
@@ -420,5 +615,10 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description="Build the Mars data cube for one region.")
     ap.add_argument("region", nargs="?", default="jezero", choices=list(REGIONS))
     ap.add_argument("--px-per-deg", type=int, help="grid density (default: the region's value in config.py)")
+    ap.add_argument("--imagery", action="store_true",
+                    help="only (re)make the hi-res photo overlay cubes/<region>_imagery.webp")
     args = ap.parse_args()
-    build(args.region, px_per_deg=args.px_per_deg)
+    if args.imagery:
+        build_hires_imagery(args.region)
+    else:
+        build(args.region, px_per_deg=args.px_per_deg)

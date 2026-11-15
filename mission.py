@@ -23,7 +23,7 @@ import math
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_edt
+from scipy.ndimage import binary_dilation, distance_transform_edt
 from skimage.draw import line as draw_line
 
 import physics
@@ -49,11 +49,6 @@ def _circle_mask(cube, lat, lon, radius_km):
     dy = (lat_g - lat) * search.DEG_M
     dx = (lon_g - lon) * search.DEG_M * math.cos(math.radians(lat))
     return np.hypot(dx, dy) <= radius_km * 1000
-
-
-def _disk(r_px):
-    y, x = np.mgrid[-r_px:r_px + 1, -r_px:r_px + 1]
-    return x * x + y * y <= r_px * r_px
 
 
 def _ti(cube):
@@ -137,12 +132,23 @@ def offlimits(cube, v):
 
 # ------------------------------------------------------------------ landing ----
 def landing_mask(cube):
-    """Pixels where a lander can touch down: config.LANDING_RULES hold over a whole circle around the spot."""
+    """Pixels where a lander can touch down: config.LANDING_RULES hold over (90 % of) a circle around the spot.
+    Slope is judged over a ~100 m baseline, as for a landing-site survey, so a sharp cube (e.g. 9 m from the
+    1 m HiRISE elevation model) isn't failed by metre-scale bumps."""
     def make():
+        from scipy.ndimage import uniform_filter
         R = LANDING_RULES
         b = cube.bands
+        px = min(cube.pixel_m)
+        k = max(1, int(round(100 / px)))
+        if k > 1:
+            z = np.nan_to_num(b["elevation"], nan=float(np.nanmean(b["elevation"])))
+            gy, gx = np.gradient(uniform_filter(z, k), cube.pixel_m[0], cube.pixel_m[1])
+            slope = np.degrees(np.arctan(np.hypot(gx, gy)))
+        else:
+            slope = np.nan_to_num(b["slope"], nan=90)
         rough = b["roughness"]
-        ok = (np.nan_to_num(b["slope"], nan=90) <= R["max_slope_deg"])
+        ok = slope <= R["max_slope_deg"]
         ok &= np.nan_to_num(rough, nan=1e9) <= np.nanpercentile(rough, R["max_rough_percentile"])
         ti = _ti(cube)
         ok &= (np.nan_to_num(ti, nan=0) >= R["min_ti"]) if ti is not None else (np.nan_to_num(b["firmness"]) >= 0.35)
@@ -150,8 +156,9 @@ def landing_mask(cube):
         lat = (cube.n - (np.arange(cube.H) + 0.5) * (cube.n - cube.s) / cube.H)[:, None]
         ok &= np.abs(lat) <= R["max_abs_lat"]
         ok &= ~special_mask(cube)
-        r_px = max(1, int(round(R["area_radius_m"] / min(cube.pixel_m))))
-        return binary_erosion(ok, structure=_disk(r_px), border_value=0)
+        r_px = max(1, int(round(R["area_radius_m"] / px)))
+        share = uniform_filter(ok.astype("float32"), 2 * r_px + 1, mode="constant")
+        return ok & (share >= 0.9)
     return _cached(cube, "landing", make)
 
 
@@ -309,7 +316,7 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
     ls = SEASONS[season]["ls"]
     sun_e, sun_az = physics.sun_position((cube.s + cube.n) / 2, LOCAL_HOUR, ls)
     illum = physics.illumination(cube.bands["slope"], cube.bands["aspect"], sun_e, sun_az)
-    temp = physics.surface_temp_k(illum, cube.bands.get("firmness"), sun_e)
+    temp = physics.surface_temp_k(illum, cube.bands.get("firmness"), sun_e, cube.bands.get("albedo"))
     L = _route_layers(cube, v, season, priority, green_only)
 
     # 3. destinations ----------------------------------------------------------------------------

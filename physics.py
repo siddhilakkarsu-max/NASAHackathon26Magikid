@@ -36,16 +36,18 @@ def illumination(slope, aspect, sun_elev, sun_az):
     return np.where(sun_elev > 0, cos_i, -1.0).astype("float32")
 
 
-def surface_temp_k(cos_i, firmness, sun_elev):
+def surface_temp_k(cos_i, firmness, sun_elev, albedo=None):
     """VERY approximate surface temperature (K). Swap in Jason's thermal model later.
-    Loose material (low thermal inertia) heats more by day and cools more at night."""
+    Loose material (low thermal inertia) heats more by day and cools more at night.
+    Dark ground (low albedo) absorbs more sunlight: absorbed = (1 - albedo) x sunlight."""
+    absorb = 1.0 if albedo is None else np.clip((1 - np.nan_to_num(albedo, nan=0.25)) / 0.75, 0.6, 1.3)
     if firmness is None:
         firmness = np.full_like(cos_i, 0.5)
     loose = 1.0 - np.nan_to_num(firmness, nan=0.5)
     if sun_elev <= 0:
         return (175 + 35 * (1 - loose)).astype("float32")
     sun = np.sqrt(np.clip(cos_i, 0, 1))
-    return (185 + 105 * sun * (0.75 + 0.35 * loose)).astype("float32")
+    return (185 + 105 * sun * absorb * (0.75 + 0.35 * loose)).astype("float32")
 
 
 # ----------------------------------------------------------- mobility ----

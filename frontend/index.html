@@ -105,6 +105,8 @@
   pre.thinking.answer { color: var(--fg); }
   .live::after { content: " ▍"; animation: blink 1s steps(2) infinite; color: var(--accent); }
   @keyframes blink { 50% { opacity: 0; } }
+  #murrayLayers label.check { margin: 3px 0; } #panel a { color: var(--accent); }
+  #infoLinks a { display: block; }
   .legendkey span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 8px; }
 </style>
 </head>
@@ -142,9 +144,10 @@
   <input type="range" id="ls" min="0" max="360" step="0.1" value="90" />
   <select id="layer">
     <option value="">(none)</option>
+    <option value="suitability">★ Mission suitability (safety + science + shielding)</option>
     <option value="imagery">CTX image (6 m, sharp)</option>
     <option value="slope">Slope</option>
-    <option value="firmness">Ground firmness (THEMIS night)</option>
+    <option value="firmness">Ground firmness (thermal inertia + night IR)</option>
     <option value="thermal_inertia">Thermal inertia (THEMIS)</option>
     <option value="cost">Travel cost</option>
     <option value="illumination">Sunlight on slopes</option>
@@ -159,7 +162,11 @@
       <option value="dust_opacity">Atmospheric dust optical depth</option>
     </optgroup>
     <option value="shelter">Minutes to shelter</option>
-    <option value="elevation">Elevation</option>
+    <option value="elevation">Elevation (topography)</option>
+    <option value="science">Science targets (CRISM minerals)</option>
+    <option value="minerals">CRISM dominant mineral (class map)</option>
+    <option value="air_column_vs_gale">Radiation shielding (air column)</option>
+    <option value="albedo">Albedo (brightness)</option>
     <optgroup id="mineralLayers" label="Minerals (CRISM)"></optgroup>
   </select>
   <div id="legend" hidden></div><div class="small" id="legendText"></div>
@@ -168,6 +175,19 @@
   <input id="mapOpacity" type="range" min="0" max="100" value="100" step="5" disabled>
   <div class="small" id="layerStatus" role="status"></div>
   <button id="retryLayer" class="secondary" type="button" hidden>Retry layer</button>
+
+  <h2>Sharp imagery (5 m)</h2>
+  <div class="row">
+    <button id="boxBtn" class="secondary" type="button">Box a sharp area</button>
+    <button id="clearBox" class="secondary" type="button">Clear</button>
+  </div>
+  <button id="prefetchBtn" class="secondary" type="button">Pre-load box (for demos)</button>
+  <div class="small" id="boxInfo">Click "Box a sharp area", then click two corners on the map.</div>
+
+  <h2>Murray Lab maps</h2>
+  <div id="murrayLayers"></div>
+  <div class="small" id="murrayInfo">All maps from the
+    <a href="https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html" target="_blank" rel="noopener">Murray Lab CTX viewer</a>.</div>
   <button id="pauseWind" class="secondary" type="button" hidden>Pause wind motion</button>
   <section id="timeline" hidden aria-label="Weather timeline">
     <h2>Weather timeline</h2>
@@ -213,6 +233,7 @@
 
   <h2>Clicked point</h2>
   <div id="info" class="small">Click the map to see every value stored in that pixel.</div>
+  <div id="infoLinks" class="small"></div>
 </div>
 
 <script>
@@ -255,6 +276,57 @@ if (viewer.scene.skyBox) viewer.scene.skyBox.show = false;
 if (viewer.scene.sun) viewer.scene.sun.show = false;
 if (viewer.scene.moon) viewer.scene.moon.show = false;
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
+
+// Sharp 5 m CTX imagery (Murray Lab, Caltech), coloured by our back end, loaded ONLY inside a chosen box
+// (keeps the globe fast). Selecting a Jezero region boxes it automatically.
+let ctxLayer = null, boxEntity = null, sharpBox = null;
+function setSharpBox(r) {                       // r = {west, south, east, north} in degrees, or null
+  if (ctxLayer) { viewer.imageryLayers.remove(ctxLayer, true); ctxLayer = null; }
+  if (boxEntity) { viewer.entities.remove(boxEntity); boxEntity = null; }
+  sharpBox = r;
+  if (!r) { viewer.scene.requestRender(); return; }
+  const rect = Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north);
+  ctxLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+    url: API + "/ctxtiles/{z}/{y}/{x}.jpg",
+    tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
+    tileWidth: 512, tileHeight: 512, minimumLevel: 8, maximumLevel: 12, rectangle: rect,
+    credit: "Global CTX Mosaic of Mars, Murray Lab/Caltech (NASA/JPL/MSSS)",
+  }), 1);
+  boxEntity = viewer.entities.add({ rectangle: { coordinates: rect, fill: false, outline: true,
+    outlineColor: Cesium.Color.ORANGE.withAlpha(0.8), height: 0 } });
+  fadePhoto();
+  viewer.scene.requestRender();
+}
+const USE_GLOBAL_CTX = true;   // false = only the regional Jezero photo
+
+// ------------------------------------------------- hi-res photo base ----
+let photoLayer = null;
+async function loadHiresPhoto(region) {
+  const coll = tileset ? tileset.imageryLayers : viewer.imageryLayers;
+  if (photoLayer) { coll.remove(photoLayer, true); photoLayer = null; }
+  try {
+    const m = await api(`/api/imagery/${region}`);
+    if (!m.available) return;
+    const provider = await Cesium.SingleTileImageryProvider.fromUrl(API + m.url, {
+      rectangle: Cesium.Rectangle.fromDegrees(m.west, m.south, m.east, m.north) });
+    photoLayer = new Cesium.ImageryLayer(provider);
+    coll.add(photoLayer, 1);                      // just above the global Viking map, below data layers
+    fadePhoto();
+    $("status").textContent += `  ·  photo: ${m.meters_per_px} m/px (${m.source})`;
+  } catch (e) { console.warn("hi-res photo", e); }
+}
+
+// Photo fades in as you zoom toward the surface (invisible from far away)
+const PHOTO_FULL_KM = 120, PHOTO_HIDDEN_KM = 600;
+function fadePhoto() {
+  const km = viewer.camera.positionCartographic.height / 1000;
+  const t = Math.max(0, Math.min(1, (PHOTO_HIDDEN_KM - km) / (PHOTO_HIDDEN_KM - PHOTO_FULL_KM)));
+  if (photoLayer) photoLayer.alpha = t;
+  if (ctxLayer && ctxLayer.alpha !== t) { ctxLayer.alpha = t; viewer.scene.requestRender(); }
+}
+viewer.camera.percentageChanged = 0.05;
+viewer.camera.changed.addEventListener(fadePhoto);
+viewer.camera.moveEnd.addEventListener(fadePhoto);
 
 let tileset = null;
 (async () => {
@@ -452,6 +524,7 @@ $("pauseWind").onclick = () => {
 // --------------------------------------------------------------- picking ----
 function pickLatLon(pos) {
   const cart = (tileset && viewer.scene.pickPositionSupported && viewer.scene.pickPosition(pos))
+            || (murrayOn("terrain") && viewer.scene.globe.pick(viewer.camera.getPickRay(pos), viewer.scene))
             || viewer.camera.pickEllipsoid(pos, MARS);
   if (!cart) return null;
   const c = Cesium.Cartographic.fromCartesian(cart, MARS);
@@ -562,6 +635,15 @@ function pin(id, p, color, text) {
 new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e) => {
   const p = pickLatLon(e.position); if (!p) return;
   const request = ++pointRequest;
+  if (mode === "box1") { boxCorner = p; mode = "box2"; $("boxInfo").textContent = "Now click the opposite corner."; return; }
+  if (mode === "box2") {
+    mode = null; $("boxBtn").classList.remove("active");
+    const b = { west: Math.min(boxCorner.lon, p.lon), east: Math.max(boxCorner.lon, p.lon),
+                south: Math.min(boxCorner.lat, p.lat), north: Math.max(boxCorner.lat, p.lat) };
+    setSharpBox(b);
+    $("boxInfo").textContent = `Sharp area: ${(b.east - b.west).toFixed(2)}° x ${(b.north - b.south).toFixed(2)}°. Zoom in to see 5 m detail.`;
+    return;
+  }
   if (!mode && shownConditions && hoverLayers.has(displayedLayer)) {
     const layer = displayedLayer, snapshot = shownConditions;
     $("info").textContent = pointLabel(p);
@@ -582,11 +664,30 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
     if (request !== pointRequest) return;
     const lines = Object.entries(px.values).map(([k, v]) => `${k.padEnd(13)} ${v ?? "no data"}`);
     const minerals = px.minerals && px.minerals.length ? `minerals: ${px.minerals.join("; ")}\n` : "";
-    $("info").textContent = `${pointLabel(p)}\n` +
-      (px.ground ? `ground: ${px.ground}\n` : "") + minerals + `confidence: ${px.confidence}\n\n` + lines.join("\n");
+    $("info").textContent = `${pointLabel(p)}` +
+      (px.source === "global" ? "  (live lookup)\n" : `  (${px.source} map)\n`) +
+      (px.ground ? `ground: ${px.ground}\n` : "") + minerals + (px.notes || []).map((n) => "• " + n + "\n").join("") +
+      `confidence: ${px.confidence}\n\n` + lines.join("\n");
+    murrayPointLinks(p, request);
   } catch (err) { if (request === pointRequest) $("info").textContent = `${pointLabel(p)}: ${err.message}`; }
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
+let boxCorner = null;
+$("boxBtn").onclick = () => { mode = "box1"; $("boxBtn").classList.add("active");
+  $("boxInfo").textContent = "Click the first corner of the area."; };
+$("clearBox").onclick = () => { setSharpBox(null); $("boxInfo").textContent = "Sharp imagery off (fast mode)."; };
+$("prefetchBtn").onclick = async () => {
+  if (!sharpBox) { $("boxInfo").textContent = "Box an area first."; return; }
+  try {
+    const r = await api("/api/prefetch", sharpBox);
+    $("boxInfo").textContent = `Pre-loading ${r.tiles} tiles…`;
+    const timer = setInterval(async () => {
+      const s = await api("/api/prefetch");
+      $("boxInfo").textContent = s.running ? `Pre-loading… ${s.done}/${s.total} tiles` : `Pre-loaded ${s.total} tiles ✓ (instant now)`;
+      if (!s.running) clearInterval(timer);
+    }, 1500);
+  } catch (e) { $("boxInfo").textContent = e.message; }
+};
 $("setBase").onclick = () => { mode = "base"; $("setBase").classList.add("active"); };
 $("setTarget").onclick = () => { mode = "target"; $("setTarget").classList.add("active"); };
 $("targets").onchange = () => {
@@ -1077,6 +1178,165 @@ $("goal").addEventListener("keydown", (e) => { if (e.key === "Enter") runMission
 $("showTracks").onchange = () => showTracks($("showTracks").checked);
 $("mVehicle").addEventListener("change", () => { if ($("showTracks").checked) showTracks(true); });
 
+
+// ------------------------------------------------------- Murray Lab maps ----
+// Every map from the Murray Lab CTX viewer (murray.py on the server). Tiles come straight from Esri's OnMars
+// services; terrain, traverses, names, craters, the CTX tile index and HiRISE footprints come via our server.
+const murray = { defs: [], state: {} };
+const flatTerrain = new Cesium.EllipsoidTerrainProvider({ ellipsoid: MARS });
+const murrayOn = (id) => !!(murray.state[id] && murray.state[id].on);
+
+function murrayLine(ds, ring, color, width, maxDist) {
+  if (ring.length < 2) return;
+  ds.entities.add({ polyline: { positions: Cesium.Cartesian3.fromDegreesArray(ring.flat(), MARS), width,
+    material: color, clampToGround: true,
+    distanceDisplayCondition: maxDist ? new Cesium.DistanceDisplayCondition(0, maxDist) : undefined } });
+}
+function murrayLabel(ds, lon, lat, text, maxDist, color = Cesium.Color.WHITE) {
+  ds.entities.add({ position: Cesium.Cartesian3.fromDegrees(lon, lat, 0, MARS), label: { text,
+    font: "12px sans-serif", fillColor: color, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
+    style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: 1e9,
+    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, maxDist) } });
+}
+const sizeDist = (km) => Math.min(9e6, Math.max(2.5e5, (km || 10) * 1.5e4));   // big features show from farther
+
+// Traverses are drawn whole. Names, craters and the tile map have thousands of features: they are kept in memory
+// and only the ones in view are drawn (biggest first, capped), refreshed when the camera stops.
+const VIEW_CAP = { names: 250, craters: 250, quads: 200 };
+function viewBoxes() {
+  const r = viewer.camera.computeViewRectangle(MARS);
+  if (!r) return null;
+  const [w, s, e, n] = [r.west, r.south, r.east, r.north].map(Cesium.Math.toDegrees);
+  return w <= e ? [[w, s, e, n]] : [[w, s, 180, n], [-180, s, e, n]];       // split at the antimeridian
+}
+const inView = (boxes, b) => boxes.some(([w, s, e, n]) => b[0] <= e && b[2] >= w && b[1] <= n && b[3] >= s);
+
+async function murrayGeojson(def) {
+  const data = await api(def.url), ds = new Cesium.CustomDataSource(def.id);
+  const color = def.color ? C(def.color) : Cesium.Color.WHITE.withAlpha(0.7);
+  const items = [];
+  for (const f of data.features) {
+    const g = f.geometry, p = f.properties || {};
+    if (g.type === "LineString") murrayLine(ds, g.coordinates, color, 3);
+    else if (g.type === "Polygon") {
+      const ring = g.coordinates[0], xs = ring.map((c) => c[0]), ys = ring.map((c) => c[1]);
+      items.push({ ring, name: p.name, size: def.id === "quads" ? 1 : p.diameter_km || 1,
+                   box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+                   lon: xs.reduce((a, b) => a + b, 0) / xs.length, lat: ys.reduce((a, b) => a + b, 0) / ys.length });
+    } else if (g.type === "Point" && p.name) {
+      const [lon, lat] = g.coordinates;
+      items.push({ name: p.name, size: p.diameter_km || 1, box: [lon, lat, lon, lat], lon, lat });
+    }
+  }
+  if (items.length) murray.state[def.id].items = items.sort((a, b) => b.size - a.size);
+  return ds;
+}
+
+function refreshViewLayers() {
+  const boxes = viewBoxes();
+  for (const id of Object.keys(VIEW_CAP)) {
+    const st = murray.state[id];
+    if (!st || !st.on || !st.ds || !st.items) continue;
+    st.ds.entities.removeAll();
+    if (!boxes) continue;
+    const color = id === "quads" ? C("#ffd27a").withAlpha(0.6) : Cesium.Color.WHITE.withAlpha(0.75);
+    const shown = st.items.filter((it) => inView(boxes, it.box)).slice(0, VIEW_CAP[id]);
+    for (const it of shown) {
+      if (it.ring) murrayLine(st.ds, it.ring, color, id === "quads" ? 1.5 : 2);
+      if (it.name) murrayLabel(st.ds, it.lon, it.lat, it.name, id === "quads" ? 2e6 : sizeDist(it.size),
+                               id === "names" ? C("#ffe9c7") : Cesium.Color.WHITE);
+    }
+  }
+  viewer.scene.requestRender();
+}
+viewer.camera.moveEnd.addEventListener(refreshViewLayers);
+
+let hiriseRequest = 0;
+async function refreshHirise() {
+  const st = murray.state.hirise;
+  if (!st || !st.on) return;
+  const id = ++hiriseRequest, r = viewer.camera.computeViewRectangle(MARS);
+  st.ds.entities.removeAll();
+  if (!r) return;
+  const box = [r.west, r.south, r.east, r.north].map(Cesium.Math.toDegrees);
+  if (box[2] - box[0] > 25 || box[3] - box[1] > 25) {
+    $("murrayInfo").textContent = "HiRISE footprints: zoom in closer (view under ~25°) to load them."; return;
+  }
+  try {
+    const d = await api(`/murray/hirise?west=${box[0]}&south=${box[1]}&east=${box[2]}&north=${box[3]}`);
+    if (id !== hiriseRequest || !st.on) return;
+    for (const f of d.features) murrayLine(st.ds, f.geometry.coordinates[0], C("#7ad7ff").withAlpha(0.75), 1.5);
+    $("murrayInfo").textContent = `HiRISE footprints in view: ${d.total}` + (d.truncated ? ` (showing ${d.features.length}; zoom in for all)` : "");
+  } catch (e) { if (id === hiriseRequest) $("murrayInfo").textContent = e.message; }
+  viewer.scene.requestRender();
+}
+viewer.camera.moveEnd.addEventListener(refreshHirise);
+
+async function murrayToggle(def, on) {
+  const st = murray.state[def.id] || (murray.state[def.id] = {});
+  st.on = on;
+  const coll = tileset ? tileset.imageryLayers : viewer.imageryLayers;
+  $("murrayInfo").textContent = on ? `Loading ${def.title}…` : "";
+  try {
+    if (def.kind === "tiles") {
+      if (on && !st.layer) {                                   // above every base map, below the data overlays
+        st.layer = coll.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+          url: def.url, tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
+          tileWidth: 512, tileHeight: 512, maximumLevel: def.max_level, credit: def.credit }));
+        for (const l of overlay) if (coll.contains(l)) coll.raiseToTop(l);
+      }
+      if (!on && st.layer) { coll.remove(st.layer, true); st.layer = null; }
+    } else if (def.kind === "terrain") {
+      if (on && !st.provider) st.provider = await Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(API + def.url, { ellipsoid: MARS });
+      viewer.terrainProvider = murrayOn("terrain") ? st.provider : flatTerrain;
+    } else if (def.kind === "geojson") {
+      if (on) {
+        if (!st.ds) st.ds = await murrayGeojson(def);
+        if (st.on && !viewer.dataSources.contains(st.ds)) viewer.dataSources.add(st.ds);
+        refreshViewLayers();
+      }
+      else if (st.ds) viewer.dataSources.remove(st.ds, false);
+    } else if (def.kind === "bbox") {
+      if (!st.ds) st.ds = new Cesium.CustomDataSource(def.id);
+      if (on) { viewer.dataSources.add(st.ds); await refreshHirise(); } else viewer.dataSources.remove(st.ds, false);
+    }
+    if (on && def.kind !== "bbox") $("murrayInfo").textContent = `${def.title}: ${def.credit}`;
+  } catch (e) {
+    st.on = false; $(`murray_${def.id}`).checked = false;
+    $("murrayInfo").textContent = `${def.title} could not load: ${e.message || e}`;
+  }
+  viewer.scene.requestRender();
+}
+
+async function murrayPointLinks(p, request) {
+  const box = $("infoLinks");
+  box.innerHTML = "";
+  const add = (text, href) => box.append(href ? el("a", { href, textContent: text, target: "_blank", rel: "noopener" })
+                                              : el("div", { textContent: text }));
+  try {
+    if (murrayOn("quads")) {
+      const q = await api(`/murray/quad/at?lat=${p.lat}&lon=${p.lon}`);
+      if (request === pointRequest && q.name) add(`CTX mosaic tile ${q.name}: download page`, q.link);
+    }
+    if (murrayOn("hirise")) {
+      const h = await api(`/murray/hirise/at?lat=${p.lat}&lon=${p.lon}`);
+      if (request !== pointRequest) return;
+      if (!h.total) add("No HiRISE image covers this point.");
+      for (const o of h.observations.slice(0, 6)) add(`HiRISE ${o.name}`, o.link);
+      if (h.total > 6) add(`…and ${h.total - 6} more HiRISE images here`);
+    }
+  } catch (e) { /* the panel already shows the pixel values */ }
+}
+
+api("/api/murray/layers").then((d) => {
+  murray.defs = d.layers;
+  for (const def of d.layers) {
+    const box = el("input", { type: "checkbox", id: `murray_${def.id}` });
+    box.onchange = () => murrayToggle(def, box.checked);
+    $("murrayLayers").append(el("label", { className: "check", title: def.credit }, box, def.title));
+  }
+}).catch((e) => { $("murrayInfo").textContent = "Murray Lab maps unavailable: " + e.message; });
+
 // ------------------------------------------------------------------ boot ----
 function flyTo(r) {
   viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
@@ -1140,6 +1400,8 @@ $("region").onchange = () => {
   if (!globalLayerSelected()) flyTo(current.rect);
   $("status").textContent = `${current.size[0]}×${current.size[1]} px · ~${current.pixel_m[1]} m/px · ` +
     `bands: ${current.bands.join(", ")}`;
+  setSharpBox(current.rect);
+  if (!USE_GLOBAL_CTX) setTimeout(() => loadHiresPhoto(current.region), 0);
   refreshLayer();
 };
 labels();
