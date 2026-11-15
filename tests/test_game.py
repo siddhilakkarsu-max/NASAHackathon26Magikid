@@ -100,6 +100,27 @@ class GameTest(unittest.TestCase):
                      "science", "dust", "WIND", "Pa", "kit.html", "index.html", "HOUSTON"):
             self.assertIn(word.lower(), self.html.lower(), word)
 
+    def test_first_person_3d_with_2d_fallback(self):
+        """The 3D view is raw WebGL inside the same file, and the 2D renderer stays as the fallback."""
+        for word in ("function render3d(", "function g3Init(", "getContext('webgl'", "function h3(",
+                     "Q.get('view') === '2d'", "if (G3.on) { render3d(dt); return; }", "requestPointerLock"):
+            self.assertIn(word, self.script, word)
+        self.assertIn('<canvas id="gl"', self.html)
+        self.assertIn('<canvas id="cv"', self.html)
+        self.assertNotIn("THREE.", self.script)
+
+    def test_dialogue_is_light_by_default(self):
+        """Blocking Houston scenes are cut down unless ?story=1 asks for the full scripts."""
+        self.assertIn("get('story') === '1'", self.script)
+        self.assertIn("SCENE_RADIO = { storm: 1, arrival: 1, objective: 1, abandon: 1 }", self.script)
+        self.assertIn("if (STORY && !G.skip && !prefs.intro)", self.script)
+
+    def test_vehicle_driving_and_dismount(self):
+        """Vehicles steer and carry momentum, the crew can step off and mount again, and B always has a sample."""
+        for word in ("function dismount(", "function mount(", "function g3Parked(", "function g3Driving(",
+                     "DRIVE_ACCEL", "MOUNT_M", "k === snapK", "if (kl === 'v')"):
+            self.assertIn(word, self.script, word)
+
     def test_handoff_contract(self):
         self.assertIn(HANDOFF_KEY, self.html)
         self.assertIn(HANDOFF_KEY, self.launch)

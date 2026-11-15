@@ -1,5 +1,5 @@
 // Map-first layout, like a street map: the map fills the window; an icon rail on the left opens the planner's
-// panel as a slide-out drawer at the right section; round buttons on the map (zoom, 3D, north, whole planet);
+// panel as a slide-out drawer at the right section; round buttons on the map (zoom, north, whole planet);
 // one-tap layer chips under the search bar; and a chat assistant (POST /api/assistant) that asks what it needs and
 // drives the map. Loaded after index.html's main script and map_help.js; it only presses the planner's own controls.
 (() => {
@@ -20,13 +20,19 @@
     plus: '<path d="M12 5v14M5 12h14"/>', minus: '<path d="M5 12h14"/>',
     compass: '<path d="M12 3 15 12h-6z" fill="#e0703a" stroke="#e0703a"/><path d="M12 21 9 12h6z"/>',
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.4 2.6 14.6 0 17M12 3.5c-2.6 2.4-2.6 14.6 0 17"/>',
-    mountain: '<path d="m2.5 19 6.5-11 4 6.5 2.5-3.5 6 8z"/>',
     radiation: '<circle cx="12" cy="12" r="1.8"/><path d="M12 4a8 8 0 0 1 6.9 4l-4.3 2.5M5.1 8A8 8 0 0 1 12 4v5M8.6 19.4l2.5-4.4M15.4 19.4 12.9 15"/>',
     thermo: '<path d="M10 14.5V5a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0z"/>',
     wind: '<path d="M3 9h11a2.5 2.5 0 1 0-2.5-2.5M3 15h14a2.5 2.5 0 1 1-2.5 2.5M3 12h7"/>',
     gem: '<path d="M6 4h12l3 5-9 11L3 9z"/><path d="M3 9h18M9 4l3 16 3-16"/>',
     tracks: '<path d="M6 21c0-6 4-7 4-12S8 3 8 3M16 21c0-6-2-7-2-12s2-6 2-6"/>',
     photo: '<rect x="3" y="5" width="18" height="14" rx="2"/><circle cx="9" cy="10" r="1.8"/><path d="m21 16-5-5-8 8"/>',
+    rocket: '<path d="M14.5 4.5c2.6-1.3 5-1.2 5-1.2s.1 2.4-1.2 5l-5.6 5.6-3.6-3.6z"/><path d="m9.1 10.3-3.4-.4-2.2 2.2 3.8 1.2M13.7 14.9l.4 3.4-2.2 2.2-1.2-3.8"/><circle cx="15.4" cy="8.6" r="1.4"/><path d="M6.5 17.5 4 20M8.5 18.5l-1.5 1.5M5.5 15.5 4 17"/>',
+    gamepad: '<path d="M7 7h10a4.5 4.5 0 0 1 4.4 5.5l-.9 4a2.5 2.5 0 0 1-4.3 1.1L14.5 16h-5l-1.7 1.6a2.5 2.5 0 0 1-4.3-1.1l-.9-4A4.5 4.5 0 0 1 7 7z"/><path d="M8 10v3M6.5 11.5h3"/><circle cx="15.5" cy="10.8" r=".7"/><circle cx="17" cy="12.6" r=".7"/>',
+    foldmap: '<path d="M3.5 6.5 9 4l6 2.5L20.5 4v13.5L15 20l-6-2.5-5.5 2.5z"/><path d="M9 4v13.5M15 6.5V20"/>',
+    scan: '<path d="M4 8V5.5A1.5 1.5 0 0 1 5.5 4H8M16 4h2.5A1.5 1.5 0 0 1 20 5.5V8M20 16v2.5a1.5 1.5 0 0 1-1.5 1.5H16M8 20H5.5A1.5 1.5 0 0 1 4 18.5V16"/><circle cx="11" cy="11" r="3.2"/><path d="m13.4 13.4 3.1 3.1"/>',
+    book: '<path d="M12 6.5C10 5 6.5 4.5 3.5 5v13c3-.5 6.5 0 8.5 1.5 2-1.5 5.5-2 8.5-1.5V5c-3-.5-6.5 0-8.5 1.5z"/><path d="M12 6.5v13"/>',
+    pin2: '<path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z"/><circle cx="12" cy="10" r="3"/><circle cx="12" cy="10" r="1.2"/>',
+    key: '<circle cx="8" cy="15" r="3.5"/><path d="m10.5 12.5 8-8M16 7l2.5 2.5M14 9l2 2"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
   };
   document.body.classList.add("gm");
@@ -41,39 +47,28 @@
   rail.setAttribute("aria-label", "Planner tools");
   document.body.append(rail);
   let openSection = null;
-  // Each rail button shows only its own menu (plus the few controls that belong with it); "Menu" shows everything.
-  const MENU_PARTS = {
-    missionSetup: ["region", "areaStatus", "missionSetup", "mStatus"],
-    missionResults: ["mStatus", "missionResults"],
-    globalMaps: ["globalMaps", "mapKey"],
-    regionalMaps: ["region", "areaStatus", "regionalMaps", "mapKey"],
-    conditionsPanel: ["conditionsPanel"],
-    pointDetails: ["pointDetails"],
-  };
-  const topChild = (node) => { while (node && node.parentElement !== panel) node = node.parentElement; return node; };
-  function showOnly(sectionId) {
-    const keep = sectionId && MENU_PARTS[sectionId] ? new Set(MENU_PARTS[sectionId].map((id) => topChild($(id)))) : null;
-    for (const child of panel.children) child.classList.toggle("gm-off", !!keep && child !== closeX && !keep.has(child));
-    if (keep) panel.dataset.only = sectionId; else delete panel.dataset.only;
+  // Each rail button shows ONLY its own section (plus what that section needs, e.g. the region picker for Plan);
+  // Menu shows the whole panel.
+  const COMPANIONS = { missionSetup: ["panelPlace", "mStatus"], globalMaps: ["mapKey"], regionalMaps: ["mapKey"] };
+  function solo(sectionId) {
+    for (const n of panel.querySelectorAll(".soloKeep")) n.classList.remove("soloKeep");
+    if (!sectionId || sectionId === "all") { delete panel.dataset.solo; return; }
+    panel.dataset.solo = sectionId;
+    for (const id of [sectionId, ...(COMPANIONS[sectionId] || [])]) $(id)?.classList.add("soloKeep");
   }
-  // in a single menu its title doesn't fold it away (that would leave an empty drawer)
-  panel.addEventListener("click", (e) => {
-    const summary = e.target.closest("summary");
-    if (summary && panel.dataset.only && summary.parentElement.id === panel.dataset.only) e.preventDefault();
-  });
   function drawer(on, sectionId = null) {
     document.body.classList.toggle("drawer", on);
     openSection = on ? sectionId || "all" : null;
+    solo(on ? openSection : null);
     for (const b of rail.querySelectorAll("button[data-section]")) b.classList.toggle("on", on && b.dataset.section === openSection);
-    showOnly(on && sectionId !== "all" ? sectionId : null);
     if (on && sectionId && sectionId !== "all") {
       const sec = $(sectionId);
       if (sec) {
         sec.hidden = false;
         sec.open = true;
+        setTimeout(() => sec.scrollIntoView({ block: "start", behavior: "smooth" }), 230);
       }
-    }
-    if (on) panel.scrollTop = 0;
+    } else if (on) panel.scrollTop = 0;
     setTimeout(() => window.viewer?.scene.requestRender(), 250);
   }
   const railBtn = (icon, label, onclick, section) => {
@@ -92,12 +87,14 @@
   railBtn("grid", "Area data", toggle("regionalMaps"), "regionalMaps");
   railBtn("clock", "Time", toggle("conditionsPanel"), "conditionsPanel");
   railBtn("pin", "Point info", toggle("pointDetails"), "pointDetails");
+  railBtn("gamepad", "Game", toggle("gameSection"), "gameSection");
+  railBtn("book", "Sources", toggle("sourcesSection"), "sourcesSection");
   rail.append(el("div", { className: "grow" }));
   railBtn("help", "Help", () => window.openMapManual?.());
   const syncResults = () => {
     resultsBtn.disabled = $("missionResults").hidden;
-    // a plan started from the Plan menu: follow it to Results, where its progress and the AI's thinking appear
-    if (!$("missionResults").hidden && openSection === "missionSetup") drawer(true, "missionResults");
+    const game = rail.querySelector('button[data-section="gameSection"]');
+    if (game) game.disabled = !$("gameSection") || $("gameSection").hidden;
   };
   new MutationObserver(syncResults).observe($("missionResults"), { attributes: true, attributeFilter: ["hidden"] });
   syncResults();
@@ -107,6 +104,51 @@
     if (/Click the map/.test(info.textContent) || openSection === "pointDetails") return;
     if (!document.body.classList.contains("drawer")) drawer(true, "pointDetails");
   }).observe(info, { childList: true, subtree: true, characterData: true });
+
+  // ------------------------------------------------- panel design (team mock-up) ----
+  // Chamfered section cards with a line icon, thin spaced capitals and a V chevron; "MARSWALK PLANNER" between
+  // copper rules. The region picker and its buttons are grouped as #panelPlace; the sources button and its list
+  // become #sourcesSection so each can be shown alone from the rail.
+  const fonts = el("link", { rel: "stylesheet",
+    href: "https://fonts.googleapis.com/css2?family=Rajdhani:wght@400;500;600;700&display=swap" });
+  document.head.append(fonts);
+  const h1 = panel.querySelector("h1");
+  if (h1) h1.textContent = "Marswalk Planner";
+  (() => {
+    const start = $("helpOpen") || h1, end = $("missionSetup");
+    if (!start || !end || $("panelPlace")) return;
+    const group = el("div", { id: "panelPlace" });
+    let n = start.nextSibling;
+    const move = [];
+    while (n && n !== end) { move.push(n); n = n.nextSibling; }
+    end.before(group);
+    group.append(...move);
+  })();
+  (() => {
+    const b = $("sourcesButton"), list = $("sourcesPanel");
+    if (!b || !list || $("sourcesSection")) return;
+    const wrap = el("div", { id: "sourcesSection", className: "sourcesCard" });
+    b.before(wrap);
+    wrap.append(b, list);
+  })();
+  const SECTION_ICONS = { missionSetup: "rocket", manual: "route", missionResults: "list", gameSection: "gamepad",
+    conditionsPanel: "sun", globalMaps: "foldmap", regionalMaps: "pin2", mapKey: "key", pointDetails: "scan" };
+  function decorate() {
+    for (const [id, icon] of Object.entries(SECTION_ICONS)) {
+      const s = document.querySelector(`#${id} > summary`);
+      if (!s || s.querySelector(".secIcon")) continue;
+      const label = el("span", { className: "secLabel" });
+      label.append(...[...s.childNodes].filter(n => !(n.classList && n.classList.contains("secHelp"))));
+      s.prepend(el("span", { className: "secIcon" }, svg(ICON[icon])), label);
+    }
+    const sb = $("sourcesButton");
+    if (sb && !sb.querySelector(".secIcon")) {
+      const label = el("span", { className: "secLabel", textContent: sb.textContent.trim() });
+      sb.replaceChildren(el("span", { className: "secIcon" }, svg(ICON.book)), label);
+    }
+  }
+  decorate();
+  new MutationObserver(() => { decorate(); syncResults(); }).observe(panel, { childList: true });
 
   // ----------------------------------------------------------- map buttons ----
   const camera = () => viewer.camera;
@@ -118,31 +160,9 @@
     return b;
   };
   const height = () => camera().positionCartographic.height;
-  function viewCentre() {
-    const c = viewer.scene.canvas, p = new Cesium.Cartesian2(c.clientWidth / 2, c.clientHeight / 2);
-    return viewer.scene.globe.pick(camera().getPickRay(p), viewer.scene) || camera().pickEllipsoid(p, MARS);
-  }
-  function tilt(pitchDeg) {
-    const centre = viewCentre();
-    if (!centre) return;
-    const range = Cesium.Cartesian3.distance(camera().positionWC, centre);
-    camera().flyToBoundingSphere(new Cesium.BoundingSphere(centre, 0), {
-      offset: new Cesium.HeadingPitchRange(camera().heading, Cesium.Math.toRadians(pitchDeg), range),
-      duration: reduced() ? 0 : 1.2 });
-  }
-  const is3d = () => Cesium.Math.toDegrees(camera().pitch) > -75;
-  const b3d = btn("mountain", "3D view: tilt and show hills", () => set3d(!is3d()), "solo");
-  function set3d(on) {
-    terrainNeeds.manual3d = on;
-    syncTerrain();
-    tilt(on ? -35 : -90);
-    b3d.classList.toggle("on", on);
-  }
-  camera().moveEnd.addEventListener(() => b3d.classList.toggle("on", is3d()));
   ctl.append(
     btn("compass", "Point north", () => camera().flyTo({ destination: camera().positionWC.clone(),
       orientation: { heading: 0, pitch: camera().pitch, roll: 0 }, duration: reduced() ? 0 : 0.8 }), "solo"),
-    b3d,
     btn("globe", "Whole Mars", () => $("wholeMars").click(), "solo"),
     el("div", { className: "stack" },
       btn("plus", "Zoom in", () => camera().zoomIn(height() * 0.5)),
@@ -168,7 +188,6 @@
   const currentLayer = () => plannerLayout.globalChoice() || $("layer").value;
   const chipsBar = el("div", { id: "gmChips" });
   const CHIPS = [
-    ["mountain", "3D terrain", () => set3d(!is3d()), () => is3d()],
     ["radiation", "Radiation", "radiation_dose"], ["thermo", "Temperature", "global_temperature"],
     ["wind", "Wind", "wind_direction"], ["gem", "Minerals", "science"], ["sun", "Sunlight", "illumination"],
     ["photo", "Sharp photos", "map:ctx"],
@@ -225,18 +244,6 @@
   }
   const setInput = (id, v) => { const n = $(id); n.value = v; n.dispatchEvent(new Event("input", { bubbles: true }));
                                 n.dispatchEvent(new Event("change", { bubbles: true })); };
-  function routePoints() { return mission?.candidates?.[selected]?.route?.points; }
-  function showRoute3d() {
-    const pts = routePoints();
-    if (!pts?.length) return false;
-    terrainNeeds.route3d = true;
-    syncTerrain();
-    const sphere = Cesium.BoundingSphere.fromPoints(pts.map(p => Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS)));
-    camera().flyToBoundingSphere(sphere, { duration: reduced() ? 0 : 1.8,
-      offset: new Cesium.HeadingPitchRange(Cesium.Math.toRadians(25), Cesium.Math.toRadians(-28), Math.max(1500, sphere.radius * 3.2)) });
-    b3d.classList.add("on");
-    return true;
-  }
   async function act(a) {
     switch (a.type) {
       case "set_goal": $("goal").value = a.goal || ""; break;
@@ -252,8 +259,6 @@
         break;
       }
       case "plan_mission": $("runMission").click(); break;
-      case "show_route_3d": if (!showRoute3d()) set3d(true); break;
-      case "show_3d": set3d(true); break;
       case "walker_view": if (!$("walkerView").hidden) $("walkerView").click(); break;
       case "play_route": if (!$("playRoute").disabled) $("playRoute").click(); break;
       case "select_option": if (mission?.candidates?.[a.n - 1]) selectRoute(a.n - 1); break;
@@ -287,9 +292,9 @@
                    `${r.round_trip_h} h there and back.`];
     if (s.shelter_text) lines.push(`Storm shelter: ${s.shelter_text}.`);
     if (s.walkback_text) lines.push(`If the vehicle breaks: ${s.walkback_text}.`);
-    lines.push("Want to see it in 3D, or stand on the ground with Walker's view?");
+    lines.push("Want to play the route, or stand on the ground with Walker's view?");
     add("bot", lines.join("\n"));
-    setChips(["Show the route in 3D", "Walker's view", "Play route", "Try the afternoon"]);
+    setChips(["Walker's view", "Play route", "Show radiation", "Try the afternoon"]);
   }
 
   const chat = {
@@ -299,7 +304,7 @@
       if (on) {
         if (!log.children.length) {
           add("bot", "Hi! Tell me what you want to do on Mars, like \"find clay where water once flowed\", and I'll " +
-                     "plan a safe Marswalk. Ask me to fly somewhere, show radiation, or show your route in 3D.");
+                     "plan a safe Marswalk. Ask me to fly somewhere, show radiation, or play your route.");
           setChips(["Find clay where water once flowed", "Go to Gale crater", "Show radiation", "How to use this map"]);
         }
         replyIn.focus();

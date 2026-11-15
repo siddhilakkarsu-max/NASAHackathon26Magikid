@@ -11,7 +11,8 @@
   You ARE the astronaut executing the plan the Marswalk AI planner generated: follow A -> B, do the science, get back alive.
   ONLINE  (served by the app at /game.html): plans live missions, samples weather / pixels / imagery / rover tracks.
   OFFLINE (file:// or API unreachable): baked-in real missions + embedded Jezero weather tables + procedural terrain.
-  URL params: baked, cand, seed, autopilot, speed, skip, mute, difficulty, touch, src=planner, goal, vehicle, season, priority, green_only, region.
+  First-person 3D (WebGL, section 12b); view=2d gives the top-down renderer, story=1 the full Houston scripts.
+  URL params: baked, cand, seed, autopilot, speed, skip, mute, difficulty, touch, view, story, src=planner, goal, vehicle, season, priority, green_only, region.
 -->
 <style>
 :root{--bg:rgba(18,12,10,.88);--fg:#f3e7dd;--accent:#e0703a;--muted:#b9a79a;--line:#3d2f29;--ok:#8fd18f;--bad:#ff8a7a;--warn:#ffcc66;
@@ -22,6 +23,44 @@ html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#0b0705;col
 [hidden]{display:none!important}
 canvas{display:block}
 #cv{position:fixed;inset:0;width:100%;height:100%;touch-action:none}
+#gl{position:fixed;inset:0;width:100%;height:100%;touch-action:none;display:none}
+body.v3d #gl{display:block} body.v3d #cv{display:none}
+/* ---- helmet AR HUD (first-person view only) */
+#visor{position:fixed;inset:0;pointer-events:none;z-index:5;overflow:hidden}
+#rim{position:absolute;left:-10vw;right:-10vw;top:-12vh;bottom:-14vh;border-radius:50%;box-shadow:0 0 0 100vmax #0b0a0a,inset 0 0 0 7px #191817,inset 0 0 0 10px #55504a,inset 0 0 0 13px #1d1b1a,inset 0 0 90px 34px rgba(0,0,0,.72),inset 0 26px 60px -30px rgba(255,255,255,.10)}
+#rim::after{content:"";position:absolute;inset:0;border-radius:50%;background:linear-gradient(118deg,rgba(255,255,255,.055) 0%,rgba(255,255,255,0) 24%,rgba(255,255,255,0) 70%,rgba(255,255,255,.03) 100%)}
+#vfx{position:absolute;inset:0;--dust:0;--frost:0;background:radial-gradient(ellipse 70% 72% at 50% 48%,rgba(0,0,0,0) 52%,rgba(150,92,52,calc(var(--dust)*.55)) 100%),radial-gradient(ellipse 74% 76% at 50% 46%,rgba(0,0,0,0) 66%,rgba(205,228,255,calc(var(--frost)*.30)) 100%)}
+#vfx.hit{animation:vhit .45s ease-out}
+@keyframes vhit{0%{box-shadow:inset 0 0 0 100vmax rgba(255,40,20,.34)}100%{box-shadow:inset 0 0 0 100vmax rgba(255,40,20,0)}}
+#vfx.lowo2::after{content:"";position:absolute;inset:0;background:radial-gradient(ellipse 66% 68% at 50% 48%,rgba(0,0,0,0) 45%,rgba(255,30,20,.42) 100%);animation:vlow 1.5s ease-in-out infinite}
+@keyframes vlow{0%,100%{opacity:.25}50%{opacity:1}}
+#crack{position:absolute;inset:0;width:100%;height:100%;opacity:0;transition:opacity .6s}
+body.v3d #hud{--ar:#9fe8ff;color:#e4f8ff}
+body.v3d #hud .hb{background:linear-gradient(180deg,rgba(8,26,32,.34),rgba(8,26,32,.14));border:1px solid rgba(130,225,255,.30);border-radius:10px;box-shadow:inset 0 0 22px rgba(90,205,255,.07),0 0 14px rgba(90,205,255,.06);text-shadow:0 0 7px rgba(90,210,255,.38)}
+body.v3d #hudTL{left:6.5vw;top:11vh;width:232px;transform:perspective(900px) rotateY(13deg);transform-origin:left center}
+body.v3d #hudTR{right:6.5vw;top:11vh;transform:perspective(900px) rotateY(-13deg);transform-origin:right center}
+body.v3d #hudTC{top:4.5vh;display:flex;flex-direction:column;align-items:center;gap:5px;background:none!important;border:0!important;box-shadow:none!important;padding:0!important;pointer-events:none}
+body.v3d #hudTC #met{font-size:22px;color:#fff} body.v3d #hudTC #lst,body.v3d #hudTC #phase,body.v3d #hudTC #turn{background:rgba(8,26,32,.30);border-radius:999px;padding:1px 10px}
+body.v3d #cmp{position:static;transform:none;background:rgba(8,26,32,.42);border-color:rgba(130,225,255,.35);color:#e4f8ff}
+body.v3d #toast{position:static;transform:none;display:none;margin:0;background:rgba(8,26,32,.62);border-color:rgba(130,225,255,.4);max-width:44vw} body.v3d #toast.on{display:block}
+body.v3d #hudBtns{position:static;margin-top:6px;justify-content:flex-end} body.v3d #hudBtns button{background:rgba(8,26,32,.5);border-color:rgba(130,225,255,.3);color:#e4f8ff}
+body.v3d #comms{left:6.5vw;bottom:12vh;width:290px;max-width:30vw;transform:perspective(900px) rotateY(11deg);transform-origin:left center} body.v3d #log{max-height:30px} body.v3d #pip{min-height:54px}
+body.v3d #belt{bottom:5.5vh;max-width:min(560px,calc(100vw - 2 * 6.5vw - 2 * 310px));min-width:260px} body.v3d .slot{background:rgba(8,26,32,.5);border-color:rgba(130,225,255,.28);color:#e4f8ff}
+body.v3d #prompt{bottom:calc(5.5vh + 70px)} body.v3d #banner{top:auto;bottom:calc(5.5vh + 150px)} body.v3d #site{bottom:calc(5.5vh + 68px)} body.v3d #pinfo{right:6.5vw;bottom:12vh}
+body.v3d #hud.glitch .hb{animation:vglitch 1.1s steps(2) infinite}
+@keyframes vglitch{0%,100%{opacity:1}40%{opacity:.55;transform:translateX(1px)}55%{opacity:.9}}
+#coach{position:fixed;left:50%;bottom:calc(5.5vh + 108px);transform:translateX(-50%);z-index:21;max-width:min(620px,56vw);text-align:center;padding:7px 16px;border-radius:999px;background:rgba(8,26,32,.55);border:1px solid rgba(130,225,255,.4);color:#e4f8ff;font:600 13px/1.3 var(--sans);letter-spacing:.02em;pointer-events:none;text-shadow:0 0 8px rgba(90,210,255,.4)}
+#coach.warn{border-color:var(--warn);color:#ffe6ac} #coach.bad{border-color:var(--bad);color:#ffd0c8;background:rgba(60,10,6,.6);animation:vlow 1s ease-in-out infinite}
+@media (max-height:620px){body.v3d #hudTL{top:13vh} body.v3d #comms{bottom:14vh} body.v3d #log{display:none}}
+@media (max-width:1000px){body.v3d #comms{display:none} body.v3d #belt{max-width:calc(100vw - 14vw)}}
+body.v3d #read,body.v3d #wx,body.v3d #lst,body.v3d #turn{color:#d3eef6} body.v3d #comms{background:linear-gradient(180deg,rgba(8,26,32,.62),rgba(8,26,32,.42))} body.v3d #pip.quiet{opacity:.8} body.v3d #log{color:#b9dbe6}
+/* helmet AR HUD end */
+#wl{position:fixed;inset:0;pointer-events:none;z-index:6;overflow:hidden}
+.wl{position:absolute;left:0;top:0;font:600 11px/1 var(--mono);letter-spacing:.08em;color:#e4f8ff;padding:4px 8px;border-radius:999px;background:rgba(8,26,32,.5);border:1px solid rgba(130,225,255,.45);text-shadow:0 0 6px rgba(90,210,255,.5);white-space:nowrap;will-change:transform}
+#cmp{position:fixed;left:50%;top:104px;transform:translateX(-50%);z-index:20;display:flex;gap:9px;align-items:center;padding:5px 12px;border-radius:999px;background:var(--bg);border:1px solid var(--line);font:600 11px/1 var(--mono);letter-spacing:.06em;color:var(--fg);white-space:nowrap;pointer-events:none}
+#cmp.bad{border-color:var(--bad);color:var(--bad)}
+#cmpA{display:inline-block;color:var(--ok);font-size:15px;transition:transform .12s linear} #cmpA.off{color:var(--warn)}
+
 button{font:inherit;color:#fff;background:var(--accent);border:0;border-radius:6px;padding:7px 12px;cursor:pointer}
 button.secondary{background:#4a3a33}
 button:disabled{opacity:.5;cursor:progress}
@@ -231,7 +270,12 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
 </style>
 </head>
 <body>
+<canvas id="gl" aria-label="Mars surface, first-person view"></canvas>
 <canvas id="cv" aria-label="Mars surface view"></canvas>
+<div id="visor" hidden><div id="vfx"></div><svg id="crack" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true"><path d="M78 0 L74 9 L80 17 L71 26 L75 33 M74 9 L66 12 L61 8 M80 17 L88 21 L93 18 M71 26 L63 31 M12 100 L16 90 L10 82 L19 74 M16 90 L24 87" fill="none" stroke="rgba(255,255,255,.75)" stroke-width="0.25" vector-effect="non-scaling-stroke"/></svg><div id="rim"></div></div>
+<div id="wl" aria-hidden="true"></div>
+<div id="cmp" hidden><span id="cmpA">▲</span><span id="cmpT"></span></div>
+<div id="coach" hidden></div>
 
 <div id="hud" hidden>
   <div id="hudTL" class="hb">
@@ -317,7 +361,7 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
       </div>
     </div>
     <div class="foot">
-      <span><span class="kbd">WASD</span>/<span class="kbd">arrows</span> move · <span class="kbd">Shift</span> careful · <span class="kbd">E</span> interact · <span class="kbd">1</span>–<span class="kbd">0</span> tools · <span class="kbd">Tab</span> planner data · <span class="kbd">P</span> pause</span>
+      <span><span class="kbd">WASD</span> move · <span class="kbd">mouse</span>/<span class="kbd">←→</span> look · <span class="kbd">Shift</span> careful · <span class="kbd">E</span> interact · <span class="kbd">1</span>–<span class="kbd">0</span> tools · <span class="kbd">Tab</span> planner data · <span class="kbd">P</span> pause</span>
       <a href="index.html">Back to the Marswalk Planner</a>
       <button id="btnIntro" type="button" class="secondary">Replay intro</button>
     </div>
@@ -431,6 +475,8 @@ const CFG = {
   SPOT_MIN_SEP_M: 15, SPOT_PUSH_M: 26, SPOT_MAX_M: 900,        // [G] sampling-spot de-duplication; spots further than this from B are pulled in
   SHELTER_ZONE_M: 20,                // [G] storm shelter radius
   VIEW_MIN_M: 140, VIEW_MAX_M: 820,  // [G] zoom limits: metres of world across the screen
+  MOUNT_M: 7,                        // [G] mount the parked vehicle from this close
+  DRIVE_ACCEL: 1.9, DRIVE_COAST: 1.0, DRIVE_REVERSE: 0.45,   // [G] vehicle momentum (1/s) and reverse speed share
   // ---- time compression [G]
   REAL_BASE_S: 70, REAL_PER_H_S: 55, REAL_MIN_S: 80, REAL_MAX_S: 330,     // [G] real seconds of clean travel (both legs) = 70 + 55 * travel hours
   MAX_SCREEN_MPS: 45,                // [G] cap on world metres per real second (long vehicle routes get more real time)
@@ -940,10 +986,12 @@ function buildWorld(N, ci, diffKey, seed) {
   const Bx = sx[n - 1], By = sy[n - 1];
   W.spots = [];
   const smp = C.card.sampling.length ? C.card.sampling : [{ lat: C.B.lat, lon: C.B.lon, score: clamp(C.science, 0.3, 1), what: C.card.target[0] || 'target material' }];
+  let snapK = -1, snapD = 1e18;                    // [G] the planner's spots can all lie 100-600 m from B: the nearest one is worked at B
+  if (!W.synthetic) smp.forEach((s, k) => { const d = Math.hypot(toX(s.lon) - Bx, toY(s.lat) - By); if (d < snapD) { snapD = d; snapK = k; } });
   smp.forEach((s, k) => {
     let x = W.synthetic ? Bx : toX(s.lon), y = W.synthetic ? By : toY(s.lat);
     const dB = Math.hypot(x - Bx, y - By);
-    if (k === 0 && dB < 40) { x = Bx; y = By; }
+    if ((k === 0 && dB < 40) || k === snapK) { x = Bx; y = By; }
     else if (dB > CFG.SPOT_MAX_M) { x = Bx + (x - Bx) * CFG.SPOT_MAX_M / dB; y = By + (y - By) * CFG.SPOT_MAX_M / dB; }
     for (let g = 0; g < 6; g++) {
       let clash = -1;
@@ -1484,7 +1532,7 @@ function clockLump(R, minutes, instrumentW) {       // discrete site-work time: 
 }
 function shake(a) { if (!G.reduced) G.cam.shake = Math.max(G.cam.shake, a); }
 function damage(R, why) {                  // breach / wheel damage: needs the Repair kit
-  const W = R.W, veh = W.veh, onFoot = R.abandoned || !veh.bat;
+  const W = R.W, veh = W.veh, onFoot = afoot(R) || !veh.bat;
   let kind;
   if (onFoot) kind = 'leak'; else if (!veh.suited) kind = R.rng() < 0.5 ? 'hull' : 'wheel'; else kind = R.rng() < 0.5 ? 'leak' : 'wheel';
   if (kind === 'leak' && R.leak) kind = onFoot ? 'leak' : 'wheel';
@@ -1537,19 +1585,41 @@ function simStep() {
   deathChecks(R);
 }
 
+function afoot(R) { return R.abandoned || R.dis; }
+function vehHeading(R) { return G3.on ? G3.vyaw || 0 : Math.PI / 2 - R.hd; }      // compass bearing of the vehicle
+function canDismount(R) { const v = R.W.veh; return !!v.bat && v.suited && !R.abandoned && !R.dis; }
+function vehName(R) { return R.W.veh.key === 'two_wheel' ? 'bike' : 'rover'; }
+function dismount(R, quiet) {
+  if (!canDismount(R) || R.stuck || R.over) return false;
+  const h = vehHeading(R);
+  R.dis = true; R.parked = true; R.vehX = R.x; R.vehY = R.y; R.vehH = h; R.vx = 0; R.vy = 0;
+  R.x -= Math.cos(h) * 2.2; R.y += Math.sin(h) * 2.2; R.px = R.x; R.py = R.y;          // step off to the left
+  G.hudDirty = true; Snd.tick(); if (!quiet) suitSay('On foot. The ' + vehName(R) + ' is parked here: press V beside it to mount.', false);
+  return true;
+}
+function mount(R) {
+  if (!R.dis || R.site || R.over) return false;
+  const d = Math.hypot(R.x - R.vehX, R.y - R.vehY);
+  if (d > CFG.MOUNT_M) { suitSay('The ' + vehName(R) + ' is ' + Math.round(d) + ' m away: walk to it, then press V.', false); return false; }
+  R.dis = false; R.parked = false; R.x = R.px = R.vehX; R.y = R.py = R.vehY; R.vx = 0; R.vy = 0; R.hd = Math.PI / 2 - R.vehH;
+  if (G3.on) { G3.vyaw = R.vehH; G3.yaw = R.vehH; G3.pitch = -0.05; }
+  G.hudDirty = true; Snd.ok(); suitSay('Mounted the ' + vehName(R) + '.', false);
+  return true;
+}
 function moveTick(R, dt) {
-  const W = R.W, veh = R.abandoned ? VEH.on_foot : W.veh;
+  const W = R.W, veh = afoot(R) ? VEH.on_foot : W.veh;
   let mx = R.mvx, my = R.mvy; const ml = Math.hypot(mx, my);
   if (ml > 1) { mx /= ml; my /= ml; }
   const want = ml > 0.05 && !R.stuck && !R.site;
   let kmh = speedKmh(R.slope, R.firm, R.rough, veh) * W.kSpeed;
   if (R.careful) kmh *= CFG.CAREFUL_SPEED;
   kmh *= 1 - CFG.OFF_SPEED_LOSS * Math.min(1, R.offK);
-  if (R.wheel && !R.abandoned) kmh *= CFG.WHEEL_SPEED;
+  if (R.wheel && !afoot(R)) kmh *= CFG.WHEEL_SPEED;
   kmh *= 1 - CFG.STORM_SPEED_LOSS * R.stormK;
   if (R.red) kmh *= 0.4;
   const vW = kmh / 3.6 * W.TS / W.kDist;                   // world metres per real second
-  const k = Math.min(1, CFG.ACCEL * dt);
+  const drv = !!veh.bat && G3.on && !G.autopilot;         // driven by hand: momentum, and less grip on loose ground
+  const k = Math.min(1, (drv ? (want ? CFG.DRIVE_ACCEL : CFG.DRIVE_COAST) * (0.55 + 0.45 * R.firm) : CFG.ACCEL) * dt);
   R.vx += ((want ? mx * vW : 0) - R.vx) * k; R.vy += ((want ? my * vW : 0) - R.vy) * k;
   let nx = R.x + R.vx * dt, ny = R.y + R.vy * dt;
   if (want && R.stormK > 0.2 && !veh.bat) {              // storm wind shoves walkers sideways
@@ -1595,15 +1665,15 @@ function burnTick(R, dt, dtH) {
   if (R.hasO2) {
     let rate;
     if (R.abandoned) rate = R.moving ? CFG.O2_WALKBACK * (1 + CFG.O2_SLOPE_K * R.slope) * asym * off : CFG.O2_SITE;
-    else if (!veh.bat) rate = R.moving ? CFG.O2_WALK * (1 + CFG.O2_SLOPE_K * R.slope) * W.load * W.kO2 * asym * off : CFG.O2_SITE;
+    else if (!veh.bat || R.dis) rate = R.moving ? CFG.O2_WALK * (1 + CFG.O2_SLOPE_K * R.slope) * W.load * W.kO2 * asym * off : CFG.O2_SITE;
     else rate = CFG.O2_RIDE;
-    if (R.abandoned || !veh.bat) rate *= 1 + CFG.COLD_O2 * cold + 0.15 * sk;
+    if (afoot(R) || !veh.bat) rate *= 1 + CFG.COLD_O2 * cold + 0.15 * sk;
     if (R.stuck) rate *= 1.15;
     if (R.leak) rate += CFG.LEAK_KG_H;
     rate *= burn; R.o2Rate = rate; R.o2 -= rate * dtH;
   }
   if (R.hasBat && !R.abandoned) {
-    const lo = 1 - R.firm, km = R.step / 1000 * W.kDist;
+    const lo = 1 - R.firm, km = R.dis ? 0 : R.step / 1000 * W.kDist;      // parked: hotel load only
     const perKm = veh.whkm * (1 + CFG.WH_SLOPE_K * R.slope) * (1 + CFG.WH_SAND_K * veh.sand * lo * lo) * W.load * W.kWh * asym * off;
     const hotel = veh.hotel * (1 + CFG.COLD_HOTEL * cold + CFG.STORM_BURN_GAIN * sk);
     R.bat -= (km * perKm + hotel * dtH) * burn;
@@ -1612,7 +1682,7 @@ function burnTick(R, dt, dtH) {
   let drain = 0;
   if (R.leak || R.hull) drain += CFG.BREACH_DRAIN;
   if (sk > 0.3 && !R.sheltered) drain += CFG.STORM_ABRASION * sk * W.diff.hazard;
-  if (cold > 0 && (R.abandoned || !veh.bat)) drain += CFG.COLD_INTEG * cold;
+  if (cold > 0 && (afoot(R) || !veh.bat)) drain += CFG.COLD_INTEG * cold;
   if (R.red) drain += CFG.RED_DRAIN;
   if (drain) R.integ -= drain * dt;
 }
@@ -1661,7 +1731,7 @@ function gprPing(R) {
 function mash(R) {
   if (!R.stuck) return;
   R.stuckP += CFG.TRAP_FREE_PER_MASH;
-  if (R.hasBat && !R.abandoned) R.bat -= CFG.TRAP_MASH_WH; else if (R.hasO2) R.o2 -= CFG.TRAP_MASH_O2;
+  if (R.hasBat && !afoot(R)) R.bat -= CFG.TRAP_MASH_WH; else if (R.hasO2) R.o2 -= CFG.TRAP_MASH_O2;
   Snd.tick();
   if (R.stuckP >= 1) freeStuck(R, 'Free of the sand. That patch is marked on your map.');
 }
@@ -1759,7 +1829,7 @@ function eventsTick(R, dt) {
   // ---- vehicle battery
   if (R.hasBat && !R.abandoned && R.bat <= 0) {
     R.bat = 0;
-    if (W.veh.suited) { R.abandoned = true; R.abX = R.x; R.abY = R.y; R.wheel = false; R.vx = 0; R.vy = 0; suitSay('VEHICLE BATTERY DEAD: continue on foot. Walk-back burn 0.181 kg/h.', true); Snd.alarm(2); scene('abandon'); G.beltDirty = true; }
+    if (W.veh.suited) { R.abandoned = true; if (R.dis) { R.dis = false; } else { R.vehX = R.x; R.vehY = R.y; R.vehH = vehHeading(R); } R.parked = true; R.abX = R.vehX; R.abY = R.vehY; R.wheel = false; R.vx = 0; R.vy = 0; suitSay('VEHICLE BATTERY DEAD: continue on foot. Walk-back burn 0.181 kg/h.', true); Snd.alarm(2); scene('abandon'); G.beltDirty = true; }
   }
   // ---- back at A
   if (R.leftA && R.distA < CFG.A_ZONE_M && R.samples.length > 0 && !R.site) win(R, 'success');
@@ -1894,12 +1964,14 @@ function interact(R) {                        // E / Space / ACT
   if (R.stuck) { mash(R); return; }
   const k = nearSpot(R);
   if (k >= 0) { siteOpen(R, k); return; }
+  if (R.dis && Math.hypot(R.x - R.vehX, R.y - R.vehY) <= CFG.MOUNT_M) { mount(R); return; }
   if (R.leftA && R.distA < CFG.A_ZONE_M && R.samples.length === 0) { win(R, 'abort'); return; }
 }
 function headHome(R) { if (R && !R.over && !R.site && R.phase !== 'return' && R.leftA) setPhase(R, 'return'); }
 
 // ---- site work: one short skill mini-game per tool, all driven by sim ticks (so autopilot + speed multipliers work)
 function siteOpen(R, k) {
+  if (!G.autopilot && canDismount(R)) dismount(R, true);      // sampling is done on foot
   const W = R.W, steps = [], T = (id) => hasCharge(R, id);
   if (T('spec')) steps.push({ tool: 'spec', mode: 'hold', label: 'Spectrometer scan', min: 4, pow: true, how: 'Hold while the needle is in the band.' });
   if (T('drill')) steps.push({ tool: 'drill', mode: 'sweep', hits: 3, label: 'Drill core', min: 10, pow: true, extract: true, how: 'Press in the band, three times.' });
@@ -2297,9 +2369,19 @@ function call(key, arg) {
   const m = CALLS[key](R, arg); if (!m) return;
   radio(m[0], m[1], !!m[2], !!m[3]);
 }
+const STORY = new URLSearchParams(location.search).get('story') === '1';
+const SCENE_SKIP = { briefing: 1, loadout: 1 }, SCENE_RADIO = { storm: 1, arrival: 1, objective: 1, abandon: 1 }, SCENE_MAX = { intro: 3, landing: 1 };
 function scene(key, arg, onDone) {
   const R = G.R, f = SCENES[key];
-  const lines = f ? f(R, arg) : null;
+  let lines = f ? f(R, arg) : null;
+  if (!STORY && lines && lines.length) {
+    if (SCENE_SKIP[key]) lines = null;
+    else if (SCENE_RADIO[key] && R && !R.over) { radio(lines[0].who === 'NARR' ? 'CAPCOM' : lines[0].who, lines[0].text.split('. ').slice(0, 2).join('. ').replace(/\.?$/, '.'), false, true); lines = null; }
+    else if (key === 'landing') lines = [{ who: 'CAPCOM', text: 'EVA-1, Houston. Follow the line to B, ' + fx(R.W.C.route.distance_km, 2) + ' km. Turn back by T+' + fmtHM(R.W.turn.h) + '. Good luck.' }];
+    else if (key === 'intro') lines = [lines[0], lines[1], lines[4]];
+    else if (lines.length > 2) lines = [lines[0], lines[lines.length - 1]];
+  }
+  if (!lines || !lines.length) { if (onDone) onDone(); return; }
   playCut(lines, { onDone: onDone, delayMin: R ? R.W.ev.delayMin : 0, garble: !!(R && !R.comms && !R.over), title: SCENE_TITLE[key] || '', solid: !R });
 }
 function radioTick(dt) {
@@ -2527,6 +2609,7 @@ function resize() {
   const w = Math.max(1, Math.floor(W_.innerWidth * V.dpr)), hh = Math.max(1, Math.floor(W_.innerHeight * V.dpr));
   if (cv.width !== w || cv.height !== hh) { cv.width = w; cv.height = hh; }
   V.w = w; V.h = hh; G.miniDirty = true; G.hudDirty = true;
+  g3Resize();
 }
 function spriteInit() {
   const mkS = (stops) => { const c = D.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d'), g = x.createRadialGradient(128, 128, 0, 128, 128, 128);
@@ -2640,6 +2723,7 @@ function marker(sx, sy, col, label, r, sub) {
     cx.fillStyle = 'rgba(18,12,10,0.82)'; cx.fillRect(sx - tw / 2, sy + r + 4 * V.dpr, tw, 15 * V.dpr); cx.fillStyle = '#f3e7dd'; cx.fillText(sub, sx, sy + r + 12 * V.dpr); }
 }
 function render(dt) {
+  if (G3.on) { render3d(dt); return; }
   const play = G.screen === 'play' || G.screen === 'end', W = play ? G.W : G.attract, R = play ? G.R : null, cam = G.cam;
   V.time += dt;
   cx.setTransform(1, 0, 0, 1, 0, 0); cx.globalAlpha = 1; cx.globalCompositeOperation = 'source-over';
@@ -2816,11 +2900,11 @@ function render(dt) {
   if (R) {
     for (let q = 0; q < R.relays.length; q++) { const rl = R.relays[q], sx = SX(rl.x), sy = SY(rl.y); cx.strokeStyle = '#8fd1ff'; cx.lineWidth = 2 * d; cx.beginPath(); cx.moveTo(sx, sy + 8 * d); cx.lineTo(sx, sy - 8 * d); cx.moveTo(sx - 5 * d, sy + 8 * d); cx.lineTo(sx + 5 * d, sy + 8 * d); cx.stroke(); cx.beginPath(); cx.arc(sx, sy - 8 * d, 5 * d + 3 * d * (0.5 + 0.5 * Math.sin(V.time * 2)), -2.2, -0.9); cx.stroke(); }
     // ---- 5. player (or abandoned vehicle + walker)
-    const sizeM = (R.abandoned ? VEH.on_foot : W.veh).size, u = Math.max(sizeM * k, 30 * d) / 100;
-    if (R.abandoned) { const vu = Math.max(W.veh.size * k, 30 * d) / 100; cx.setTransform(vu, 0, 0, vu, SX(R.abX), SY(R.abY)); cx.globalAlpha = 0.75; drawVehicle(W.veh.key, vu, 0, false, false); cx.globalAlpha = 1; }
-    const bobS = (R.moving && !G.reduced && (R.abandoned || !W.veh.bat)) ? 1 + 0.035 * Math.sin(V.time * 18) : 1, ca = Math.cos(-R.hd) * u * bobS, sa = Math.sin(-R.hd) * u * bobS;
+    const sizeM = (afoot(R) ? VEH.on_foot : W.veh).size, u = Math.max(sizeM * k, 30 * d) / 100;
+    if (R.parked) { R.abX = R.vehX; R.abY = R.vehY; const vu = Math.max(W.veh.size * k, 30 * d) / 100; cx.setTransform(vu, 0, 0, vu, SX(R.abX), SY(R.abY)); cx.globalAlpha = 0.75; drawVehicle(W.veh.key, vu, 0, false, false); cx.globalAlpha = 1; }
+    const bobS = (R.moving && !G.reduced && (afoot(R) || !W.veh.bat)) ? 1 + 0.035 * Math.sin(V.time * 18) : 1, ca = Math.cos(-R.hd) * u * bobS, sa = Math.sin(-R.hd) * u * bobS;
     cx.setTransform(ca, sa, -sa, ca, SX(px), SY(py));
-    drawVehicle(R.abandoned ? 'on_foot' : W.veh.key, u, V.time, R.moving, !!R.stuck);
+    drawVehicle(afoot(R) ? 'on_foot' : W.veh.key, u, V.time, R.moving, !!R.stuck);
     cx.setTransform(1, 0, 0, 1, 0, 0);
     if (R.leak || R.hull || R.wheel) { cx.fillStyle = Math.sin(V.time * 5) > 0 ? '#ff3b30' : 'rgba(255,59,48,0.25)'; cx.beginPath(); cx.arc(SX(px) + 16 * d, SY(py) - 16 * d, 4 * d, 0, 6.2832); cx.fill(); }
     if (R.stuck) { cx.fillStyle = 'rgba(18,12,10,0.8)'; cx.fillRect(SX(px) - 30 * d, SY(py) - 34 * d, 60 * d, 7 * d); cx.fillStyle = '#ffcc00'; cx.fillRect(SX(px) - 29 * d, SY(py) - 33 * d, 58 * d * clamp(R.stuckP, 0, 1), 5 * d); }
@@ -2843,6 +2927,601 @@ function render(dt) {
 }
 const ATTRACT_ENV = { hour: 11, elev: 70, az: 120, wind: 5, to: 300, tauVis: 0.3, tau: 0.1 };
 const LAYENV = { elev: 60, az: 180, dT: 0, key: '' };
+
+// =====================================================================================================================
+// 12b. render3d — first-person WebGL view of the same world. No libraries. The simulation is unchanged: the camera
+//      stands at the player's (x, y) on a height field derived from the game's own slope / firmness fields.
+//      World axes: X = east, Y = up, Z = -north. Yaw is a compass bearing (0 = north, clockwise).
+//      Falls back to the 2D renderer when WebGL is missing or ?view=2d.
+// =====================================================================================================================
+const G3 = { on: false, gl: null, yaw: 0, pitch: -0.06, roll: 0, eye: 1.7, eyeY: 0, bob: 0, lastX: 0, lastY: 0, fov: 70, W: null, layerKey: '', hint: 0,
+  lv: [], prog: {}, buf: {}, tex: {}, vp: new Float32Array(16), view: new Float32Array(16), proj: new Float32Array(16), cam: [0, 0, 0], f: [0, 0, -1], r: [1, 0, 0], u: [0, 1, 0],
+  rockKey: '', rockN: 0, objN: 0, ribN: 0, fxN: 0, cockN: {}, cockO: {}, labels: [], locked: false, drag: null, w: 1, h: 1, time: 0 };
+const G3C = { N: 96, CELLS: [2.5, 10, 40, 160], DROP: [0, 0.25, 0.9, 3.2], FAR: 9000, NEAR: 0.25, DPR: 1.5, ROCK_CELL: 16, ROCK_R: 6, PARTS: 700,
+  EYE: { on_foot: 1.7, two_wheel: 1.45, four_wheel: 1.65, buggy: 2.25 } };          // [G] presentation values
+
+function h3(W, x, y) {                      // terrain height (m). Calls fieldAt: never call from inside the simulation step.
+  fieldAt(W, x, y);
+  const sd = W.seed, w = F.w, rug = Math.min(1.35, F.slope / W.vmax);
+  let h = (fbm2(x / 1100 + 3.1, y / 1100 - 1.7, sd + 201) - 0.5) * 70;                    // regional swell: the corridor rides it
+  h += (fbm2(x / 150 - 9.2, y / 150 + 4.4, sd + 211) - 0.5) * 12 * (0.12 + 0.88 * w);      // hills, flattened along the corridor
+  h += Math.abs(fbm2(x / 70 + 1.3, y / 70 - 6.6, sd + 223) - 0.5) * 2 * rug * rug * 20 * w;   // crags where the game's slope field is steep (off-limits)
+  h += (vnoise(x / 9, y / 9, sd + 229) - 0.5) * 0.7 * (0.25 + 0.75 * w);
+  h += (1 - F.firm) * w * 2.4 * (0.5 + 0.5 * Math.sin((x * 0.55 - y * 0.83) / 9 + 4 * vnoise(x / 120, y / 120, sd + 241)));      // dunes on loose ground off the corridor
+  if (w > 0.02) {                                                                         // impact craters, one candidate per 220 m cell, never on the corridor
+    const ci = Math.floor(x / 220), cj = Math.floor(y / 220); let hh = (Math.imul(ci, 374761393) + Math.imul(cj, 668265263) + Math.imul(sd, 1274126177)) | 0;
+    hh = Math.imul(hh ^ (hh >>> 13), 1274126177); hh = (hh ^ (hh >>> 16)) >>> 0;
+    if ((hh & 255) < 105) { const cr = 14 + ((hh >>> 8) & 255) / 255 * 46, cx0 = (ci + 0.3 + ((hh >>> 16) & 255) / 255 * 0.4) * 220, cy0 = (cj + 0.3 + ((hh >>> 24) & 255) / 255 * 0.4) * 220, t = Math.hypot(x - cx0, y - cy0) / cr;
+      if (t < 1.7) { const bowl = t < 1 ? -(1 - t * t) * (1 - t * t) : 0, rim = Math.exp(-((t - 1) / 0.2) * ((t - 1) / 0.2)); h += cr * (0.2 * bowl + 0.07 * rim) * w; } }
+  }
+  h += (1 - F.firm) * 0.16 * Math.sin((x * 0.8 + y * 0.6) / 1.6 + 5 * vnoise(x / 34, y / 34, sd + 233));   // ripples on loose ground
+  return h;
+}
+
+// ---- tiny matrix helpers (column-major)
+function m4persp(o, fovy, asp, n, f) { const t = 1 / Math.tan(fovy / 2); o.fill(0); o[0] = t / asp; o[5] = t; o[10] = (f + n) / (n - f); o[11] = -1; o[14] = 2 * f * n / (n - f); }
+function m4mul(o, a, b) { for (let c = 0; c < 4; c++) for (let r = 0; r < 4; r++) o[c * 4 + r] = a[r] * b[c * 4] + a[4 + r] * b[c * 4 + 1] + a[8 + r] * b[c * 4 + 2] + a[12 + r] * b[c * 4 + 3]; }
+
+const G3S = {
+  skyV: 'attribute vec2 a_p;varying vec2 v_p;void main(){v_p=a_p;gl_Position=vec4(a_p,0.9999,1.0);}',
+  common: 'precision highp float;uniform vec3 u_sun;uniform vec3 u_cam;uniform vec4 u_env;uniform float u_time;' +        // u_env: day(0..1), storm, tau, night
+    'vec3 skyCol(vec3 d){float day=u_env.x,st=u_env.y;float h=clamp(d.y,-0.2,1.0);' +
+    'vec3 hor=mix(vec3(0.05,0.045,0.06),vec3(0.86,0.66,0.47),day);vec3 zen=mix(vec3(0.008,0.009,0.02),vec3(0.50,0.36,0.27),day);' +
+    'vec3 c=mix(hor,zen,pow(max(h,0.0),0.45));float sd=max(dot(d,u_sun),0.0);float low=1.0-smoothstep(0.0,0.45,u_sun.y);' +
+    'c+=vec3(0.30,0.46,0.70)*pow(sd,6.0)*low*day*0.9;c+=vec3(1.0,0.86,0.66)*pow(sd,48.0)*0.40*day;c+=vec3(1.0,0.93,0.80)*pow(sd,420.0)*0.9*day;' +
+    'c=mix(c,vec3(0.40,0.25,0.15)*(0.35+0.65*day),clamp(st*0.92+u_env.z*0.06,0.0,0.95));return c;}' +
+    'vec3 fogged(vec3 col,vec3 P){vec3 dv=P-u_cam;float d=length(dv);float dens=0.00030+0.00040*u_env.z+0.03*u_env.y*u_env.y;' +
+    'float f=1.0-exp(-pow(d*dens,1.35));vec3 fc=skyCol(normalize(vec3(dv.x,max(dv.y,0.0)*0.25+0.02*d,dv.z)));return mix(col,fc,clamp(f,0.0,1.0));}',
+  skyF: 'varying vec2 v_p;uniform vec3 u_f;uniform vec3 u_r;uniform vec3 u_u;' +
+    'float hash(vec2 p){return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453);}' +
+    'void main(){vec3 d=normalize(u_f+u_r*v_p.x+u_u*v_p.y);vec3 c=skyCol(d);float sd=max(dot(d,u_sun),0.0);' +
+    'c+=vec3(1.0,0.95,0.86)*smoothstep(0.99975,0.99992,sd)*u_env.x*(1.0-u_env.y);' +
+    'float night=u_env.w*(1.0-u_env.y);if(night>0.01&&d.y>0.0){vec2 g=floor(d.xz/(d.y+0.35)*90.0);float s=hash(g);c+=vec3(0.9,0.92,1.0)*step(0.992,s)*night*(0.5+0.5*sin(u_time*2.0+s*90.0));}' +
+    'gl_FragColor=vec4(c,1.0);}',
+  terV: 'attribute vec3 a_pos;attribute vec3 a_nrm;attribute vec4 a_mat;uniform mat4 u_vp;uniform float u_drop;varying vec3 v_pos;varying vec3 v_n;varying vec4 v_mat;' +
+    'void main(){v_pos=a_pos;v_n=a_nrm;v_mat=a_mat;gl_Position=u_vp*vec4(a_pos.x,a_pos.y-u_drop,a_pos.z,1.0);}',
+  terF: 'varying vec3 v_pos;varying vec3 v_n;varying vec4 v_mat;uniform sampler2D u_noise;uniform sampler2D u_lut;uniform vec3 u_opt;uniform vec3 u_fwd;' +      // u_opt: red overlay, layer on, headlamp
+    'void main(){vec3 P=v_pos;float d=length(P-u_cam);float near=1.0-smoothstep(25.0,110.0,d);' +
+    'vec4 na=texture2D(u_noise,P.xz*0.071);vec4 nb=texture2D(u_noise,P.xz*0.83);vec4 nc=texture2D(u_noise,P.xz*0.0093);' +
+    'vec3 N=normalize(v_n);float e=0.012;float bx=texture2D(u_noise,P.xz*0.83+vec2(e,0.0)).r-nb.r;float bz=texture2D(u_noise,P.xz*0.83+vec2(0.0,e)).r-nb.r;' +
+    'N=normalize(N+vec3(-bx,0.0,-bz)*2.6*near+vec3(na.g-0.5,0.0,na.b-0.5)*0.22);' +
+    'float firm=v_mat.y;vec3 sand=vec3(0.70,0.47,0.31),dust=vec3(0.58,0.34,0.22),rock=vec3(0.30,0.19,0.15);' +
+    'vec3 alb=mix(sand,dust,smoothstep(0.12,0.5,firm+(nc.r-0.5)*0.3));alb=mix(alb,rock,smoothstep(0.58,0.9,firm+(nc.g-0.5)*0.5));' +
+    'alb*=0.70+0.60*na.r;alb*=1.0-0.30*near*(nb.g-0.4);alb*=1.0-0.45*near*smoothstep(0.66,0.72,nb.b)*smoothstep(0.5,0.62,na.a);alb*=0.82+0.36*nc.b;float steep=1.0-normalize(v_n).y;alb=mix(alb,rock*0.78,smoothstep(0.05,0.22,steep));' +
+    'alb=mix(alb,alb*1.10+vec3(0.025,0.02,0.012),(1.0-v_mat.x)*0.5);' +
+    'float day=u_env.x;float ndl=max(dot(N,u_sun),0.0);float dim=exp(-1.6*u_env.y)*day;' +
+    'vec3 lit=alb*(vec3(1.18,1.0,0.82)*ndl*dim*smoothstep(-0.02,0.12,u_sun.y)+mix(vec3(0.035,0.04,0.065),vec3(0.36,0.28,0.24),day)*(0.42+0.58*N.y));lit*=0.90+0.22*smoothstep(0.0,0.5,ndl);' +
+    'if(u_opt.z>0.0){vec3 vd=normalize(P-u_cam);float sp=pow(max(dot(vd,u_fwd),0.0),14.0);lit+=alb*vec3(1.0,0.96,0.85)*sp*u_opt.z*9.0/(1.0+d*d*0.012);}' +
+    'if(u_opt.y>0.5){vec3 lc=texture2D(u_lut,vec2(clamp(v_mat.w,0.004,0.996),0.5)).rgb;lit=mix(lit,lc*(0.45+0.55*(0.4+0.6*ndl)),0.72*(1.0-smoothstep(500.0,1600.0,d)));}' +
+    'if(u_opt.x>0.0&&v_mat.z>0.35){float st=step(0.5,fract((P.x+P.z)*0.16+u_time*0.25));float k=smoothstep(0.35,0.6,v_mat.z)*(1.0-smoothstep(260.0,700.0,d))*u_opt.x;' +
+    'lit=mix(lit,vec3(0.95,0.16,0.10)*(0.55+0.45*day),k*(0.22+0.26*st));}' +
+    'gl_FragColor=vec4(fogged(lit,P),1.0);}',
+  objV: 'attribute vec3 a_pos;attribute vec3 a_nrm;attribute vec3 a_col;uniform mat4 u_vp;varying vec3 v_pos;varying vec3 v_n;varying vec3 v_c;' +
+    'void main(){v_pos=a_pos;v_n=a_nrm;v_c=a_col;gl_Position=u_vp*vec4(a_pos,1.0);}',
+  objF: 'varying vec3 v_pos;varying vec3 v_n;varying vec3 v_c;uniform vec3 u_opt;uniform vec3 u_fwd;' +      // u_opt.x: 1 = view-space cockpit (no fog)
+    'void main(){vec3 N=normalize(v_n);float day=u_env.x;vec3 L=u_opt.x>0.5?normalize(vec3(0.3,0.8,0.5)):u_sun;float ndl=max(dot(N,L),0.0);float dim=exp(-1.6*u_env.y)*day;' +
+    'vec3 lit=v_c*(vec3(1.15,1.0,0.84)*ndl*dim+mix(vec3(0.05,0.055,0.08),vec3(0.40,0.33,0.28),day)*(0.6+0.4*N.y));' +
+    'if(u_opt.x>0.5){lit+=v_c*0.10*u_opt.z;gl_FragColor=vec4(lit,1.0);}else{float d=length(v_pos-u_cam);' +
+    'if(u_opt.z>0.0){vec3 vd=normalize(v_pos-u_cam);lit+=v_c*vec3(1.0,0.96,0.85)*pow(max(dot(vd,u_fwd),0.0),14.0)*u_opt.z*9.0/(1.0+d*d*0.012);}gl_FragColor=vec4(fogged(lit,v_pos),1.0);}}',
+  ribV: 'attribute vec3 a_pos;attribute vec4 a_dat;uniform mat4 u_vp;varying vec3 v_pos;varying vec4 v_d;void main(){v_pos=a_pos;v_d=a_dat;gl_Position=u_vp*vec4(a_pos,1.0);gl_Position.z-=0.0012*gl_Position.w;}',
+  ribF: 'varying vec3 v_pos;varying vec4 v_d;uniform float u_dir;uniform float u_vis;' +                       // v_d: s, side, colour index, kind
+    'void main(){float d=length(v_pos-u_cam);float s=v_d.x,side=v_d.y,kind=v_d.w;vec3 c=v_d.z<0.5?vec3(0.30,0.92,0.42):v_d.z<1.5?vec3(1.0,0.80,0.05):v_d.z<2.5?vec3(1.0,0.26,0.18):v_d.z<3.5?vec3(0.75,0.85,1.0):vec3(0.62,0.62,0.62);' +
+    'float a;if(kind<0.5){float ch=fract(s*u_dir/6.0-u_time*0.5+abs(side)*0.5);float arrow=smoothstep(0.0,0.05,ch)*(1.0-smoothstep(0.17,0.23,ch));' +
+    'float edge=smoothstep(0.74,0.95,abs(side));a=min(1.0,arrow*0.9+edge*0.85+0.05);c=c*1.15+vec3(0.35)*arrow;a*=mix(1.0,0.6,smoothstep(80.0,400.0,d));}' +
+    'else if(kind<1.5){a=step(0.5,fract(s/5.0))*0.34*(1.0-smoothstep(90.0,260.0,d));}else if(kind<2.5){a=step(0.45,fract(s/2.4-u_time*0.3))*0.7;}else if(kind<3.5){a=0.42*(1.0-smoothstep(300.0,900.0,d));}else{a=(1.0-abs(side))*0.38*smoothstep(50.0,240.0,d)*(1.0-smoothstep(1500.0,4000.0,d));}' +
+    'a*=u_vis;vec3 col=fogged(c*1.15,v_pos);gl_FragColor=vec4(col,a*(1.0-0.75*u_env.y));}',
+  fxV: 'attribute vec3 a_base;attribute vec2 a_uv;attribute vec4 a_col;attribute vec2 a_size;uniform mat4 u_vp;uniform vec3 u_camR;varying vec2 v_uv;varying vec4 v_c;varying float v_d;' +
+    'void main(){vec3 p=a_base;if(a_col.a<0.5){p+=u_camR*a_uv.x*a_size.x;p.y+=a_uv.y*a_size.y;}else{p.x+=a_uv.x*a_size.x;p.z+=a_uv.y*a_size.x;p.y+=0.18;}v_uv=a_uv;v_c=a_col;gl_Position=u_vp*vec4(p,1.0);gl_Position.z-=0.0016*gl_Position.w;v_d=gl_Position.w;}',
+  fxF: 'precision highp float;varying vec2 v_uv;varying vec4 v_c;varying float v_d;uniform float u_time;uniform float u_storm;' +
+    'void main(){float a;if(v_c.a<0.5){float x=1.0-abs(v_uv.x);a=x*x*pow(1.0-v_uv.y,1.6)*(0.55+0.12*sin(u_time*2.4+v_uv.y*9.0))+pow(x,10.0)*(1.0-v_uv.y)*0.5;a*=smoothstep(1.5,9.0,v_d);}' +
+    'else{float r=length(v_uv);a=(smoothstep(0.80,0.90,r)*(1.0-smoothstep(0.94,1.0,r))+0.10*(1.0-smoothstep(0.0,1.0,r)))*(0.75+0.25*sin(u_time*3.0-r*6.0));}' +
+    'gl_FragColor=vec4(v_c.rgb*a*(1.0-0.7*u_storm),1.0);}',
+  ptV: 'attribute vec4 a_seed;uniform mat4 u_vp;uniform vec3 u_cam;uniform vec3 u_off;uniform vec4 u_p;varying float v_a;' +      // u_p: box, size, visible fraction, alpha
+    'void main(){vec3 q=fract(a_seed.xyz+u_off/u_p.x)-0.5;vec3 p=u_cam+q*vec3(u_p.x,u_p.x*0.45,u_p.x);gl_Position=u_vp*vec4(p,1.0);' +
+    'float keep=step(a_seed.w,u_p.z);gl_PointSize=keep*u_p.y*(0.5+a_seed.w)*60.0/max(gl_Position.w,0.6);v_a=keep*u_p.w*(1.0-smoothstep(0.38,0.5,max(abs(q.x),abs(q.z))));}',
+  ptF: 'precision mediump float;varying float v_a;uniform vec3 u_col;void main(){vec2 c=gl_PointCoord-0.5;float a=(1.0-smoothstep(0.05,0.5,length(c)))*v_a;gl_FragColor=vec4(u_col*a,a);}'
+};
+
+function g3Program(gl, vs, fs) {
+  const mk = (t, s) => { const o = gl.createShader(t); gl.shaderSource(o, s); gl.compileShader(o); if (!gl.getShaderParameter(o, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(o) || 'shader'); return o; };
+  const p = gl.createProgram(); gl.attachShader(p, mk(gl.VERTEX_SHADER, vs)); gl.attachShader(p, mk(gl.FRAGMENT_SHADER, fs)); gl.linkProgram(p);
+  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(p) || 'link');
+  const o = { p: p, u: {}, a: {} };
+  for (let i = 0, n = gl.getProgramParameter(p, gl.ACTIVE_UNIFORMS); i < n; i++) { const nm = gl.getActiveUniform(p, i).name; o.u[nm] = gl.getUniformLocation(p, nm); }
+  for (let i = 0, n = gl.getProgramParameter(p, gl.ACTIVE_ATTRIBUTES); i < n; i++) { const nm = gl.getActiveAttrib(p, i).name; o.a[nm] = gl.getAttribLocation(p, nm); }
+  return o;
+}
+
+const ICO = (() => { const t = (1 + Math.sqrt(5)) / 2, v = [[-1, t, 0], [1, t, 0], [-1, -t, 0], [1, -t, 0], [0, -1, t], [0, 1, t], [0, -1, -t], [0, 1, -t], [t, 0, -1], [t, 0, 1], [-t, 0, -1], [-t, 0, 1]].map((p) => { const l = Math.hypot(p[0], p[1], p[2]); return [p[0] / l, p[1] / l, p[2] / l]; });
+  return { v: v, f: [[0, 11, 5], [0, 5, 1], [0, 1, 7], [0, 7, 10], [0, 10, 11], [1, 5, 9], [5, 11, 4], [11, 10, 2], [10, 7, 6], [7, 1, 8], [3, 9, 4], [3, 4, 2], [3, 2, 6], [3, 6, 8], [3, 8, 9], [4, 9, 5], [2, 4, 11], [6, 2, 10], [8, 6, 7], [9, 8, 1]] }; })();
+const ICOV = new Float32Array(36);
+function mbRock(x, y, z, sx, sy, sz, rnd, col) {         // jittered icosahedron, flat-shaded, slightly sunk
+  const yaw = rnd() * 6.28, c = Math.cos(yaw), s = Math.sin(yaw); MB.c = [x, y, z];
+  for (let k = 0; k < 12; k++) { const p = ICO.v[k], j = 0.72 + 0.5 * rnd(), lx = p[0] * sx * j, lz = p[2] * sz * j; ICOV[k * 3] = x + lx * c + lz * s; ICOV[k * 3 + 1] = y + p[1] * sy * j * (p[1] < 0 ? 0.5 : 1); ICOV[k * 3 + 2] = z - lx * s + lz * c; }
+  for (let q = 0; q < 20; q++) { const f = ICO.f[q], a = f[0] * 3, b = f[1] * 3, d = f[2] * 3, k = 0.8 + 0.4 * rnd(); mbTri(ICOV[a], ICOV[a + 1], ICOV[a + 2], ICOV[b], ICOV[b + 1], ICOV[b + 2], ICOV[d], ICOV[d + 1], ICOV[d + 2], [col[0] * k, col[1] * k, col[2] * k]); }
+  MB.c = null;
+}
+// ---- model builder: flat-shaded boxes / cylinders / rocks into [pos3, nrm3, col3]
+const MB = { a: new Float32Array(9 * 96000), n: 0, c: null };          // c: centre of the current primitive (normals face away from it)
+function mbTri(ax, ay, az, bx, by, bz, cx_, cy, cz, col) {
+  if (MB.n + 27 > MB.a.length) return;
+  let nx = (by - ay) * (cz - az) - (bz - az) * (cy - ay), ny = (bz - az) * (cx_ - ax) - (bx - ax) * (cz - az), nz = (bx - ax) * (cy - ay) - (by - ay) * (cx_ - ax);
+  const l = Math.hypot(nx, ny, nz) || 1; nx /= l; ny /= l; nz /= l;
+  const C = MB.c; if (C && nx * ((ax + bx + cx_) / 3 - C[0]) + ny * ((ay + by + cy) / 3 - C[1]) + nz * ((az + bz + cz) / 3 - C[2]) < 0) { nx = -nx; ny = -ny; nz = -nz; }
+  const a = MB.a; let o = MB.n;
+  a[o++] = ax; a[o++] = ay; a[o++] = az; a[o++] = nx; a[o++] = ny; a[o++] = nz; a[o++] = col[0]; a[o++] = col[1]; a[o++] = col[2];
+  a[o++] = bx; a[o++] = by; a[o++] = bz; a[o++] = nx; a[o++] = ny; a[o++] = nz; a[o++] = col[0]; a[o++] = col[1]; a[o++] = col[2];
+  a[o++] = cx_; a[o++] = cy; a[o++] = cz; a[o++] = nx; a[o++] = ny; a[o++] = nz; a[o++] = col[0]; a[o++] = col[1]; a[o++] = col[2];
+  MB.n = o;
+}
+function mbBeam(x0, y0, z0, x1, y1, z1, th, col) {      // thin square beam between two points
+  let dx = x1 - x0, dy = y1 - y0, dz = z1 - z0; const l = Math.hypot(dx, dy, dz) || 1; dx /= l; dy /= l; dz /= l;
+  let ux = Math.abs(dy) > 0.9 ? 1 : 0, uy = Math.abs(dy) > 0.9 ? 0 : 1, uz = 0;
+  let px = dy * uz - dz * uy, py = dz * ux - dx * uz, pz = dx * uy - dy * ux; const pl = Math.hypot(px, py, pz) || 1; px *= th / pl; py *= th / pl; pz *= th / pl;
+  let qx = dy * pz - dz * py, qy = dz * px - dx * pz, qz = dx * py - dy * px;
+  MB.c = [(x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2];
+  const P = []; for (let e = 0; e < 2; e++) { const bx = e ? x1 : x0, by = e ? y1 : y0, bz = e ? z1 : z0; for (let k = 0; k < 4; k++) { const sp = k === 0 || k === 3 ? 1 : -1, sq = k < 2 ? 1 : -1; P.push([bx + px * sp + qx * sq, by + py * sp + qy * sq, bz + pz * sp + qz * sq]); } }
+  const q = (a, b, d, e) => { mbTri(P[a][0], P[a][1], P[a][2], P[b][0], P[b][1], P[b][2], P[d][0], P[d][1], P[d][2], col); mbTri(P[a][0], P[a][1], P[a][2], P[d][0], P[d][1], P[d][2], P[e][0], P[e][1], P[e][2], col); };
+  for (let k = 0; k < 4; k++) q(k, (k + 1) % 4, 4 + (k + 1) % 4, 4 + k);
+  q(0, 1, 2, 3); q(4, 5, 6, 7); MB.c = null;
+}
+function mbCylX(x, y, z, r, hw, seg, col, hub) {         // wheel: cylinder along the X axis
+  MB.c = [x, y, z];
+  for (let k = 0; k < seg; k++) { const a0 = k / seg * 6.2832, a1 = (k + 1) / seg * 6.2832, y0 = y + Math.cos(a0) * r, z0 = z + Math.sin(a0) * r, y1 = y + Math.cos(a1) * r, z1 = z + Math.sin(a1) * r, t = k & 1 ? 0.8 : 1;
+    const cc = [col[0] * t, col[1] * t, col[2] * t];
+    mbTri(x - hw, y0, z0, x + hw, y0, z0, x + hw, y1, z1, cc); mbTri(x - hw, y0, z0, x + hw, y1, z1, x - hw, y1, z1, cc);
+    mbTri(x - hw, y, z, x - hw, y0, z0, x - hw, y1, z1, hub || col); mbTri(x + hw, y, z, x + hw, y1, z1, x + hw, y0, z0, hub || col); }
+  MB.c = null;
+}
+function mbBox(x, y, z, sx, sy, sz, yaw, col) {          // centre (x,y,z), half sizes, yaw about Y
+  MB.c = [x, y, z];
+  const c = Math.cos(yaw || 0), s = Math.sin(yaw || 0), P = [];
+  for (let k = 0; k < 8; k++) { const lx = (k & 1 ? sx : -sx), ly = (k & 2 ? sy : -sy), lz = (k & 4 ? sz : -sz); P.push(x + lx * c + lz * s, y + ly, z - lx * s + lz * c); }
+  const q = (a, b, d, e) => { mbTri(P[a * 3], P[a * 3 + 1], P[a * 3 + 2], P[b * 3], P[b * 3 + 1], P[b * 3 + 2], P[d * 3], P[d * 3 + 1], P[d * 3 + 2], col); mbTri(P[a * 3], P[a * 3 + 1], P[a * 3 + 2], P[d * 3], P[d * 3 + 1], P[d * 3 + 2], P[e * 3], P[e * 3 + 1], P[e * 3 + 2], col); };
+  q(0, 4, 6, 2); q(1, 3, 7, 5); q(2, 6, 7, 3); q(0, 1, 5, 4); q(4, 5, 7, 6); q(0, 2, 3, 1); MB.c = null;
+}
+function mbCyl(x, y, z, r0, r1, h, seg, col, cap) {      // vertical frustum from y to y+h
+  MB.c = [x, y + h * 0.4, z];
+  for (let k = 0; k < seg; k++) {
+    const a0 = k / seg * 6.2832, a1 = (k + 1) / seg * 6.2832, c0 = Math.cos(a0), s0 = Math.sin(a0), c1 = Math.cos(a1), s1 = Math.sin(a1);
+    mbTri(x + c0 * r0, y, z + s0 * r0, x + c0 * r1, y + h, z + s0 * r1, x + c1 * r1, y + h, z + s1 * r1, col);
+    mbTri(x + c0 * r0, y, z + s0 * r0, x + c1 * r1, y + h, z + s1 * r1, x + c1 * r0, y, z + s1 * r0, col);
+    if (cap) mbTri(x, y + h, z, x + c1 * r1, y + h, z + s1 * r1, x + c0 * r1, y + h, z + s0 * r1, col);
+  }
+  MB.c = null;
+}
+function mbRockOld(x, y, z, sx, sy, sz, rnd, col) {
+  const j = () => 0.7 + 0.6 * rnd(), yaw = rnd() * 6.28, c = Math.cos(yaw), s = Math.sin(yaw);
+  const V = [[sx * j(), 0, 0], [-sx * j(), 0, 0], [0, sy * j(), 0], [0, -sy * 0.4, 0], [0, 0, sz * j()], [0, 0, -sz * j()]].map((p) => [x + p[0] * c + p[2] * s + (rnd() - 0.5) * sx * 0.3, y + p[1], z - p[0] * s + p[2] * c + (rnd() - 0.5) * sz * 0.3]);
+  const t = (a, b, d) => { const k = 0.82 + 0.36 * rnd(); mbTri(V[a][0], V[a][1], V[a][2], V[b][0], V[b][1], V[b][2], V[d][0], V[d][1], V[d][2], [col[0] * k, col[1] * k, col[2] * k]); };
+  t(0, 2, 4); t(4, 2, 1); t(1, 2, 5); t(5, 2, 0); t(4, 3, 0); t(1, 3, 4); t(5, 3, 1); t(0, 3, 5);
+}
+
+function g3Init() {
+  const Q = new URLSearchParams(location.search);
+  if (Q.get('view') === '2d') return false;
+  const c = $('gl'); let gl = null;
+  G3.low = Q.get('gq') === 'low';
+  try { gl = c.getContext('webgl', { antialias: !G3.low, alpha: false, powerPreference: 'high-performance' }) || c.getContext('experimental-webgl'); } catch (e) { gl = null; }
+  if (!gl) return false;
+  try {
+    const S = G3S, cm = S.common;
+    G3.prog.sky = g3Program(gl, S.skyV, cm + S.skyF); G3.prog.ter = g3Program(gl, S.terV, cm + S.terF); G3.prog.obj = g3Program(gl, S.objV, cm + S.objF);
+    G3.prog.rib = g3Program(gl, S.ribV, cm + S.ribF); G3.prog.fx = g3Program(gl, S.fxV, S.fxF); G3.prog.pt = g3Program(gl, S.ptV, S.ptF);
+  } catch (e) { return false; }
+  G3.gl = gl;
+  const N = G3C.N, M = N + 1;
+  // shared grid indices: full, and with the centre hole the finer level covers
+  const mkIdx = (hole) => { const a = []; for (let j = 0; j < N; j++) for (let i = 0; i < N; i++) {
+    if (hole && Math.abs(i - N / 2 + 0.5) < hole && Math.abs(j - N / 2 + 0.5) < hole) continue;
+    const k = j * M + i; a.push(k, k + M, k + 1, k + 1, k + M, k + M + 1); }
+    const b = gl.createBuffer(); gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b); gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(a), gl.STATIC_DRAW); return { b: b, n: a.length }; };
+  G3.buf.idxFull = mkIdx(0); G3.buf.idxHole = mkIdx(N / 8 - 1);
+  for (let L = 0; L < G3C.CELLS.length; L++) {
+    const lv = { c: G3C.CELLS[L], H: new Float32Array(M * M), MA: new Uint8Array(M * M * 4), SI: new Int32Array(M * M).fill(-2147483647), SJ: new Int32Array(M * M),
+      pos: new Float32Array(M * M * 6), mat: new Uint8Array(M * M * 4), vb: gl.createBuffer(), mb: gl.createBuffer(), ci: 1e9, cj: 1e9, slot: new Int32Array(M * M) };
+    gl.bindBuffer(gl.ARRAY_BUFFER, lv.vb); gl.bufferData(gl.ARRAY_BUFFER, lv.pos.byteLength, gl.DYNAMIC_DRAW);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lv.mb); gl.bufferData(gl.ARRAY_BUFFER, lv.mat.byteLength, gl.DYNAMIC_DRAW);
+    G3.lv.push(lv);
+  }
+  // noise texture
+  const tn = new Uint8Array(256 * 256 * 4); for (let i = 0; i < tn.length; i++) tn[i] = Math.random() * 256;
+  for (let pass = 0; pass < 2; pass++) { const src = tn.slice(); for (let y = 0; y < 256; y++) for (let x = 0; x < 256; x++) for (let ch = 0; ch < 4; ch++) {
+    const g = (xx, yy) => src[(((yy + 256) & 255) * 256 + ((xx + 256) & 255)) * 4 + ch]; tn[(y * 256 + x) * 4 + ch] = (g(x, y) * 4 + g(x + 1, y) + g(x - 1, y) + g(x, y + 1) + g(x, y - 1)) / 8; } }
+  for (let i = 0; i < tn.length; i++) tn[i] = clamp((tn[i] - 128) * 2.1 + 128, 0, 255);
+  G3.tex.noise = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, G3.tex.noise); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 256, 0, gl.RGBA, gl.UNSIGNED_BYTE, tn);
+  gl.generateMipmap(gl.TEXTURE_2D); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
+  const an = gl.getExtension('EXT_texture_filter_anisotropic'); if (an) gl.texParameterf(gl.TEXTURE_2D, an.TEXTURE_MAX_ANISOTROPY_EXT, Math.min(8, gl.getParameter(an.MAX_TEXTURE_MAX_ANISOTROPY_EXT) || 1)); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+  G3.tex.lut = gl.createTexture(); gl.bindTexture(gl.TEXTURE_2D, G3.tex.lut); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 256, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(1024));
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  const sb = (data, usage) => { const b = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, b); gl.bufferData(gl.ARRAY_BUFFER, data, usage || gl.STATIC_DRAW); return b; };
+  G3.buf.sky = sb(new Float32Array([-1, -1, 3, -1, -1, 3]));
+  G3.buf.rock = sb(9 * 4 * 60 * 700, gl.DYNAMIC_DRAW); G3.buf.obj = sb(9 * 4 * 9000, gl.DYNAMIC_DRAW);
+  G3.buf.rib = sb(4, gl.DYNAMIC_DRAW); G3.buf.veh = sb(9 * 4 * 4000, gl.DYNAMIC_DRAW); G3.vehN = 0; G3.vehKey = ''; G3.fxA = new Float32Array(11 * 6 * 160); G3.buf.fx = sb(G3.fxA.byteLength, gl.DYNAMIC_DRAW);
+  const ps = new Float32Array(G3C.PARTS * 4); for (let i = 0; i < ps.length; i++) ps[i] = Math.random(); G3.buf.pt = sb(ps);
+  // cockpits (view space: x right, y up, -z forward)
+  const mk = (key, fn) => { MB.n = 0; fn(); G3.cockO[key] = sb(MB.a.slice(0, MB.n)); G3.cockN[key] = MB.n / 9; };
+  const dk = [0.12, 0.12, 0.13], gr = [0.36, 0.36, 0.37], al = [0.62, 0.61, 0.59], or = [0.86, 0.42, 0.20], bl = [0.05, 0.05, 0.06], wh = [0.84, 0.83, 0.80], teal = [0.08, 0.36, 0.32], amb = [0.42, 0.28, 0.08], tyre = [0.17, 0.17, 0.18], gold = [0.74, 0.58, 0.22];
+  mk('on_foot', () => {                                   // suit forearms, wrist rings, gloves, wrist display
+    for (const sd of [-1, 1]) { mbBeam(sd * 0.46, -0.78, -0.22, sd * 0.30, -0.60, -0.62, 0.052, wh); mbBeam(sd * 0.30, -0.60, -0.62, sd * 0.285, -0.585, -0.66, 0.058, or);
+      mbBeam(sd * 0.285, -0.585, -0.66, sd * 0.25, -0.555, -0.80, 0.046, gr); mbBeam(sd * 0.25, -0.555, -0.80, sd * 0.235, -0.56, -0.87, 0.036, gr); mbBeam(sd * 0.215, -0.55, -0.74, sd * 0.18, -0.535, -0.80, 0.018, gr); }
+    mbBox(-0.375, -0.612, -0.44, 0.040, 0.004, 0.07, 0.38, teal);
+  });
+  mk('two_wheel', () => {                                 // scout bike: handlebar, grips, display, headlight, fork, front wheel
+    mbBeam(-0.40, -0.44, -0.60, 0.40, -0.44, -0.60, 0.013, al); mbBeam(-0.47, -0.44, -0.59, -0.35, -0.44, -0.60, 0.024, bl); mbBeam(0.35, -0.44, -0.60, 0.47, -0.44, -0.59, 0.024, bl);
+    mbBeam(-0.36, -0.42, -0.66, -0.24, -0.43, -0.67, 0.006, gr); mbBeam(0.24, -0.43, -0.67, 0.36, -0.42, -0.66, 0.006, gr);
+    mbBeam(0, -0.44, -0.60, 0, -0.62, -0.72, 0.022, gr); mbBox(0, -0.37, -0.70, 0.095, 0.055, 0.012, 0, dk); mbBox(0, -0.37, -0.688, 0.082, 0.042, 0.002, 0, teal);
+    mbBox(0, -0.56, -0.86, 0.06, 0.05, 0.04, 0, wh); mbBeam(-0.075, -0.62, -0.74, -0.075, -1.12, -1.10, 0.016, al); mbBeam(0.075, -0.62, -0.74, 0.075, -1.12, -1.10, 0.016, al);
+    mbCylX(0, -1.12, -1.10, 0.33, 0.05, 16, tyre, gr); mbBeam(0, -0.80, -0.86, 0, -0.76, -1.36, 0.05, or); mbBox(0, -0.76, -0.30, 0.11, 0.07, 0.24, 0, or);
+  });
+  mk('four_wheel', () => {                                // open crew rover: chassis rails, mesh wheels, fenders, console, hand controller, dish, camera
+    mbBeam(-0.62, -1.02, -0.6, -0.62, -1.02, -2.5, 0.03, al); mbBeam(0.62, -1.02, -0.6, 0.62, -1.02, -2.5, 0.03, al); mbBeam(-0.62, -1.02, -2.5, 0.62, -1.02, -2.5, 0.03, al); mbBox(0, -1.06, -1.6, 0.6, 0.012, 0.9, 0, gr);
+    for (const sd of [-1, 1]) { mbCylX(sd * 1.0, -1.18, -2.15, 0.41, 0.115, 18, tyre, al); mbBeam(sd * 0.62, -1.10, -2.15, sd * 0.9, -1.18, -2.15, 0.03, gr);
+      mbBox(sd * 1.0, -0.73, -2.15, 0.17, 0.012, 0.34, 0, or); mbBeam(sd * 1.0, -0.73, -1.81, sd * 1.0, -0.90, -1.62, 0.012, or); mbBeam(sd * 1.0, -0.73, -2.49, sd * 1.0, -0.90, -2.68, 0.012, or); }
+    mbBox(0, -0.80, -1.02, 0.24, 0.085, 0.10, 0, dk); mbBox(0, -0.735, -0.925, 0.20, 0.035, 0.003, 0, teal); mbBox(0.30, -0.80, -1.0, 0.045, 0.06, 0.07, 0, gr);
+    mbBeam(0, -0.80, -0.84, 0, -0.67, -0.82, 0.014, gr); mbBeam(-0.07, -0.66, -0.82, 0.07, -0.66, -0.82, 0.018, bl);
+    mbBeam(-1.28, -1.0, -2.75, -1.28, -0.34, -2.75, 0.013, al); mbCyl(-1.28, -0.34, -2.75, 0.03, 0.26, 0.09, 12, wh, true); mbBeam(-1.28, -0.25, -2.75, -1.28, -0.12, -2.75, 0.008, gr);
+    mbBeam(0.62, -1.0, -2.45, 0.62, -0.52, -2.45, 0.013, al); mbBox(0.62, -0.46, -2.44, 0.07, 0.05, 0.085, 0, gold); mbBox(0.62, -0.46, -2.53, 0.035, 0.035, 0.012, 0, bl);
+  });
+  mk('buggy', () => {                                     // pressurised rover cabin: dash, screens, yoke, window frame, hood, wheel arches
+    mbBox(0, -0.66, -0.98, 1.30, 0.11, 0.20, 0, dk); mbBox(0, -0.54, -0.86, 1.30, 0.012, 0.09, 0, gr); mbBox(-0.46, -0.60, -0.775, 0.27, 0.07, 0.003, 0, teal); mbBox(0.46, -0.60, -0.775, 0.27, 0.07, 0.003, 0, amb);
+    mbBeam(0, -0.62, -0.78, 0, -0.50, -0.60, 0.018, gr); mbBeam(-0.14, -0.49, -0.58, 0.14, -0.49, -0.58, 0.016, bl); mbBeam(-0.14, -0.49, -0.58, -0.14, -0.41, -0.57, 0.02, bl); mbBeam(0.14, -0.49, -0.58, 0.14, -0.41, -0.57, 0.02, bl);
+    mbBeam(-1.32, -0.6, -1.12, -1.16, 0.92, -1.02, 0.06, wh); mbBeam(1.32, -0.6, -1.12, 1.16, 0.92, -1.02, 0.06, wh); mbBeam(-1.2, 0.92, -1.02, 1.2, 0.92, -1.02, 0.065, wh);
+    mbBox(0, -0.98, -2.3, 1.12, 0.09, 0.95, 0, wh); mbBox(0, -0.885, -2.3, 0.5, 0.006, 0.6, 0, [0.10, 0.14, 0.30]);
+    for (const sd of [-1, 1]) { mbBox(sd * 1.22, -0.92, -2.9, 0.22, 0.05, 0.42, 0, gr); mbCylX(sd * 1.22, -1.5, -2.9, 0.52, 0.17, 18, tyre, al); }
+  });
+  // world labels (DOM)
+  const lb = $('wl'); for (let i = 0; i < 14; i++) { const d = D.createElement('div'); d.className = 'wl'; d.hidden = true; lb.appendChild(d); G3.labels.push({ el: d, txt: '', on: false }); }
+  // look controls
+  const lockable = () => G.screen === 'play' && !G.paused && !G.cut && G.R && !G.R.site && !G.drawer && !G.autopilot;
+  c.addEventListener('pointerdown', (e) => { Snd.init(); if (e.pointerType === 'mouse') { if (lockable() && c.requestPointerLock && !G3.locked) { try { c.requestPointerLock(); } catch (er) { /* ignore */ } } G3.drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; } else if (!G3.drag) G3.drag = { id: e.pointerId, x: e.clientX, y: e.clientY }; });
+  const look = (dx, dy, k) => { G3.yaw += dx * k; G3.pitch = clamp(G3.pitch - dy * k, -1.25, 1.25); };
+  W_.addEventListener('pointermove', (e) => { if (G3.locked) { if (lockable()) look(e.movementX || 0, e.movementY || 0, 0.0023); } else if (G3.drag && e.pointerId === G3.drag.id) { look(e.clientX - G3.drag.x, e.clientY - G3.drag.y, e.pointerType === 'mouse' ? 0.004 : 0.006); G3.drag.x = e.clientX; G3.drag.y = e.clientY; } });
+  const up = (e) => { if (G3.drag && e.pointerId === G3.drag.id) G3.drag = null; }; W_.addEventListener('pointerup', up); W_.addEventListener('pointercancel', up);
+  D.addEventListener('pointerlockchange', () => { G3.locked = D.pointerLockElement === c; });
+  $('hudTC').appendChild($('cmp')); $('hudTC').appendChild($('toast')); $('hudTR').appendChild($('hudBtns'));      // helmet AR HUD: stacked, so nothing overlaps
+  G3.on = true; D.body.classList.add('v3d');
+  return true;
+}
+
+function g3Driving() { const R = G.R; return !!(R && !R.over && R.W.veh.bat && !afoot(R) && !G.autopilot); }
+function g3Jump(R) { if (G3.jy > 0 || G3.jv) return; G3.jv = R && (afoot(R) || R.W.veh.key === 'on_foot') ? 4.6 : 2.2; }
+function g3Coach(R) {                      // one plain-language hint at a time, most urgent first
+  const W = R.W, o2 = R.hasO2 ? R.o2 / W.o2Cap : 1, bt = toolBy(R, 'o2bottle'), has = (id) => { const t = toolBy(R, id); return t && t.charges > 0; };
+  if (R.site) return '';
+  if (R.stuck) return ['bad', 'STUCK IN SOFT SAND · tap E to rock free' + (has('repair') ? ' · or F to use the repair kit' : '')];
+  if (R.red) return ['bad', 'OFF-LIMITS GROUND · back out now, it destroys the suit in seconds'];
+  if (R.leak || R.hull) return ['bad', has('repair') ? 'BREACH · press F to patch it' : 'BREACH and no repair kit · get to the lander'];
+  if (R.hasO2 && o2 < CFG.O2_PROMPT_FRAC * 2 && bt && bt.charges > 0) return ['bad', 'OXYGEN CRITICAL · press O for the emergency bottle'];
+  if (R.toolsT > 0) return ['bad', 'NO TOOLS LEFT · reach the lander before the countdown ends'];
+  if (R.storm === 2 && !R.onRoute) return ['bad', 'LOST IN THE STORM · get back to the green line'];
+  if (!R.comms) return ['warn', has('relay') ? 'NO SIGNAL · press R to deploy a radio relay' : 'NO SIGNAL · keep moving along the line'];
+  if (R.wheel) return ['warn', has('repair') ? 'WHEEL DAMAGED · press F to repair' : 'WHEEL DAMAGED · you are slower'];
+  if (R.storm) return ['warn', 'DUST STORM · stay on the line · hold Shift on rough ground'];
+  if (!R.onRoute) return ['warn', 'OFF THE LINE · oxygen and power drain faster · steer back to the arrows'];
+  if ((W.RISK[R.i] | 0) >= 1 && R.main) return ['warn', 'FLAGGED GROUND · hold Shift for a careful pace'];
+  if (R.phase === 'site') return ['', R.samples.length ? 'Sample more cyan pillars, or press H to head home' : 'Walk to a cyan pillar and press E to take a sample'];
+  if (R.dis) { const d = Math.hypot(R.x - R.vehX, R.y - R.vehY); if (R.phase !== 'site' || R.samples.length >= W.spots.length) return ['', d <= CFG.MOUNT_M ? 'Press V to mount your ' + vehName(R) : 'On foot · your ' + vehName(R) + ' is ' + Math.round(d) + ' m away (blue ring) · press V beside it']; }
+  if (R.real < 18 && W.veh.bat && !afoot(R)) return ['', G.touch ? 'Stick up to drive, sideways to steer · drag the view to look' : 'W accelerate · A / D steer · S brake and reverse · mouse to look' + (W.veh.suited ? ' · V to step off' : '')];
+  if (R.real < 16) return ['', G.touch ? 'Left stick to move · drag the view to look · follow the green arrows to B' : 'W to move · mouse to look · Space to hop · follow the green arrows to B'];
+  if (R.phase === 'return' && R.real - (G3.retT || (G3.retT = R.real)) < 8) return ['', 'Samples aboard · follow the arrows back to the lander'];
+  return '';
+}
+function g3Resize() {
+  if (!G3.on) return;
+  const c = $('gl'), dpr = G3.low ? 1 : Math.min(G3C.DPR, W_.devicePixelRatio || 1), w = Math.max(2, Math.round(W_.innerWidth * dpr)), h = Math.max(2, Math.round(W_.innerHeight * dpr));
+  if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+  G3.w = w; G3.h = h;
+}
+
+function g3Level(W, lv, L, camx, camy, env, force) {
+  const N = G3C.N, M = N + 1, c = lv.c, ci = Math.round(camx / (4 * c)) * 4, cj = Math.round(camy / (4 * c)) * 4;      // re-centre every 4 cells: 4x fewer refills
+  if (!force && ci === lv.ci && cj === lv.cj) return;
+  lv.ci = ci; lv.cj = cj;
+  const H = lv.H, MA = lv.MA, SI = lv.SI, SJ = lv.SJ, slot = lv.slot, key = G.layers.data, lay = key !== 'none', half = N / 2;
+  const sx = lv.sx || (lv.sx = new Int32Array(M)); for (let i = 0; i < M; i++) { const gi = ci + i - half; sx[i] = ((gi % M) + M) % M; }
+  for (let j = 0; j < M; j++) {
+    const gj = cj + j - half, sjM = (((gj % M) + M) % M) * M, row = j * M;
+    for (let i = 0; i < M; i++) {
+      const gi = ci + i - half, s = sx[i] + sjM; slot[row + i] = s;
+      if (SI[s] !== gi || SJ[s] !== gj) {
+        const x = gi * c, y = gj * c;
+        H[s] = h3(W, x, y);
+        const o = s * 4; MA[o] = F.w * 255; MA[o + 1] = clamp(F.firm, 0, 1) * 255; MA[o + 2] = F.red ? 255 : clamp((F.slope / W.vmax - 0.55) * 1.2, 0, 0.45) * 255;
+        MA[o + 3] = lay ? clamp(layerValue(W, key, x, y, env), 0, 1) * 255 : 0;
+        SI[s] = gi; SJ[s] = gj;
+      }
+    }
+  }
+  const P = lv.pos, T = lv.mat;
+  const i2c = 1 / (2 * c), i1c = 1 / c;
+  for (let j = 0; j < M; j++) for (let i = 0; i < M; i++) {
+    const k = j * M + i, s = slot[k], o = k * 6;
+    const hl = H[slot[i > 0 ? k - 1 : k]], hr = H[slot[i < N ? k + 1 : k]], hd = H[slot[j > 0 ? k - M : k]], hu = H[slot[j < N ? k + M : k]];
+    const dx = (hr - hl) * (i > 0 && i < N ? i2c : i1c), dy = (hu - hd) * (j > 0 && j < N ? i2c : i1c), l = 1 / Math.sqrt(dx * dx + dy * dy + 1);
+    P[o] = (ci + i - half) * c; P[o + 1] = H[s]; P[o + 2] = -(cj + j - half) * c; P[o + 3] = -dx * l; P[o + 4] = l; P[o + 5] = dy * l;
+    const m = s * 4, t = k * 4; T[t] = MA[m]; T[t + 1] = MA[m + 1]; T[t + 2] = MA[m + 2]; T[t + 3] = MA[m + 3];
+  }
+  const gl = G3.gl; gl.bindBuffer(gl.ARRAY_BUFFER, lv.vb); gl.bufferSubData(gl.ARRAY_BUFFER, 0, P); gl.bindBuffer(gl.ARRAY_BUFFER, lv.mb); gl.bufferSubData(gl.ARRAY_BUFFER, 0, T);
+}
+
+function g3Rocks(W, camx, camy) {
+  const RC = G3C.ROCK_CELL, ci = Math.round(camx / RC), cj = Math.round(camy / RC), key = ci + ',' + cj;
+  if (key === G3.rockKey) return;
+  G3.rockKey = key; MB.n = 0;
+  for (let j = cj - G3C.ROCK_R; j <= cj + G3C.ROCK_R; j++) for (let i = ci - G3C.ROCK_R; i <= ci + G3C.ROCK_R; i++) {
+    const r = mulberry32((hashStr(i + ':' + j) ^ W.seed) >>> 0), x0 = i * RC, y0 = j * RC;
+    fieldAt(W, x0 + RC / 2, y0 + RC / 2);
+    const w = F.w, n = Math.floor(r() * (0.6 + 2.6 * Math.min(1.6, F.rough) * (0.25 + 0.75 * w)) + (F.red ? 1.2 : 0));
+    for (let q = 0; q < n && q < 4; q++) {
+      const x = x0 + r() * RC, y = y0 + r() * RC, big = r() < 0.07 * (0.3 + w) ? 2.2 + r() * 2.2 : 0.16 + r() * r() * 1.1;
+      fieldAt(W, x, y); if (F.w < 0.12 && big > 0.35) continue;                         // keep the surveyed corridor clear of real obstacles
+      const hh = h3(W, x, y), t = 0.26 + 0.2 * r();
+      mbRock(x, hh + big * 0.22, -y, big * (0.8 + 0.5 * r()), big * (0.5 + 0.4 * r()), big * (0.8 + 0.5 * r()), r, [t * 1.25, t * 0.78, t * 0.6]);
+    }
+  }
+  const gl = G3.gl; gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.rock); gl.bufferSubData(gl.ARRAY_BUFFER, 0, MB.a.subarray(0, Math.min(MB.n, 9 * 60 * 700)));
+  G3.rockN = Math.min(MB.n, 9 * 60 * 700) / 9;
+}
+
+function g3World(W) {                       // per-mission static geometry: path ribbons, lander, site rig, shelters
+  const gl = G3.gl;
+  G3.W = W; G3.rockKey = ''; G3.layerKey = ''; G3.lastInt = undefined; G3.retT = 0; G3.jy = 0; G3.jv = 0;
+  { const k = Math.min(W.n - 1, 6); if (G.R && G.R.W === W) { G3.yaw = Math.atan2(W.X[k] - W.X[0], W.Y[k] - W.Y[0]); G3.vyaw = G3.yaw; G3.pitch = -0.05; G3.vehKey = ''; } }
+  for (let L = 0; L < G3.lv.length; L++) { G3.lv[L].SI.fill(-2147483647); G3.lv[L].ci = 1e9; }
+  // ---- ribbons [pos3, s, side, colour, kind]
+  const out = [], X = W.X, Y = W.Y, n = W.n, hw = W.veh.key === 'on_foot' ? 0.6 : 1.0;
+  const strip = (pts, half, kind, colFn, lift) => {          // pts: [x, y, s] list
+    for (let i = 0; i < pts.length - 1; i++) {
+      const a = pts[i], b = pts[i + 1], p0 = pts[Math.max(0, i - 1)], p3 = pts[Math.min(pts.length - 1, i + 2)];
+      let t0x = b[0] - p0[0], t0y = b[1] - p0[1], t1x = p3[0] - a[0], t1y = p3[1] - a[1]; const l0 = Math.hypot(t0x, t0y) || 1, l1 = Math.hypot(t1x, t1y) || 1; t0x /= l0; t0y /= l0; t1x /= l1; t1y /= l1;
+      const v = (p, tx, ty, side) => { const x = p[0] - ty * side * half, y = p[1] + tx * side * half; out.push(x, h3(W, x, y) + lift, -y, p[2], side, colFn(i), kind); };
+      v(a, t0x, t0y, -1); v(a, t0x, t0y, 1); v(b, t1x, t1y, 1); v(a, t0x, t0y, -1); v(b, t1x, t1y, 1); v(b, t1x, t1y, -1);
+    }
+  };
+  const main = []; for (let i = 0; i < n; i++) main.push([X[i], Y[i], W.S[i]]);
+  strip(main, hw, 0, (i) => W.RISK[i] | 0, 0.07);
+  const glow = []; for (let i = 0; i < n; i += 2) glow.push(main[i]); if ((n - 1) % 2) glow.push(main[n - 1]); strip(glow, 3.2, 4, (i) => W.RISK[Math.min(n - 1, i * 2)] | 0, 0.10);
+  const step = Math.max(1, Math.round(10 / CFG.STEP_M)), eL = [], eR = [];
+  for (let i = 0; i < n; i += step) { const a = Math.max(0, i - 1), b = Math.min(n - 1, i + 1); let tx = X[b] - X[a], ty = Y[b] - Y[a]; const l = Math.hypot(tx, ty) || 1; tx /= l; ty /= l;
+    eL.push([X[i] - ty * W.halfW, Y[i] + tx * W.halfW, W.S[i]]); eR.push([X[i] + ty * W.halfW, Y[i] - tx * W.halfW, W.S[i]]); }
+  strip(eL, 0.22, 1, () => 3, 0.08); strip(eR, 0.22, 1, () => 3, 0.08);
+  W.spots.forEach((sp) => { const px = sp.parent >= 0 && W.spots[sp.parent] ? W.spots[sp.parent].x : W.B.x, py = sp.parent >= 0 && W.spots[sp.parent] ? W.spots[sp.parent].y : W.B.y, d = Math.hypot(sp.x - px, sp.y - py);
+    if (d > 4) { const pts = [], m = Math.ceil(d / 5); for (let k = 0; k <= m; k++) pts.push([px + (sp.x - px) * k / m, py + (sp.y - py) * k / m, d * k / m]); strip(pts, 0.35, 2, () => 3, 0.08); } });
+  if (G.tracks) for (let q = 0; q < G.tracks.length; q++) { const tr = G.tracks[q]; if (Math.min(Math.abs(tr.x0), Math.abs(tr.x1)) > 9000 || Math.min(Math.abs(tr.y0), Math.abs(tr.y1)) > 9000) continue;
+    const pts = []; let s = 0; for (let i = 0; i < tr.p.length; i += 2) { if (i) s += Math.hypot(tr.p[i] - tr.p[i - 2], tr.p[i + 1] - tr.p[i - 1]); pts.push([tr.p[i], tr.p[i + 1], s]); } strip(pts, 0.9, 3, () => (tr.c ? 1 : 0), 0.06); }
+  W.backups.forEach((bk) => { const pts = []; let s = 0; for (let i = 0; i < bk.p.length; i += 2) { if (i) s += Math.hypot(bk.p[i] - bk.p[i - 2], bk.p[i + 1] - bk.p[i - 1]); pts.push([bk.p[i], bk.p[i + 1], s]); } if (pts.length > 1 && pts.length < 400) strip(pts, 1.4, 3, () => 4, 0.5); });
+  gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.rib); gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(out), gl.STATIC_DRAW); G3.ribN = out.length / 7;
+  G3.trackBuilt = !!G.tracks;
+  // ---- models
+  MB.n = 0;
+  const gold = [0.78, 0.60, 0.22], wh = [0.86, 0.84, 0.80], dk = [0.16, 0.15, 0.15], gr = [0.40, 0.39, 0.38], or = [0.88, 0.44, 0.22], sol = [0.10, 0.14, 0.32];
+  const blk = [0.06, 0.06, 0.07], pan = [0.09, 0.13, 0.32], foil = [0.80, 0.62, 0.24];
+  const ax = W.A.x + 10, ay = W.A.y + 8, ah = h3(W, ax, ay), az = -ay;                   // crew lander beside the start of the route
+  mbCyl(ax, ah + 1.25, az, 2.4, 2.4, 1.25, 8, foil, true); mbCyl(ax, ah + 0.45, az, 0.85, 0.5, 0.8, 10, dk, false); mbCyl(ax, ah + 2.5, az, 1.55, 1.3, 1.75, 8, wh, true); mbCyl(ax, ah + 4.25, az, 0.5, 0.5, 0.22, 10, gr, true);
+  for (let k = 0; k < 4; k++) { const a = k * 1.5708 + 0.785, cx_ = Math.cos(a), sz = Math.sin(a), fx_ = ax + cx_ * 3.9, fz = az + sz * 3.9, fh = h3(W, fx_, -fz);
+    mbBeam(ax + cx_ * 2.3, ah + 2.35, az + sz * 2.3, fx_, fh + 0.14, fz, 0.075, gr); mbBeam(ax + cx_ * 2.3, ah + 1.35, az + sz * 2.3, ax + cx_ * 3.3, fh + 0.75, az + sz * 3.3, 0.05, gr); mbCyl(fx_, fh, fz, 0.48, 0.48, 0.12, 10, gr, true); }
+  const la = Math.atan2(-(W.A.y - ay), W.A.x - ax), lc = Math.cos(la), ls = Math.sin(la);                 // hatch + ladder face the route
+  mbBox(ax + lc * 1.5, ah + 3.15, az + ls * 1.5, 0.42, 0.5, 0.06, -la + 1.5708, blk); mbBox(ax + lc * 2.6, ah + 2.5, az + ls * 2.6, 0.5, 0.04, 0.45, -la + 1.5708, gr);
+  for (const sd of [-0.3, 0.3]) mbBeam(ax + lc * 3.0 - ls * sd, ah + 2.5, az + ls * 3.0 + lc * sd, ax + lc * 3.9 - ls * sd, ah + 0.1, az + ls * 3.9 + lc * sd, 0.035, gr);
+  for (let q = 1; q < 7; q++) { const t = q / 7, rx = ax + lc * (3.0 + 0.9 * t), rz = az + ls * (3.0 + 0.9 * t), ry = ah + 2.5 - 2.4 * t; mbBeam(rx - ls * -0.3, ry, rz + lc * -0.3, rx - ls * 0.3, ry, rz + lc * 0.3, 0.025, gr); }
+  for (const sd of [-1, 1]) { mbBeam(ax - ls * sd * 2.2, ah + 2.0, az + lc * sd * 2.2, ax - ls * sd * 3.4, ah + 2.6, az + lc * sd * 3.4, 0.04, gr); mbBox(ax - ls * sd * 4.5, ah + 2.75, az + lc * sd * 4.5, 1.25, 0.03, 0.7, -la, pan); }
+  mbBeam(ax - lc * 0.8, ah + 4.2, az - ls * 0.8, ax - lc * 0.8, ah + 5.5, az - ls * 0.8, 0.025, gr); mbCyl(ax - lc * 0.8, ah + 5.5, az - ls * 0.8, 0.06, 0.6, 0.22, 12, wh, false);
+  mbBeam(ax + lc * 6 - ls * 3, ah - 0.2, az + ls * 6 + lc * 3, ax + lc * 6 - ls * 3, ah + 2.4, az + ls * 6 + lc * 3, 0.025, wh); mbBox(ax + lc * 6 - ls * 3.45, ah + 2.12, az + ls * 6 + lc * 3.45, 0.45, 0.27, 0.012, -la, or);
+  const bx = W.B.x + 6, by = W.B.y - 5, bh = h3(W, bx, by), bz = -by;                    // science station at B: tripod mast, solar panel, instrument box, antenna
+  for (let k = 0; k < 3; k++) { const a = k * 2.094; mbBeam(bx + Math.cos(a) * 0.9, bh, bz + Math.sin(a) * 0.9, bx, bh + 1.5, bz, 0.03, gr); }
+  mbBeam(bx, bh + 1.5, bz, bx, bh + 3.3, bz, 0.035, gr); mbBox(bx, bh + 2.85, bz, 0.95, 0.03, 0.55, 0.5, pan); mbBox(bx, bh + 1.2, bz, 0.3, 0.22, 0.3, 0.5, or); mbCyl(bx, bh + 3.3, bz, 0.04, 0.32, 0.12, 12, wh, false);
+  W.spots.forEach((sp, k) => { const sh = h3(W, sp.x, sp.y); mbBeam(sp.x + 1.6, sh - 0.1, -sp.y, sp.x + 1.6, sh + 1.1, -sp.y, 0.02, wh); mbBox(sp.x + 1.6, sh + 0.95, -sp.y + 0.17, 0.008, 0.11, 0.17, 0, k === 0 ? or : [0.2, 0.8, 0.85]); mbBox(sp.x - 1.2, sh + 0.12, -sp.y + 0.6, 0.22, 0.12, 0.16, 0.6, [0.55, 0.55, 0.57]); });
+  const rr = mulberry32((W.seed ^ 0x3D11) >>> 0);
+  W.shelters.forEach((sh) => { if (sh.kind === 'lander') return; const hh = h3(W, sh.x, sh.y); for (let k = 0; k < 4; k++) { const a = k * 1.4 + rr(), d = 5 + rr() * 2; mbRock(sh.x + Math.cos(a) * d, hh + 2.2, -sh.y + Math.sin(a) * d, 3.4 + rr() * 2, 3.5 + rr() * 2.5, 3 + rr() * 2, rr, [0.34, 0.2, 0.15]); }
+    mbRock(sh.x, hh + 5.6, -sh.y - 2, 6.5, 1.2, 5.5, rr, [0.30, 0.18, 0.14]); });
+  const nObj = Math.min(MB.n, 9 * 9000); gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.obj); gl.bufferSubData(gl.ARRAY_BUFFER, 0, MB.a.subarray(0, nObj)); G3.objN = nObj / 9;
+}
+
+function g3Parked(W, R) {                  // exterior model of the vehicle you stepped off (or abandoned), placed on the ground
+  const key = R && R.parked ? W.veh.key + '|' + R.vehX.toFixed(1) + '|' + R.vehY.toFixed(1) + '|' + R.vehH.toFixed(2) : '';
+  if (key === G3.vehKey) return; G3.vehKey = key; G3.vehN = 0; if (!key) return;
+  const al = [0.62, 0.61, 0.59], gr = [0.36, 0.36, 0.37], dk = [0.12, 0.12, 0.13], or = [0.86, 0.42, 0.20], tyre = [0.17, 0.17, 0.18], wh = [0.84, 0.83, 0.80], gold = [0.74, 0.58, 0.22], bl = [0.05, 0.05, 0.06];
+  MB.n = 0;                                          // local frame: x right, y up from the ground, -z forward
+  if (W.veh.key === 'two_wheel') {
+    mbCylX(0, 0.33, -0.78, 0.33, 0.05, 16, tyre, gr); mbCylX(0, 0.33, 0.78, 0.33, 0.06, 16, tyre, gr);
+    mbBeam(0, 0.40, 0.72, 0, 0.74, -0.30, 0.05, or); mbBeam(0, 0.74, -0.30, 0, 0.36, -0.78, 0.03, al); mbBeam(0, 0.74, -0.30, 0, 1.05, -0.46, 0.025, gr);
+    mbBeam(-0.42, 1.05, -0.46, 0.42, 1.05, -0.46, 0.018, al); mbBox(-0.44, 1.05, -0.46, 0.06, 0.03, 0.03, 0, bl); mbBox(0.44, 1.05, -0.46, 0.06, 0.03, 0.03, 0, bl);
+    mbBox(0, 0.86, 0.22, 0.14, 0.05, 0.30, 0, dk); mbBox(0, 0.62, 0.05, 0.12, 0.14, 0.26, 0, gr); mbBox(-0.2, 0.62, 0.72, 0.07, 0.14, 0.2, 0, gold); mbBox(0.2, 0.62, 0.72, 0.07, 0.14, 0.2, 0, gold);
+    mbBeam(0.1, 0.5, 0.1, 0.42, 0.0, 0.2, 0.015, gr);                                   // kick stand
+  } else {
+    for (const sx of [-0.95, 0.95]) for (const sz of [-1.12, 1.12]) { mbCylX(sx, 0.41, sz, 0.41, 0.115, 18, tyre, al); mbBox(sx, 0.90, sz, 0.17, 0.012, 0.36, 0, or); mbBeam(sx * 0.62, 0.55, sz, sx * 0.86, 0.43, sz, 0.03, gr); }
+    mbBox(0, 0.60, 0, 0.62, 0.045, 1.45, 0, al); mbBeam(-0.62, 0.6, -1.45, 0.62, 0.6, -1.45, 0.03, gr); mbBeam(-0.62, 0.6, 1.45, 0.62, 0.6, 1.45, 0.03, gr);
+    for (const sx of [-0.33, 0.33]) { mbBox(sx, 0.84, 0.25, 0.24, 0.04, 0.24, 0, dk); mbBox(sx, 1.14, 0.50, 0.24, 0.27, 0.035, 0, dk); mbBeam(sx, 0.64, 0.25, sx, 0.82, 0.25, 0.03, gr); }
+    mbBox(0, 0.90, -0.55, 0.24, 0.085, 0.10, 0, dk); mbBeam(0, 0.64, -0.55, 0, 0.84, -0.55, 0.03, gr); mbBeam(0, 0.96, -0.40, 0, 1.08, -0.38, 0.014, gr); mbBeam(-0.07, 1.09, -0.38, 0.07, 1.09, -0.38, 0.018, bl);
+    mbBeam(-0.5, 0.62, -1.35, -0.5, 1.75, -1.35, 0.014, al); mbCyl(-0.5, 1.75, -1.35, 0.03, 0.30, 0.10, 12, wh, true); mbBeam(0.5, 0.62, -1.35, 0.5, 1.25, -1.35, 0.014, al); mbBox(0.5, 1.31, -1.36, 0.07, 0.05, 0.085, 0, gold);
+    mbBox(0, 0.80, 1.08, 0.50, 0.16, 0.30, 0, gold); mbBeam(-0.3, 0.98, 1.0, -0.3, 1.5, 1.1, 0.012, gr); mbBeam(0.3, 0.98, 1.0, 0.3, 1.45, 1.15, 0.012, gr);                 // tool pallet + stowed tools
+  }
+  const c = Math.cos(R.vehH), sn = Math.sin(R.vehH), hh = h3(W, R.vehX, R.vehY), a = MB.a, n = Math.min(MB.n, 9 * 4000);
+  for (let i = 0; i < n; i += 9) { const lx = a[i], lz = a[i + 2], nx = a[i + 3], nz = a[i + 5];
+    a[i] = R.vehX + lx * c - lz * sn; a[i + 1] += hh; a[i + 2] = -R.vehY + lx * sn + lz * c; a[i + 3] = nx * c - nz * sn; a[i + 5] = nx * sn + nz * c; }
+  const gl = G3.gl; gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.veh); gl.bufferSubData(gl.ARRAY_BUFFER, 0, a.subarray(0, n)); G3.vehN = n / 9;
+}
+function g3Fx(W, R) {                       // beacons (light pillars) + ground rings, rebuilt every frame (a few dozen quads)
+  const A = G3.fxA; let n = 0; const marks = [];
+  const quad = (x, y, z, col, mode, w, h) => { if (n + 66 > A.length) return; const uv = mode ? [-1, -1, 1, -1, 1, 1, -1, -1, 1, 1, -1, 1] : [-1, 0, 1, 0, 1, 1, -1, 0, 1, 1, -1, 1];
+    for (let k = 0; k < 6; k++) { A[n++] = x; A[n++] = y; A[n++] = z; A[n++] = uv[k * 2]; A[n++] = uv[k * 2 + 1]; A[n++] = col[0]; A[n++] = col[1]; A[n++] = col[2]; A[n++] = mode; A[n++] = w; A[n++] = h; } };
+  const HC = W.g3h || (W.g3h = {}), hOf = (k, x, y) => { let v = HC[k]; if (v === undefined) v = HC[k] = h3(W, x, y); return v; };
+  const mark = (x, y, col, label, zone, tall, key) => { const hh = hOf(key, x, y); quad(x, hh, -y, col, 0, tall * 0.035 + 0.8, tall); if (zone > 0) quad(x, hh, -y, col, 1, zone, 0); if (label) marks.push({ x: x, y: hh + Math.min(tall * 0.2, 9) + 2.2, z: -y, label: label, wx: x, wy: y, key: key }); };
+  const blue = [0.25, 0.55, 1.0], org = [1.0, 0.55, 0.18], cy = [0.2, 0.9, 0.95], grn = [0.3, 1.0, 0.45], red = [1.0, 0.2, 0.15], wht = [0.75, 0.75, 0.8], amb = [1.0, 0.75, 0.1];
+  const px0 = R ? R.x : 1e9, py0 = R ? R.y : 1e9, ph = R ? R.phase : '', nearP = (x, y, d) => Math.hypot(x - px0, y - py0) < d;
+  mark(W.A.x, W.A.y, blue, ph === 'return' || nearP(W.A.x, W.A.y, 120) ? 'A · LANDER' : '', CFG.A_ZONE_M, 70, 'A');
+  mark(W.B.x, W.B.y, org, ph === 'outbound' ? 'B · TARGET' : '', CFG.B_ZONE_M, 70, 'B');
+  W.spots.forEach((sp, k) => { const done = !!(R && R.samples.some((s) => s.l === sp.label)); mark(sp.x, sp.y, done ? grn : cy, ph === 'site' || nearP(sp.x, sp.y, 160) ? sp.label + (done ? ' ✓' : ' · SAMPLE') : '', CFG.SPOT_ZONE_M, 26, 'S' + k); });
+  if (!W.turn.atB) mark(W.turn.x, W.turn.y, red, 'TURN BACK', 0, 34, 'T');
+  if (R && !R.over && R.phase !== 'site') { const dir = R.phase === 'return' ? -1 : 1, gs = clamp(R.s + dir * 38, 0, W.L); routePoint(W, gs); const gh = h3(W, RP.x, RP.y);        // the light to walk towards
+    quad(RP.x, gh + 0.9 + 0.25 * Math.sin(G3.time * 3), -RP.y, [0.55, 1.0, 0.7], 0, 0.55, 2.6); quad(RP.x, gh, -RP.y, [0.4, 1.0, 0.6], 1, 1.6, 0); }
+  if (G.layers.shelters) W.shelters.forEach((sh, k) => { if (sh.kind !== 'lander') mark(sh.x, sh.y, wht, R && R.storm ? 'SHELTER' : '', CFG.SHELTER_ZONE_M, 16, 'H' + k); });
+  if (R) {
+    W.traps.forEach((t, k) => { if (t.seen) { const hh = hOf('t' + k, t.x, t.y); quad(t.x, hh, -t.y, red, 1, t.r, 0); } });
+    W.scree.forEach((p, k) => { if (Math.abs(p.s0 - R.s) < 160) { const hh = hOf('c' + k, p.x, p.y); quad(p.x, hh, -p.y, amb, 1, 5, 0); } });
+    if (R.parked) mark(R.vehX, R.vehY, R.dis ? [0.45, 0.8, 1.0] : wht, R.dis ? 'YOUR ' + vehName(R).toUpperCase() : 'VEHICLE (dead battery)', R.dis ? CFG.MOUNT_M : 0, 12, 'V' + Math.round(R.vehX) + Math.round(R.vehY));
+  }
+  const gl = G3.gl; gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.fx); gl.bufferSubData(gl.ARRAY_BUFFER, 0, A.subarray(0, n)); G3.fxN = n / 11;
+  return marks;
+}
+
+const G3L = { x: new Float32Array(16), y: new Float32Array(16), n: 0 };
+function g3Labels(marks, px, py, show) {
+  const vp = G3.vp, L = G3.labels, cw = W_.innerWidth, ch = W_.innerHeight; G3L.n = 0;
+  for (let i = 0; i < L.length; i++) {
+    const m = show ? marks[i] : null, lb = L[i];
+    if (!m) { if (lb.on) { lb.on = false; lb.el.hidden = true; } continue; }
+    const cx_ = vp[0] * m.x + vp[4] * m.y + vp[8] * m.z + vp[12], cy = vp[1] * m.x + vp[5] * m.y + vp[9] * m.z + vp[13], cw_ = vp[3] * m.x + vp[7] * m.y + vp[11] * m.z + vp[15];
+    let sx = (cx_ / cw_ * 0.5 + 0.5) * cw, sy = (0.5 - cy / cw_ * 0.5) * ch;
+    if (cw_ <= 0.5 || sx < cw * 0.12 || sx > cw * 0.88 || sy < ch * 0.24 || sy > ch * 0.80) { if (lb.on) { lb.on = false; lb.el.hidden = true; } continue; }     // keep AR tags out of the HUD panels
+    for (let t = 0; t < 5; t++) { let hit = false; for (let q = 0; q < G3L.n; q++) if (Math.abs(G3L.x[q] - sx) < 150 && Math.abs(G3L.y[q] - sy) < 24) { hit = true; break; } if (!hit) break; sy -= 26; }
+    G3L.x[G3L.n] = sx; G3L.y[G3L.n] = sy; G3L.n++;
+    const d = Math.hypot(m.wx - px, m.wy - py), txt = m.label + ' · ' + (d >= 1000 ? (d / 1000).toFixed(1) + ' km' : Math.round(d / 5) * 5 + ' m');
+    if (txt !== lb.txt) { lb.txt = txt; lb.el.textContent = txt; }
+    lb.el.style.transform = 'translate(' + sx.toFixed(0) + 'px,' + sy.toFixed(0) + 'px) translate(-50%,-100%)';
+    if (!lb.on) { lb.on = true; lb.el.hidden = false; }
+  }
+}
+
+function g3Use(p) { const gl = G3.gl; gl.useProgram(p.p); for (let i = 0; i < 6; i++) gl.disableVertexAttribArray(i); }
+function g3Attr(p, name, size, type, norm, stride, off) { const gl = G3.gl, a = p.a[name]; if (a === undefined || a < 0) return; gl.enableVertexAttribArray(a); gl.vertexAttribPointer(a, size, type, norm, stride, off); }
+
+function render3d(dt) {
+  const gl = G3.gl, play = G.screen === 'play' || G.screen === 'end', W = play ? G.W : G.attract, R = play ? G.R : null;
+  if (!W) { gl.clearColor(0.04, 0.027, 0.02, 1); gl.clear(gl.COLOR_BUFFER_BIT); g3Labels([], 0, 0, false); return; }
+  G3.time += dt; V.time += dt;
+  if (W !== G3.W) g3World(W);
+  if (!G3.trackBuilt && G.tracks) g3World(W);
+  const env = R ? R.env : ATTRACT_ENV, K = IN.keys, cam = G.cam;
+  // ---- camera pose
+  let px, py, spd = 0;
+  if (R) {
+    const a = G.paused || G.cut || R.over ? 1 : clamp(G.alpha, 0, 1);
+    px = R.px + (R.x - R.px) * a; py = R.py + (R.y - R.py) * a; spd = Math.hypot(R.vx, R.vy);
+    if (G.autopilot || R.over) { if (spd > 0.4) { let dy = Math.atan2(R.vx, R.vy) - G3.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); G3.yaw += dy * Math.min(1, dt * 3.2); } G3.pitch += (-0.07 - G3.pitch) * Math.min(1, dt * 2); }
+    else if (!G.paused && !G.cut) {
+      if (g3Driving()) {                                  // steering only bites while rolling; reversing flips it
+        const vn = Math.max(0.5, W.vNom / 3.6 * W.TS / W.kDist), fwd = R.vx * Math.sin(G3.vyaw) + R.vy * Math.cos(G3.vyaw);
+        const rate = (W.veh.key === 'two_wheel' ? 1.15 : W.veh.key === 'buggy' ? 0.5 : 0.8) * (IN.steer || 0) * clamp(spd / (0.3 * vn), 0, 1) * (fwd < -0.05 ? -1 : 1);
+        G3.vyaw += rate * dt; G3.yaw += rate * dt; G3.lean = (G3.lean || 0) + (-(IN.steer || 0) * 0.03 * clamp(spd / vn, 0, 1) - (G3.lean || 0)) * Math.min(1, dt * 5);
+      } else { const turn = (K.ArrowRight ? 1 : 0) - (K.ArrowLeft ? 1 : 0); G3.yaw += turn * 2.0 * dt; G3.lean = 0; }
+    }
+    if (G.autopilot && !afoot(R)) G3.vyaw = G3.yaw;
+  } else {
+    const s = (G3.time * 14) % (2 * W.L), ss = s < W.L ? s : 2 * W.L - s, dir = s < W.L ? 1 : -1;
+    routePoint(W, ss); px = RP.x; py = RP.y; let dy = Math.atan2(RP.tx * dir, RP.ty * dir) - G3.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); G3.yaw += dy * Math.min(1, dt * 1.2); G3.pitch += (-0.16 - G3.pitch) * Math.min(1, dt * 2);
+  }
+  const vkey = R ? (afoot(R) ? 'on_foot' : W.veh.key) : 'fly', eyeT = R ? (G3C.EYE[vkey] || 1.7) : 9, ground = h3(W, px, py);
+  const moved = Math.hypot(px - G3.lastX, py - G3.lastY); G3.lastX = px; G3.lastY = py;
+  if (moved < 30) G3.bob += moved; else G3.eyeY = ground + eyeT;
+  G3.eye += (eyeT - G3.eye) * Math.min(1, dt * 4);
+  if (G3.jv || G3.jy > 0) { G3.jv -= 3.71 * 1.6 * dt; G3.jy += G3.jv * dt; if (G3.jy <= 0) { G3.jy = 0; G3.jv = 0; if (!G.reduced) cam.shake = Math.max(cam.shake, 2.2); Snd.init(); } }      // Mars gravity, a little snappier for feel
+  const tY = ground + G3.eye + (G3.jy || 0); G3.eyeY += (tY - G3.eyeY) * Math.min(1, dt * (R ? 14 : 3)); if (G3.eyeY < ground + 0.5) G3.eyeY = ground + 0.5;
+  const walk = vkey === 'on_foot', red = G.reduced ? 0 : 1, mv = clamp(spd / 6, 0, 1);
+  const bobY = red * (walk ? Math.sin(G3.bob * 1.5) * 0.055 * mv : (R ? (vnoise(G3.bob * 0.7, 3.3, 11) - 0.5) * 0.10 * mv * (0.4 + (R.rough || 0.3)) : 0));
+  const sh = cam.shake > 0.05 && red ? cam.shake : 0; if (cam.shake > 0.05) cam.shake *= Math.exp(-dt * 7); else cam.shake = 0;
+  const strafe = R && !G.autopilot ? ((K.d ? 1 : 0) - (K.a ? 1 : 0)) : 0;
+  G3.roll += ((walk ? Math.sin(G3.bob * 0.75) * 0.006 * mv : 0) * red - strafe * (vkey === 'on_foot' ? 0.012 : 0) + (vkey === 'on_foot' ? 0 : G3.lean || 0) - G3.roll) * Math.min(1, dt * 6);
+  const yaw = G3.yaw + (sh ? (Math.random() - 0.5) * 0.004 * sh : 0), pit = G3.pitch + (sh ? (Math.random() - 0.5) * 0.004 * sh : 0);
+  const cp = Math.cos(pit), f = G3.f, r = G3.r, u = G3.u;
+  f[0] = Math.sin(yaw) * cp; f[1] = Math.sin(pit); f[2] = -Math.cos(yaw) * cp;
+  let rx = Math.cos(yaw), rz = Math.sin(yaw), ry = 0;
+  let ux = ry * f[2] - rz * f[1], uy = rz * f[0] - rx * f[2], uz = rx * f[1] - ry * f[0];
+  const cr = Math.cos(G3.roll), sr = Math.sin(G3.roll);
+  r[0] = rx * cr + ux * sr; r[1] = ry * cr + uy * sr; r[2] = rz * cr + uz * sr; u[0] = ux * cr - rx * sr; u[1] = uy * cr - ry * sr; u[2] = uz * cr - rz * sr;
+  const E = G3.cam; E[0] = px; E[1] = G3.eyeY + bobY; E[2] = -py;
+  const Vw = G3.view; Vw[0] = r[0]; Vw[1] = u[0]; Vw[2] = -f[0]; Vw[3] = 0; Vw[4] = r[1]; Vw[5] = u[1]; Vw[6] = -f[1]; Vw[7] = 0; Vw[8] = r[2]; Vw[9] = u[2]; Vw[10] = -f[2]; Vw[11] = 0;
+  Vw[12] = -(r[0] * E[0] + r[1] * E[1] + r[2] * E[2]); Vw[13] = -(u[0] * E[0] + u[1] * E[1] + u[2] * E[2]); Vw[14] = f[0] * E[0] + f[1] * E[1] + f[2] * E[2]; Vw[15] = 1;
+  const fovT = (walk ? 72 : 78) + (red ? 7 * clamp(spd / 30, 0, 1) : 0); G3.fov += (fovT - G3.fov) * Math.min(1, dt * 3);
+  const asp = G3.w / G3.h, fovy = G3.fov * DEG / Math.max(1, Math.min(asp, 1.78) / 1.78), th = Math.tan(fovy / 2);
+  m4persp(G3.proj, fovy, asp, G3C.NEAR, G3C.FAR); m4mul(G3.vp, G3.proj, Vw);
+  // ---- geometry upkeep
+  const lkey = G.layers.data + (G.layers.data === 'illum' || G.layers.data === 'temp' ? '|' + Math.round(env.hour * 2) : '');
+  const relayer = lkey !== G3.layerKey;
+  if (relayer) { G3.layerKey = lkey; for (let L = 0; L < G3.lv.length; L++) G3.lv[L].SI.fill(-2147483647);
+    const lay = LAYERS[G.layers.data], lut = lay && lay.ramp ? LUT[lay.ramp] : null; if (lut) { const px4 = new Uint8Array(1024); for (let i = 0; i < 256; i++) { px4[i * 4] = lut[i * 3]; px4[i * 4 + 1] = lut[i * 3 + 1]; px4[i * 4 + 2] = lut[i * 3 + 2]; px4[i * 4 + 3] = 255; } gl.bindTexture(gl.TEXTURE_2D, G3.tex.lut); gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, 256, 1, gl.RGBA, gl.UNSIGNED_BYTE, px4); } }
+  for (let L = 0; L < G3.lv.length; L++) g3Level(W, G3.lv[L], L, px, py, env, relayer);
+  g3Rocks(W, px, py);
+  g3Parked(W, R);
+  const marks = g3Fx(W, R);
+  // ---- environment uniforms
+  const el = env.elev * DEG, az = env.az * DEG, sun = [Math.sin(az) * Math.cos(el), Math.sin(el), -Math.cos(az) * Math.cos(el)];
+  const day = sstep(-6, 8, env.elev), storm = R ? clamp(R.stormK, 0, 1) : 0, night = 1 - sstep(-10, 2, env.elev), lamp = night * (R ? 1 : 0);
+  const setEnv = (p) => { gl.uniform3f(p.u.u_sun, sun[0], sun[1], sun[2]); gl.uniform3f(p.u.u_cam, E[0], E[1], E[2]); gl.uniform4f(p.u.u_env, day, storm, env.tauVis || 0.3, night); gl.uniform1f(p.u.u_time, G3.time); };
+  gl.viewport(0, 0, G3.w, G3.h); gl.disable(gl.BLEND); gl.disable(gl.CULL_FACE);
+  let p;
+  // terrain
+  gl.enable(gl.DEPTH_TEST); gl.depthMask(true); gl.depthFunc(gl.LEQUAL); gl.clear(gl.DEPTH_BUFFER_BIT);
+  p = G3.prog.ter; g3Use(p); setEnv(p); gl.uniformMatrix4fv(p.u.u_vp, false, G3.vp);
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, G3.tex.noise); gl.uniform1i(p.u.u_noise, 0); gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, G3.tex.lut); gl.uniform1i(p.u.u_lut, 1); gl.activeTexture(gl.TEXTURE0);
+  gl.uniform3f(p.u.u_opt, G.layers.offlimits ? 1 : 0, G.layers.data !== 'none' ? 1 : 0, lamp); gl.uniform3f(p.u.u_fwd, f[0], f[1], f[2]);
+  for (let L = 0; L < G3.lv.length; L++) {
+    const lv = G3.lv[L], ib = L === 0 ? G3.buf.idxFull : G3.buf.idxHole;
+    gl.uniform1f(p.u.u_drop, G3C.DROP[L]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lv.vb); g3Attr(p, 'a_pos', 3, gl.FLOAT, false, 24, 0); g3Attr(p, 'a_nrm', 3, gl.FLOAT, false, 24, 12);
+    gl.bindBuffer(gl.ARRAY_BUFFER, lv.mb); g3Attr(p, 'a_mat', 4, gl.UNSIGNED_BYTE, true, 4, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ib.b); gl.drawElements(gl.TRIANGLES, ib.n, gl.UNSIGNED_SHORT, 0);
+  }
+  // rocks + models
+  p = G3.prog.obj; g3Use(p); setEnv(p); gl.uniformMatrix4fv(p.u.u_vp, false, G3.vp); gl.uniform3f(p.u.u_opt, 0, 0, lamp); gl.uniform3f(p.u.u_fwd, f[0], f[1], f[2]);
+  const drawObj = (b, n) => { if (!n) return; gl.bindBuffer(gl.ARRAY_BUFFER, b); g3Attr(p, 'a_pos', 3, gl.FLOAT, false, 36, 0); g3Attr(p, 'a_nrm', 3, gl.FLOAT, false, 36, 12); g3Attr(p, 'a_col', 3, gl.FLOAT, false, 36, 24); gl.drawArrays(gl.TRIANGLES, 0, n); };
+  drawObj(G3.buf.rock, G3.rockN); drawObj(G3.buf.obj, G3.objN); if (R && R.parked) drawObj(G3.buf.veh, G3.vehN);
+  // sky last: only the pixels no terrain covered
+  p = G3.prog.sky; g3Use(p); setEnv(p); gl.depthMask(false);
+  gl.uniform3f(p.u.u_f, f[0], f[1], f[2]); gl.uniform3f(p.u.u_r, r[0] * th * asp, r[1] * th * asp, r[2] * th * asp); gl.uniform3f(p.u.u_u, u[0] * th, u[1] * th, u[2] * th);
+  gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.sky); g3Attr(p, 'a_p', 2, gl.FLOAT, false, 0, 0); gl.drawArrays(gl.TRIANGLES, 0, 3);
+  // path ribbons
+  gl.enable(gl.BLEND); gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA); gl.depthMask(false);
+  p = G3.prog.rib; g3Use(p); setEnv(p); gl.uniformMatrix4fv(p.u.u_vp, false, G3.vp);
+  gl.uniform1f(p.u.u_dir, R && (R.phase === 'return' || R.phase === 'site' && R.samples.length) ? -1 : 1); gl.uniform1f(p.u.u_vis, R && !R.comms ? 0.35 + 0.25 * Math.sin(G3.time * 9) : 1);
+  gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.rib); g3Attr(p, 'a_pos', 3, gl.FLOAT, false, 28, 0); g3Attr(p, 'a_dat', 4, gl.FLOAT, false, 28, 12); gl.drawArrays(gl.TRIANGLES, 0, G3.ribN);
+  // beacons
+  gl.blendFunc(gl.ONE, gl.ONE);
+  p = G3.prog.fx; g3Use(p); gl.uniformMatrix4fv(p.u.u_vp, false, G3.vp); gl.uniform3f(p.u.u_camR, Math.cos(G3.yaw), 0, Math.sin(G3.yaw)); gl.uniform1f(p.u.u_time, G3.time); gl.uniform1f(p.u.u_storm, storm);
+  gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.fx); g3Attr(p, 'a_base', 3, gl.FLOAT, false, 44, 0); g3Attr(p, 'a_uv', 2, gl.FLOAT, false, 44, 12); g3Attr(p, 'a_col', 4, gl.FLOAT, false, 44, 20); g3Attr(p, 'a_size', 2, gl.FLOAT, false, 44, 36);
+  gl.drawArrays(gl.TRIANGLES, 0, G3.fxN);
+  // dust
+  gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
+  p = G3.prog.pt; g3Use(p); gl.uniformMatrix4fv(p.u.u_vp, false, G3.vp); gl.uniform3f(p.u.u_cam, E[0], E[1], E[2]);
+  const wd = (env.to || 0) * DEG, wsp = (env.wind || 4), t = G3.time, box = storm > 0.3 ? 46 : 70;
+  gl.uniform3f(p.u.u_off, Math.sin(wd) * wsp * t * (1 + 4 * storm) - E[0], -0.15 * t - E[1], -Math.cos(wd) * wsp * t * (1 + 4 * storm) - E[2]);
+  gl.uniform4f(p.u.u_p, box, 0.5 + 2.6 * storm, G.reduced ? 0.12 : clamp(0.16 + wsp / 60 + storm, 0, 1), (0.16 + 0.5 * storm) * (0.35 + 0.65 * day));
+  gl.uniform3f(p.u.u_col, 0.86, 0.62, 0.44);
+  gl.bindBuffer(gl.ARRAY_BUFFER, G3.buf.pt); g3Attr(p, 'a_seed', 4, gl.FLOAT, false, 16, 0); gl.drawArrays(gl.POINTS, 0, G3C.PARTS);
+  // cockpit / gloves
+  gl.disable(gl.BLEND); gl.depthMask(true);
+  if (R && G3.cockN[vkey]) {
+    gl.clear(gl.DEPTH_BUFFER_BIT);
+    p = G3.prog.obj; g3Use(p); setEnv(p);
+    const pm = G3.view, T = G3.tmpM || (G3.tmpM = new Float32Array(16)); T.fill(0); T[15] = 1;
+    if (vkey === 'on_foot') { T[0] = T[5] = T[10] = 1; T[12] = -G3.roll * 3; T[13] = -bobY * 0.6 - 0.02 * Math.sin(G3.bob * 1.5) * mv + Math.min(0, G3.pitch) * 0.35; }
+    else { const vc = Math.cos(G3.vyaw), vs = Math.sin(G3.vyaw), B = [vc, 0, vs, 0, 1, 0, -vs, 0, vc];           // vehicle right, up, back in world
+      for (let j = 0; j < 3; j++) { const bx = B[j * 3], by = B[j * 3 + 1], bz = B[j * 3 + 2]; T[j * 4] = r[0] * bx + r[1] * by + r[2] * bz; T[j * 4 + 1] = u[0] * bx + u[1] * by + u[2] * bz; T[j * 4 + 2] = -(f[0] * bx + f[1] * by + f[2] * bz); }
+      T[13] = -bobY * 0.6; }
+    m4mul(pm, G3.proj, T);                                         // translate the cockpit slightly in view space
+    gl.uniformMatrix4fv(p.u.u_vp, false, pm); gl.uniform3f(p.u.u_opt, 1, 0, lamp);
+    gl.bindBuffer(gl.ARRAY_BUFFER, G3.cockO[vkey]); g3Attr(p, 'a_pos', 3, gl.FLOAT, false, 36, 0); g3Attr(p, 'a_nrm', 3, gl.FLOAT, false, 36, 12); g3Attr(p, 'a_col', 3, gl.FLOAT, false, 36, 24); gl.drawArrays(gl.TRIANGLES, 0, G3.cockN[vkey]);
+  }
+  g3Labels(marks, px, py, !!R && G.screen === 'play' && (!R || R.comms || marks.length < 3 || Math.sin(G3.time * 9) > -0.3));
+  // ---- compass + guidance
+  if (R && G.screen === 'play') {
+    const W2 = R.W; let gx, gy, name;
+    if (R.phase === 'site') { let best = null, bd = 1e18; W2.spots.forEach((sp) => { if (R.samples.some((s) => s.l === sp.label)) return; const d = Math.hypot(sp.x - px, sp.y - py); if (d < bd) { bd = d; best = sp; } }); if (best) { gx = best.x; gy = best.y; name = best.label; } else { gx = W2.A.x; gy = W2.A.y; name = 'A'; } }
+    else { const dir = R.phase === 'return' ? -1 : 1; routePoint(W2, clamp(R.s + dir * 45, 0, W2.L)); gx = RP.x; gy = RP.y; name = dir > 0 ? 'B' : 'A'; }
+    let rel = Math.atan2(gx - px, gy - py) - G3.yaw; rel = Math.atan2(Math.sin(rel), Math.cos(rel));
+    const hd = ((G3.yaw / DEG) % 360 + 360) % 360, card = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'][Math.round(hd / 45) % 8];
+    const arrow = $('cmpA'); arrow.style.transform = 'rotate(' + (rel / DEG).toFixed(0) + 'deg)'; setCls(arrow, 'off', Math.abs(rel) > 0.6);
+    G3.hint += dt; if (G3.hint > 0.2) { G3.hint = 0; setText($('cmpT'), card + ' ' + Math.round(hd).toString().padStart(3, '0') + '° · ' + (R.onRoute ? 'follow the line to ' + name : 'OFF ROUTE ' + Math.round(R.d) + ' m')); setCls($('cmp'), 'bad', !R.onRoute);
+      const tip = G.autopilot ? '' : g3Coach(R), co = $('coach'); setHidden(co, !tip); if (tip) { setText(co, tip[1]); co.className = tip[0]; }
+      // the visor reacts: damage flash + cracks, low-oxygen pulse, storm dust, frost, signal glitch
+      const vf = $('vfx'), integ = R.integ, o2f = R.hasO2 ? R.o2 / R.W.o2Cap : 1;
+      if (G3.lastInt !== undefined && integ < G3.lastInt - 0.4) { vf.classList.remove('hit'); void vf.offsetWidth; vf.classList.add('hit'); } G3.lastInt = integ;
+      setCls(vf, 'lowo2', o2f < 0.2 && !R.over); vf.style.setProperty('--dust', clamp(R.stormK, 0, 1).toFixed(2)); vf.style.setProperty('--frost', clamp(R.env.cold || 0, 0, 1).toFixed(2));
+      $('crack').style.opacity = clamp((62 - integ) / 45, 0, 1).toFixed(2); setCls($('hud'), 'glitch', !R.comms && !G.reduced); }
+    if (G3.locked && (G.paused || G.cut || R.site || G.drawer || R.over) && D.exitPointerLock) D.exitPointerLock();
+  }
+}
 
 // =====================================================================================================================
 // 13. hud / ui — DOM only, throttled to ~5 Hz, written only when values change
@@ -3112,6 +3791,7 @@ function show(name) {
   G.screen = name;
   setHidden($('title'), name !== 'title'); setHidden($('brief'), name !== 'brief'); setHidden($('end'), name !== 'end');
   setHidden($('hud'), name !== 'play'); setHidden($('touch'), !(name === 'play' && G.touch));
+  setHidden($('cmp'), !(name === 'play' && G3.on)); setHidden($('visor'), !(name === 'play' && G3.on)); if (name !== 'play') setHidden($('coach'), true);
   if (name !== 'play') { setHidden($('site'), true); setHidden($('drawer'), true); G.drawer = false; setHidden($('pause'), true); G.paused = false; $('toast').classList.remove('on'); }
   if (name === 'title' || name === 'brief') { G.R = null; G.cam.tv = 330; Snd.windLevel(0.05); if (G.W) { worldDispose(G.W); G.W = null; } if (G.attract) G.attract.fresh = true; }
   G.hudDirty = true;
@@ -3571,7 +4251,7 @@ function setPaused(p) {
 function toggleDrawer() { if (G.screen !== 'play') return; G.drawer = !G.drawer; setHidden($('drawer'), !G.drawer); if (G.drawer && G.R) drawerLive(G.R); }
 function toggleMute() { Snd.setMute(!G.mute); suitSay(G.mute ? 'Sound off.' : 'Sound on.', false); setText($('btnMute'), G.mute ? 'MUTED' : 'SOUND'); }
 function pauseInit() {
-  const keys = [['W A S D / arrows', 'Move'], ['Shift', 'Careful pace: slower, no scree slips, spots soft sand'], ['E / Space', 'Interact: work a spot, mini-game action, rock free of sand'],
+  const keys = [['W A S D', 'Move (W along your view, A / D strafe)'], ['Mouse / ← →', 'Look around (click the view to capture the mouse)'], ['Shift', 'Careful pace: slower, no scree slips, spots soft sand'], ['E / Space', 'Interact: work a spot, mini-game action, rock free of sand'],
     ['1 – 0', 'Use the tool in that belt slot (also clickable)'], ['G  R  F  O', 'GPR ping · Radio relay · Repair kit · Emergency O2 bottle'], ['B  C  H', 'Battery pack · Camera photo · Head home (start the return leg)'],
     ['L / Tab', 'Cycle data layer / open the Planner data drawer'], ['+ − / wheel', 'Zoom'], ['M', 'Mute'], ['P / Esc', 'Pause'], ['Click the ground', 'Point info: ground type, minerals, confidence'], ['Touch', 'Left joystick to move; ACT and CAREFUL buttons; tap tool slots']];
   const k = $('keys'); keys.forEach((r) => { const a = mk('span'); a.appendChild(mk('span', 'kbd', r[0])); k.appendChild(a); k.appendChild(mk('span', '', r[1])); });
@@ -3613,10 +4293,12 @@ function onKeyDown(e) {
   if (k === ' ' || k === 'Enter' || k.indexOf('Arrow') === 0) e.preventDefault();
   if (e.repeat) return;
   const R = G.R; if (!R || R.over) return;
+  if (k === ' ' && G3.on && !R.site && !R.stuck && nearSpot(R) < 0 && !G.autopilot) { g3Jump(R); return; }
   if (kl === ' ' || kl === 'e' || k === 'Enter') { IN.actHeld = true; interact(R); return; }
   if (kl >= '0' && kl <= '9' && kl.length === 1) { const t = R.tools.find((x) => x.digit === kl); if (t) useTool(R, t); return; }
   if (HOTKEY[kl]) { const t = toolBy(R, HOTKEY[kl]); if (t) useTool(R, t); else suitSay('That tool is not in this mission\'s kit.', false); return; }
   if (kl === 'h') { headHome(R); return; }
+  if (kl === 'v') { if (R.site) return; if (R.dis) mount(R); else if (canDismount(R)) dismount(R); else suitSay(R.W.veh.bat && !R.W.veh.suited ? 'Pressurised cabin: you stay inside and sample with the arm.' : 'Nothing to mount or dismount.', false); return; }
   if (kl === 'l') { const i = LAYER_ORDER.indexOf(G.layers.data); setLayer(LAYER_ORDER[(i + 1) % LAYER_ORDER.length]); suitSay('Layer: ' + LAYERS[G.layers.data].label, false); return; }
   if (kl === '+' || kl === '=') zoom(0.85); else if (kl === '-' || kl === '_') zoom(1 / 0.85);
 }
@@ -3629,7 +4311,12 @@ function zoom(f) { G.cam.tv = clamp(G.cam.tv * f, CFG.VIEW_MIN_M, CFG.VIEW_MAX_M
 function inputUpdate() {
   const K = IN.keys;
   let mx = (K.d || K.ArrowRight ? 1 : 0) - (K.a || K.ArrowLeft ? 1 : 0), my = (K.w || K.ArrowUp ? 1 : 0) - (K.s || K.ArrowDown ? 1 : 0);
+  const drive = G3.on && g3Driving();
+  if (G3.on) { mx = (K.d ? 1 : 0) - (K.a ? 1 : 0) + (drive ? (K.ArrowRight ? 1 : 0) - (K.ArrowLeft ? 1 : 0) : 0); my = (K.w || K.ArrowUp ? 1 : 0) - (K.s || K.ArrowDown ? 1 : 0); }
   if (IN.joy) { mx = IN.jx; my = IN.jy; }
+  IN.steer = drive ? clamp(mx, -1, 1) : 0;
+  if (drive) { const th = clamp(my, -1, 1) * (my < 0 ? CFG.DRIVE_REVERSE : 1); mx = Math.sin(G3.vyaw) * th; my = Math.cos(G3.vyaw) * th; }
+  else if (G3.on) { const c = Math.cos(G3.yaw), sn = Math.sin(G3.yaw), st = mx, fw = my; mx = st * c + fw * sn; my = fw * c - st * sn; }
   const l = Math.hypot(mx, my); if (l > 1) { mx /= l; my /= l; }
   IN.mx = mx; IN.my = my; IN.careful = !!K.Shift || IN.careLock;
 }
@@ -3764,7 +4451,7 @@ function routeStart() {
   }
   show('title'); titleRender();
   const prefs = store.get('marswalk.game.prefs', {}) || {};
-  if (!G.skip && !prefs.intro) { store.set('marswalk.game.prefs', Object.assign({}, typeof prefs === 'object' ? prefs : {}, { intro: 1 })); scene('intro'); }
+  if (STORY && !G.skip && !prefs.intro) { store.set('marswalk.game.prefs', Object.assign({}, typeof prefs === 'object' ? prefs : {}, { intro: 1 })); scene('intro'); }
 }
 function boot() {
   const Q = new URLSearchParams(location.search);
@@ -3772,7 +4459,7 @@ function boot() {
   G.speed = clamp(parseInt(Q.get('speed'), 10) || 1, 1, 200); G.seedParam = Q.has('seed') ? parseInt(Q.get('seed'), 10) : NaN;
   if (DIFF[Q.get('difficulty')]) G.diffKey = Q.get('difficulty');
   G.acc = 0; G.alpha = 1;
-  resize(); tileInit(); spriteInit(); pauseInit(); inputInit();
+  g3Init(); resize(); tileInit(); spriteInit(); pauseInit(); inputInit();
   setText($('btnMute'), G.mute ? 'MUTED' : 'SOUND');
   G.baked = BAKED.map((m) => normMission(m, { src: 'baked' })).filter((N) => N && N.cands.length);
   G.tracksLL = tracksDecode();

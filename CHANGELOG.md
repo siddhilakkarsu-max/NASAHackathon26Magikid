@@ -6,6 +6,71 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-15, game: vehicle handling, dismounting and a sample at B
+
+Branch `feat/Gk`.
+
+### Changed
+
+- **Vehicles drive like vehicles** (`frontend/game.html`). W accelerates, S brakes and reverses, A / D steer; the
+  vehicle carries momentum, steering needs speed, loose ground gives less grip, and the cockpit stays fixed to the
+  vehicle while the mouse looks around.
+- **Dismount and mount** with V on the bike and the open rover. The parked vehicle is a model in the world; on
+  foot the crew moves and breathes at walking rates and the vehicle draws only its hotel load. Site work steps the
+  crew off automatically.
+
+### Fixed
+
+- **Nothing to sample at B.** On several plans every sampling spot lay 110 to 640 m from B, so pressing E at the
+  B marker did nothing. The nearest spot is now placed on B.
+
+### Verification
+
+- Headless Chrome: drive, steer, reverse, dismount, "too far to mount", remount and sampling at B on the open
+  rover; bike and pressurised rover load without errors; autopilot completes all 14 baked routes.
+- 1 test (166 total).
+
+### Limits
+
+- Handling is a feel model, not vehicle dynamics. Not driven by hand with a real mouse and keyboard.
+
+## [Unreleased] - 2026-11-15, the game goes first-person 3D
+
+Branch `feat/Gk`.
+
+### Changed
+
+- **First-person 3D view** (`frontend/game.html`, section 12b, raw WebGL, no libraries). The player sees Mars
+  through the visor or over the vehicle's hood: W / S move along the view, A / D strafe, mouse or arrow keys look.
+  The planned route is a chevron line on the ground coloured by the plan's risk; light pillars mark A, B, sampling
+  spots, shelters and the turn-back point; off-limits ground is hatched red; data layers paint the terrain. Storms
+  close the view in, night uses a headlamp. The simulation, tools, hazards and planner hand-off are unchanged.
+- **Lighter dialogue.** Blocking Houston cutscenes are cut to one or two lines around the mission and become radio
+  calls during it; the intro plays from its button only. `?story=1` restores the full scripts.
+
+- **Helmet AR HUD.** The helmet rim frames the view and the HUD panels sit inside it, stacked so they do not
+  overlap. The visor reacts to damage, low oxygen, storms, cold and lost signal.
+- **Easier to pick up.** Missions start facing down the route, the path arrows point the way you travel, a guide
+  light floats ahead on the route, one plain-language hint shows at a time, and Space hops in Mars gravity.
+- **Models.** Lander with legs, ladder, hatch and solar wings; science station at B; rover with wheels, fenders,
+  console, dish and camera; bike handlebars and front wheel; cabin window frame and dash; suit forearms and gloves.
+
+### Added
+
+- URL params `view=2d` (top-down renderer, also the fallback without WebGL), `story=1`, `gq=low`.
+- A heading pill with an arrow to the next point on the route.
+- 2 tests (149 total).
+
+### Verification
+
+- Headless Chrome: autopilot completes all 14 baked routes in 3D from `file://`; all six death causes fire; manual
+  walking and strafing work; 59-60 frames per second on Intel UHD.
+
+### Limits
+
+- Terrain shape is scenery generated over the game's hazard fields, not the real Jezero elevation.
+- Clicking the ground for point values needs `view=2d`. Not checked on a phone; mouse capture not exercised by hand.
+- Live-planning and hand-off checks were not re-run on the 3D build (their code did not change).
 ## [Unreleased] - 2026-11-14, planner controls and game integration
 
 - Use one global Map view selector for imagery, terrain, weather and radiation;

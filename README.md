@@ -1,5 +1,19 @@
 # Marswalk Planner — Python back end + Cesium front end
 
+**NASA Space Apps Challenge 2026 · team MagiKid · Martian Map challenge.** Plan a safe Marswalk from real NASA data:
+type a goal ("find clay where water once flowed"), answer the assistant's questions, and get up to three routes
+checked for oxygen, storm shelter, radiation and the walk back, with eye-height views along the way.
+
+![Marswalk Planner: the assistant has planned a walk to clay deposits at Jezero crater](docs/images/planner.png)
+
+**Try it in two minutes** (Python 3.10+ and internet for the NASA map tiles):
+```bash
+git clone https://github.com/siddhilakkarsu-max/NASAHackathon26Magikid && cd NASAHackathon26Magikid
+./run.sh          # Windows: double-click run.bat. Then open http://localhost:8000
+```
+Type `I want to find clay` in the search bar, answer the two questions, then try `Walker's view`.
+Data sources: [docs/SUBMISSION_REFERENCES.md](docs/SUBMISSION_REFERENCES.md) · AI use: [AI_DISCLOSURE.md](AI_DISCLOSURE.md).
+
 Every pixel of Mars holds a vector of values (elevation, slope, roughness, ground firmness, …).
 User inputs (time of day, season, vehicle, EVA budget) are applied per pixel to produce
 a cost map, a safe route, a walk-back zone and a time-to-shelter map.

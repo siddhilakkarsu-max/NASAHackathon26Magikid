@@ -1,9 +1,9 @@
 # Marswalk: Survive the Route
 
-A survival game that plays the plan the Marswalk planner generates. You are the astronaut (or driver): follow the
-planned path from landing spot A to destination B, do the science with the planner's tool list, and get back to A
-alive. Run out of oxygen, battery or suit integrity, or use up every tool, and you die. Houston talks you through
-it in cutscenes, with the Earth-Mars signal delay.
+A first-person 3D survival game that plays the plan the Marswalk planner generates. You are the astronaut (or
+driver), seeing Mars through the visor or over the rover's hood: follow the planned path from landing spot A to destination B, do the science with the planner's tool list, and get back to A
+alive. Run out of oxygen, battery or suit integrity, or use up every tool, and you die. Houston stays on the radio
+in short calls with the Earth-Mars signal delay; the long cutscenes are off unless you add `?story=1`.
 
 Everything is in one file, `frontend/game.html` (no libraries, no build step). This document is both the player
 guide and the hand-over for the next developer or agent.
@@ -24,17 +24,43 @@ Pick a mission (or plan one), read the briefing, choose route #1, #2 or #3 and a
 
 | Key | Action |
 |---|---|
-| WASD / arrows | Move. Stay inside the shaded corridor around the dashed path |
+| W / S | On foot: walk forward / back along your view. In a vehicle: accelerate / brake and reverse. Follow the chevron line |
+| A / D | Strafe on foot. In a vehicle: steer (arrow keys steer too) |
+| V | Step off the bike or open rover, or mount it again from within 7 m (E beside it also mounts) |
+| Mouse (click the view first) or left / right arrows | Look around. Touch: drag the view |
 | Shift | Careful pace: slower, no scree strikes, spots soft sand nearby |
-| E / Space / Enter | Interact (start site work at a sampling spot, rock free of sand, mini-game action) |
+| E / Enter | Interact (start site work at a sampling spot, rock free of sand, mini-game action) |
+| Space | Hop in Mars gravity (interacts instead when you stand on a sampling spot) |
 | 1-9, 0 | Use the tool in that belt slot |
 | G, C, O, B, R, F | Radar ping, camera, emergency oxygen bottle, battery pack, radio relay, repair kit |
 | H | Head home (start the return leg) |
-| L / Tab | Cycle data layer / open the planner-data drawer |
+| L / Tab | Cycle data layer (painted on the ground) / open the planner-data drawer |
 | + / - / wheel | Zoom |
 | M, P or Esc | Mute, pause |
 
-Touch screens get a joystick and CAREFUL / ACT buttons; tool slots are tappable.
+Touch screens get a joystick (forward and strafe) and CAREFUL / ACT buttons; tool slots are tappable.
+
+What you see: the planned route is a chevron line on the ground, coloured by the plan's risk (green, yellow, red),
+with faint dashed lines at the corridor edges. Light pillars mark A (blue), B (orange), sampling spots (cyan),
+shelters (white) and the turn-back point (red). Off-limits ground is hatched red. The pill under the clock shows
+your heading and an arrow to the next point on the route.
+
+Vehicles handle like vehicles. They build up speed and coast, steering only bites while rolling and flips in
+reverse, loose ground gives less grip, and the cockpit stays fixed to the vehicle while you look around with the
+mouse. On the bike and the open rover, V steps you off: the vehicle stays parked where you left it as a model in
+the world (blue ring and label), you walk at on-foot speed and oxygen rate, and the vehicle draws only its hotel
+load. Sampling is done on foot, so starting site work steps you off automatically. The pressurised rover is
+sampled from inside. The autopilot never dismounts.
+
+The planner's sampling spots can all lie 100 to 600 m from B. The game places the nearest one on B itself, so
+there is always a sample to take where the route ends.
+
+The HUD is drawn as augmented reality inside the helmet: the rim of the helmet frames the view, and the panels
+(vitals left, clock and heading top, map right, radio lower left, tool belt bottom) are stacked so they do not
+overlap. A small green light floats on the route 38 m ahead as the thing to walk towards, and one plain-language
+hint at a time appears above the tool belt (what to press when stuck, breached, off the line, out of signal).
+The visor reacts: a red flash and cracks with damage, a red pulse under 20 % oxygen, dust on the glass in a
+storm, frost in the cold, and flickering panels when the signal is lost. Each mission starts facing down the route.
 
 **Win:** return to A with at least one sealed sample. Three samples, photos, resources left, time against the plan
 and integrity raise the score (grades S to D, weighted by the plan's decision-matrix weights).
@@ -57,6 +83,9 @@ breach), `tools` (every charge spent more than 30 m from A: 20 s countdown), `of
 | `skip=1`, `mute=1` | Skip cutscenes, start muted |
 | `seed=<int>` | Fix the random seed (default comes from the mission id) |
 | `touch=1\|0` | Force or hide touch controls |
+| `view=2d` | Top-down 2D renderer (also the automatic fallback without WebGL) |
+| `story=1` | Full Houston cutscenes and the intro on first visit |
+| `gq=low` | No antialiasing, device pixel ratio 1, for weak graphics |
 
 60-second demo: `game.html?baked=1&autopilot=1&speed=4` (open rover, ridge, dust-storm season: storm, comms
 blackout, scree and a return under pressure).
@@ -87,9 +116,10 @@ blackout, scree and a return under pressure).
 | 1611 | 9. Events: storm, soft sand, breach, comms blackout, turnaround, reserve, deaths |
 | 1794 | 10. Tools and site-work mini-games |
 | 2101 | 11. Cutscenes (`scene(name)`) and WebAudio |
-| 2509 | 12. Canvas rendering |
-| 2838 | 13. DOM HUD, title, briefing, drawer, end screen |
-| 3545-3657 | 14-16. Input, main loop, `window.__MW` |
+| 2509 | 12. 2D canvas rendering (fallback, `view=2d`) |
+| 2865 | 12b. First-person WebGL renderer: `h3` height field, clipmap terrain, rocks, path ribbons, beacons, dust, cockpits |
+| 3339 | 13. DOM HUD, title, briefing, drawer, end screen |
+| 4047-4161 | 14-16. Input, main loop, `window.__MW` |
 
 ### Data flow
 
@@ -118,6 +148,10 @@ surface-temperature formulas, risk colours, signal delay 4-24 min.
 
 The game calibrates each run to the plan: a clean on-route run uses the oxygen and battery the planner predicted
 (`kSpeed`, `kO2`, `kWh` in the snapshot), so the planner's own resource model changes carry over.
+
+The 3D view is drawn from the same world the simulation uses. Height comes from `h3(W, x, y)`: gentle along the
+surveyed corridor, craggy where the game's slope field is steep, with dunes on loose ground and craters off the
+corridor. It is scenery over the game's hazard fields, not the real Jezero elevation.
 
 Invented for play (all marked `[G]` in `CFG`): time compression (a round trip lasts about 2.5 to 6.5 real
 minutes), off-route penalties, terrain away from the corridor (generated, not the real surface), storms, soft
@@ -161,7 +195,16 @@ Selecting another mission cancels an outstanding live plan; a late response cann
 Both briefing and gameplay place imagery using the bounds returned with that image, independently of the
 mission's science raster bounds. Images without valid geographic bounds use the procedural fallback.
 
-### Verified on 2026-11-14 (headless Chrome, Intel UHD graphics)
+### Verified on 2026-11-15, first-person 3D build (headless Chrome, Intel UHD graphics)
+
+- Autopilot completes all 14 baked routes from `file://` in the 3D view, no console errors, no NaN meters.
+- All six death causes fire (15 checks).
+- Manual controls: turning to the route heading and holding W moves along the line; D strafes off it.
+- 59-60 frames per second, 1-2 ms of script per frame.
+- Not re-run on the 3D build: the 42 UI checks and the 16 live-planning and hand-off checks listed below (the
+  local server was down). The planning and hand-off code was not changed.
+
+### Verified on 2026-11-14, 2D build (headless Chrome, Intel UHD graphics)
 
 - Autopilot on Astronaut difficulty completes all 14 baked routes, served and from `file://`, with no console
   errors and no NaN meters.
@@ -183,4 +226,13 @@ mission's science raster bounds. Images without valid geographic bounds use the 
   plan's risk values.
 - Storms, breaches and tool wear are game rules; the planner has no such events.
 - Not checked on a real phone, in Firefox or Safari, or with a screen reader.
-- `game.html` is 525 KB, most of it the five baked missions.
+- `game.html` is 580 KB, most of it the five baked missions.
+- In the 3D view, clicking the ground for point values is not available (the mouse looks around); use `view=2d`
+  for that. Rover tracks and backup routes are drawn as ground lines only.
+- The 3D view was checked in headless Chrome only: not on a phone, and mouse capture was not exercised by hand.
+- The hop is visual only: it does not clear obstacles or change the simulation.
+- Vehicle handling is a feel model (momentum, speed-dependent steering, grip from firmness), not vehicle dynamics.
+  Top speed, energy and oxygen still come from the planner's numbers. Returning to A on foot without the
+  vehicle still counts as a success.
+- Models (lander, science station, rover, bike, cabin, gloves) are built from flat-shaded boxes, beams and
+  cylinders in code; they are recognisable, not detailed.
