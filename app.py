@@ -31,6 +31,7 @@ from PIL import Image
 from pydantic import BaseModel, Field
 
 import annotate
+import assistant
 import mission
 import murray
 import physics
@@ -993,6 +994,23 @@ def find(req: FindRequest):
 
 
 _missions = {}   # mission id -> facts for the explanation (last 50)
+
+
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"] = "user"
+    text: str = Field(..., max_length=1000)
+
+
+class AssistantRequest(BaseModel):
+    messages: list[ChatMessage] = Field(..., min_length=1, max_length=40)
+    state: dict = Field(default_factory=dict, description="what the page shows: region, hour, vehicle, has_mission, places")
+    memo: dict = Field(default_factory=dict, description="what this chat has settled; sent back each turn")
+
+
+@app.post("/api/assistant")
+def assistant_reply(req: AssistantRequest):
+    """Chat box: a sentence in, a reply + suggested answers + map actions out (built-in rules; AI if configured)."""
+    return assistant.reply([m.model_dump() for m in req.messages], req.state, req.memo)
 
 
 @app.get("/api/mission/options")

@@ -14,6 +14,9 @@
   const SECTIONS = [
     ["start", "Quick start", `
       <h3>Plan a Marswalk in four steps</h3>
+      <p><b>Easiest:</b> type a sentence in the search bar, like <i>I want to find clay</i>. The assistant asks what
+        it needs (time of day, how you travel), plans the mission and can then show the route in 3D or put you on the
+        ground. Or do it yourself:</p>
       <ol>
         <li><b>Find a place.</b> Type a name in the search bar at the top of the map (try <i>Jezero</i> or
           <i>Olympus Mons</i>), or pick one from <b>Region</b> in the panel.</li>
@@ -25,6 +28,14 @@
         <li><b>Look at the route.</b> Press <b>Play route</b> to watch it, or <b>Walker's view</b> to stand on the ground
           and see what the astronaut would see along the way.</li>
       </ol>
+      <h4>Around the screen</h4>
+      <ul>
+        <li><b>Left bar:</b> Plan, Results, Layers, Area data, Time and Point info each open their part of the panel;
+          Menu shows everything.</li>
+        <li><b>Chips next to the search bar:</b> one tap for 3D terrain, radiation, temperature, wind, minerals,
+          sunlight, sharp photos or rover tracks; tap again to turn off.</li>
+        <li><b>Buttons at the bottom right:</b> point north, 3D view, whole Mars, zoom in and out.</li>
+      </ul>
       <h4>Moving the map</h4>
       <ul>
         <li><b>Drag</b> to move. <b>Scroll</b> (or pinch) to zoom.</li>
@@ -271,7 +282,7 @@
   }
 
   // ------------------------------------------------------------- search bar ----
-  const input = el("input", { type: "search", placeholder: "Search Mars: Jezero, Olympus Mons… or a goal",
+  const input = el("input", { type: "search", placeholder: "Search Mars or ask: \"find clay near water\"",
                               autocomplete: "off", spellcheck: false });
   input.setAttribute("aria-label", "Search places on Mars, or type a mission goal");
   const go = el("button", { type: "button", textContent: "Go" });
@@ -310,11 +321,20 @@
     if (setup) setup.open = true;
     $("runMission").click();
   }
+  function ask(text) {
+    if (window.marsAssistant) window.marsAssistant.send(text); else planGoal(text);
+  }
   function render() {
-    const q = norm(input.value.trim());
-    items = q ? places().filter(p => norm(p.name).includes(q)).slice(0, 8) : places().slice(0, 8);
-    if (q) items.push({ name: `Plan a mission: “${input.value.trim()}”`, sub: "Use these words as the goal",
-                        act: () => planGoal(input.value.trim()) });
+    const raw = input.value.trim(), q = norm(raw);
+    items = q ? places().filter(p => norm(p.name).includes(q)).slice(0, 6) : places().slice(0, 6);
+    if (q) {
+      const askItem = { name: `Ask the assistant: “${raw}”`, sub: window.marsAssistant
+        ? "It plans missions, asks what it needs and drives the map" : "Use these words as the mission goal",
+        ask: true, act: () => { ask(raw); input.value = ""; } };
+      // a place name typed: the place first; a sentence: the assistant first
+      const placeFirst = items.length && (norm(items[0].name).startsWith(q) || q.split(/\s+/).length <= 2);
+      if (placeFirst) items.push(askItem); else items.unshift(askItem);
+    }
     on = 0;
     list.replaceChildren(...items.map((p, i) => {
       const li = el("li", { role: "option" }, p.name, el("small", { textContent: p.sub }));
@@ -333,7 +353,7 @@
     const p = items[i];
     if (!p) return;
     list.hidden = true;
-    if (!p.name.startsWith("Plan a mission")) input.value = p.name;
+    if (!p.ask) input.value = p.name;
     input.blur();
     p.act();
   }
@@ -347,6 +367,7 @@
     else if (e.key === "Escape") { list.hidden = true; input.blur(); }
   });
   go.onclick = () => { render(); choose(on); };
+  window.marsSearchPlaces = places;
 
   // ------------------------------------------------------- first-time quick start ----
   function firstTime() {
