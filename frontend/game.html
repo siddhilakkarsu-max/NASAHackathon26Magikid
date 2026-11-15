@@ -411,7 +411,6 @@ const CFG = {
   OBLIQUITY: 25.19,                  // [P] physics.sun_position
   T_NIGHT_BASE: 175, T_NIGHT_FIRM: 35, T_DAY_BASE: 185, T_DAY_SPAN: 105,   // [P] physics.surface_temp_k
   SIGNAL_MIN_MIN: 4, SIGNAL_MAX_MIN: 24,   // [P idea doc] Earth-Mars one-way light time, minutes
-  REGION_LAT: 18.4,                  // [P] cube centre latitude used for the sun
   // ---- engine [G]
   SIM_HZ: 30,                        // [G] fixed simulation rate; rendering interpolates
   MAX_FRAME_DT: 0.1,                 // [G] frame dt clamp (s)
@@ -661,9 +660,9 @@ function detailText(d) {             // FastAPI {detail}: string, or a list of {
   return '';
 }
 // POST /api/mission/stream — same SSE parsing as index.html: "data: <json>\n\n", event name in the JSON "type" field.
-async function planStream(req, onEv) {
+async function planStream(req, onEv, controller) {
   if (!API.on) throw new Error('No link to the planner (opened from a file). Pick a quick mission instead.');
-  const ctl = new AbortController(), to = setTimeout(() => ctl.abort(), CFG.NET_PLAN_MS);
+  const ctl = controller || new AbortController(), to = setTimeout(() => ctl.abort(), CFG.NET_PLAN_MS);
   const feed = (block) => {
     const lines = block.split('\n');
     for (let i = 0; i < lines.length; i++) {
@@ -705,6 +704,18 @@ function ll(o) {
   if (!o || typeof o !== 'object') return null;
   const lat = +o.lat, lon = +o.lon;
   return (isFinite(lat) && isFinite(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 360) ? { lat: lat, lon: lon } : null;
+}
+function geoRect(o) {
+  if (!o || typeof o !== 'object') return null;
+  const r = { west: num(o.west, NaN), south: num(o.south, NaN), east: num(o.east, NaN), north: num(o.north, NaN) };
+  return Object.values(r).every(Number.isFinite) && r.east > r.west && r.north > r.south &&
+    r.west >= -360 && r.east <= 360 && r.south >= -90 && r.north <= 90 ? r : null;
+}
+function routeRect(cands) {          // missing metadata: derive a local extent, never relocate a route to Jezero
+  const points = cands.flatMap((c) => [c.A, c.B].concat(c.route.points));
+  if (!points.length) return null;
+  return { west: Math.min(...points.map((p) => p.lon)) - 0.01, east: Math.max(...points.map((p) => p.lon)) + 0.01,
+    south: Math.max(-90, Math.min(...points.map((p) => p.lat)) - 0.01), north: Math.min(90, Math.max(...points.map((p) => p.lat)) + 0.01) };
 }
 const strs = (v) => arr(v).filter((s) => typeof s === 'string' || typeof s === 'number').map(String);
 function normCand(c, i, veh) {
@@ -795,9 +806,7 @@ function normMission(raw, meta) {
   arr(raw.candidates).forEach((c, i) => { const n = normCand(c, i, veh); if (n && cands.length < 6) cands.push(n); });
   const dropped = [];
   arr(raw.dropped).forEach((d) => { if (d && typeof d === 'object' && dropped.length < 8) dropped.push({ id: num(d.id, dropped.length + 1), B: ll(d.B), reason: str(d.reason, 'dropped') }); });
-  const rc = (raw.rect && typeof raw.rect === 'object') ? raw.rect : {};
-  const rect = { west: num(rc.west, REGION_RECT.west), south: num(rc.south, REGION_RECT.south), east: num(rc.east, REGION_RECT.east), north: num(rc.north, REGION_RECT.north) };
-  if (!(rect.east > rect.west) || !(rect.north > rect.south)) Object.assign(rect, REGION_RECT);
+  const rect = geoRect(raw.rect) || routeRect(cands) || Object.assign({}, REGION_RECT);
   const tk = (raw.tracks && typeof raw.tracks === 'object') ? raw.tracks : {}, tkm = (tk.km && typeof tk.km === 'object') ? tk.km : {};
   const ai = (meta.ai && typeof meta.ai === 'object') ? meta.ai : {};
   const aiPart = (o) => ({ reasoning: str(o && o.reasoning).slice(0, 6000), content: str(o && o.content).slice(0, 6000) });
@@ -806,7 +815,7 @@ function normMission(raw, meta) {
     id: str(raw.id, 'm' + hashStr(goal + vkey + skey + pkey).toString(16)), goal: goal, parser: str(st.parser, 'keywords'), model: st.model ? str(st.model) : '',
     targets: strs(st.targets), notUnderstood: strs(st.not_understood), veh: veh, season: season, priority: priority, weights: weights, criteria: criteria,
     greenOnly: !!st.green_only, sunElev: num(st.sun_elevation, NaN), localHour: clamp(num(st.local_hour, CFG.LOCAL_HOUR), 0, 24), tools: tools,
-    cands: cands, dropped: dropped, notes: strs(raw.notes), tracks: { rover: str(tk.rover, 'Perseverance'), green: num(tkm.green, 31.9), yellow: num(tkm.yellow, 14.1) },
+    cands: cands, dropped: dropped, notes: strs(raw.notes), tracks: { rover: str(tk.rover), green: num(tkm.green, NaN), yellow: num(tkm.yellow, NaN) },
     rect: rect, explanation: str(raw.explanation), explSource: str(raw.explanation_source, 'template'),
     scienceImg: str(raw.science_image), offImg: str(raw.offlimits_image), imageNote: str(raw.image_note),
     ai: { goal: aiPart(ai.goal), explain: aiPart(ai.explain) }, region: str(meta.region, 'jezero'),
@@ -1380,7 +1389,7 @@ const G = {                                  // app state (single instance)
   speed: 1, autopilot: false, skip: false, mute: false, seedParam: NaN, reduced: REDUCED,
   paused: false, cut: false, drawer: false, hidden: false,
   layers: { data: 'none', science: false, offlimits: true, tracks: true, ring: true, backups: true, imagery: false, shelters: true },
-  imgs: { science: null, off: null, imagery: null }, tracks: null, tracksReal: false, pixels: [], wxLive: {},
+  imgs: { science: null, off: null, imagery: null }, imageryRect: null, tracks: null, tracksReal: false, pixels: [], wxLive: {},
   cam: { x: 0, y: 0, view: 300, tv: 300, shake: 0 }, frame: 0, perf: { n: 0, buf: new Float32Array(600), bi: 0 },
   hudDirty: true, beltDirty: true, miniDirty: true, touch: false, lastRun: null, missionNote: '', dbg: { tiles: true, corridor: true, particles: true, light: true, hud: true }       // render-stage switches for profiling
 };
@@ -1430,9 +1439,10 @@ function wxTable(hour, ls) {
     pres: lerp(interpTab(A, hour, 3), interpTab(B, hour, 3), w) + presSeason - presNoon, wind: lerp(interpTab(A, hour, 4), interpTab(B, hour, 4), w),
     to: lerpAngle(interpTab(A, hour, 5), interpTab(B, hour, 5), w), tau: interpTab(WX_SEASON, ls, 2), tauVis: interpTab(WX_SEASON, ls, 3) };
 }
+function wxKey(N, W, hourInt) { return [N.region, N.id, N.season.ls, W.lat0, W.lon0, hourInt].join('|'); }
 function wxFetch(N, W, hourInt) {             // decorations only: silent on any failure
   if (!API.ok) return;
-  const key = N.id + '|' + hourInt;
+  const key = wxKey(N, W, hourInt);
   if (G.wxLive[key]) return;
   const slot = G.wxLive[key] = { ready: false };
   const body = { region: N.region, local_hour: hourInt % 24, ls: N.season.ls, lat: W.lat0, lon: W.lon0 };
@@ -1446,7 +1456,7 @@ function wxFetch(N, W, hourInt) {             // decorations only: silent on any
 function envTick(R) {
   const W = R.W, N = W.N, e = R.env, hour = (N.localHour + R.t) % 24, ls = N.season.ls, k = R.stormK;
   const wx = wxTable(hour, ls), h0 = Math.floor(N.localHour + R.t), f = N.localHour + R.t - h0;
-  const a = G.wxLive[N.id + '|' + h0], b = G.wxLive[N.id + '|' + (h0 + 1)];
+  const a = G.wxLive[wxKey(N, W, h0)], b = G.wxLive[wxKey(N, W, h0 + 1)];
   e.live = !!(a && a.ready);
   if (e.live) {
     const bb = (b && b.ready) ? b : a;
@@ -2565,7 +2575,7 @@ function particles(dt, R, env) {
   cx.fill();
 }
 function drawGeoImage(img, W, rect, alpha, op) {    // planner raster (512x410 over the region rect) -> current view, one drawImage
-  if (!img || !img.width) return;
+  if (!img || !img.width || !rect) return;
   const x0 = W.toX(rect.west), x1 = W.toX(rect.east), yN = W.toY(rect.north), yS = W.toY(rect.south);
   const mx = img.width / (x1 - x0), my = img.height / (yN - yS);
   let sx0 = (V.l - x0) * mx, sx1 = (V.r - x0) * mx, sy0 = (yN - V.t) * my, sy1 = (yN - V.b) * my;
@@ -2668,7 +2678,7 @@ function render(dt) {
     for (let ti = ti0; ti <= ti1 && budget > 0; ti++) if (!W.tiles.has(tileKey(ti, ay))) { tileGet(W, ti, ay, true); budget--; }
   }
   // ---- 2. overlays (toggleable planner layers)
-  if (LY.imagery && G.imgs.imagery) drawGeoImage(G.imgs.imagery, W, REGION_RECT, 0.34, 'overlay');
+  if (LY.imagery && G.imgs.imagery) drawGeoImage(G.imgs.imagery, W, G.imageryRect, 0.34, 'overlay');
   if (LY.data !== 'none' && LAYERS[LY.data]) {
     const ekey = LY.data + '|' + ((LY.data === 'illum' || LY.data === 'temp') ? Math.floor(env.hour * 2) + '|' + (R ? Math.round(R.stormK * 2) : 0) : '');
     LAYENV.elev = env.elev; LAYENV.az = env.az; LAYENV.dT = R ? -20 * R.stormK : 0; LAYENV.key = ekey;
@@ -2930,7 +2940,7 @@ function hudUpdate(R) {
   // weather strip
   const wa = $('windArrow');
   setText($('wxT'), 'AIR ' + fx(e.air, 0) + ' K · ' + fx(e.pres, 0) + ' Pa\nWIND ' + fx(e.wind, 1) + ' m/s ');
-  setText($('wxT2'), ' · τ ' + fx(e.tau, 2) + '\nGND ' + fx(e.gnd, 0) + ' K · ' + (e.live ? 'live API' : 'Jezero table'));
+  setText($('wxT2'), ' · τ ' + fx(e.tau, 2) + '\nGND ' + fx(e.gnd, 0) + ' K · ' + (e.live ? 'live API' : 'Jezero climate fallback'));
   const rot = 'rotate(' + Math.round(e.to) + 'deg)'; if (wa && wa.__r !== rot) { wa.__r = rot; wa.style.transform = rot; }
   // prompt
   let pr = '';
@@ -3098,6 +3108,7 @@ function pixelSamples(N, W) {                 // a handful of real /api/pixel sa
 
 // ---- screens
 function show(name) {
+  if (name === 'title') cancelPlan();
   G.screen = name;
   setHidden($('title'), name !== 'title'); setHidden($('brief'), name !== 'brief'); setHidden($('end'), name !== 'end');
   setHidden($('hud'), name !== 'play'); setHidden($('touch'), !(name === 'play' && G.touch));
@@ -3138,7 +3149,7 @@ function dossierHTML(N, ci) {
   if (N.notUnderstood.length) s += '<p class="small">Not understood: ' + esc(N.notUnderstood.join(', ')) + '</p>';
   s += '<p>' + esc(N.veh.label) + ': max slope ' + fx(N.veh.max_slope, 0) + '°, range ' + fx(N.veh.range_km, 0) + ' km</p>';
   s += '<p>' + esc(N.season.label) + ' · Ls ' + fx(N.season.ls, 0) + '° · dust risk ' + Math.round(N.season.dust_risk * 100) + '%; walk planned for ' + fmtClock(N.localHour) + ' local (sun ' +
-    fx(isFinite(N.sunElev) ? N.sunElev : sunElev(CFG.REGION_LAT, N.localHour, N.season.ls), 1) + '° up)</p>';
+    fx(isFinite(N.sunElev) ? N.sunElev : sunElev(C.A.lat, N.localHour, N.season.ls), 1) + '° up)</p>';
   s += '<p>Priority ' + esc(N.priority.label) + ': route cost weighs time ' + fx(N.priority.cost.time, 0) + ', energy ' + fx(N.priority.cost.energy, 0) + ', risk ' + fx(N.priority.cost.risk, 0) + (N.greenOnly ? '; sticking to green rover-verified tracks' : '; green-only off') + '</p>';
   if (N.plannerView) s += '<p class="small">Planner map view at hand-off: local solar time ' + fmtClock(num(N.plannerView.hour, 11)) + ', Ls ' + fx(num(N.plannerView.ls, 90), 1) + '° (the plan itself is evaluated at ' + fmtClock(N.localHour) + ').</p>';
   if (N.note) s += '<p class="warn">' + esc(N.note) + '</p>';
@@ -3167,9 +3178,11 @@ function dossierHTML(N, ci) {
       '% reserve left · ' + fx(C.route.green_pct, 0) + '% vs ' + fx(a.route.green_pct, 0) + '% on green track</p>';
   }
   if (N.dropped.length) { s += '<h3>Dropped candidates</h3>'; N.dropped.forEach((d) => { s += '<p class="bad">Dropped B' + esc(d.id) + (d.B ? ' (' + degTxt(d.B) + ')' : '') + ': ' + esc(d.reason) + '</p>'; }); }
-  s += '<h3>Rover tracks</h3><p class="small">' + esc(N.tracks.rover) + '\'s real drives: ' + fx(N.tracks.green, 1) + ' km green (drove without warning signs), ' + fx(N.tracks.yellow, 1) +
-    ' km yellow (high strain: tilt ≥12°, slope ≥12° or loose ground). Red = off-limits: beyond the vehicle\'s limits. This route: ' + fx(C.route.green_pct, 0) + '% on green track.' +
-    (API.ok ? '' : ' Offline: the track lines drawn are a decimated copy.') + '</p>';
+  s += '<h3>Rover tracks</h3><p class="small">' + (N.tracks.rover
+    ? esc(N.tracks.rover) + '\'s real drives: ' + fx(N.tracks.green, 1) + ' km green (drove without warning signs), ' + fx(N.tracks.yellow, 1) + ' km yellow (high strain: tilt ≥12°, slope ≥12° or loose ground). '
+    : 'No rover-track survey was supplied for this region. ') +
+    'Red = off-limits: beyond the vehicle\'s limits. This route: ' + fx(C.route.green_pct, 0) + '% on green track.' +
+    (!API.ok && N.region === 'jezero' ? ' Offline: the track lines drawn are a decimated copy.' : '') + '</p>';
   s += '<h3>Links</h3><p><a href="' + esc(kitHref(N, C)) + '" target="_blank" rel="noopener">Gear for this route (kit page)</a> · <a href="index.html">Back to the Marswalk Planner</a></p>';
   return s;
 }
@@ -3225,7 +3238,7 @@ function titleInit() {
     ev.preventDefault(); Snd.init();
     const goal = $('fGoal').value.trim();
     if (!goal) { termLine('Type a mission goal first, e.g. "olivine" or "carbonate in a valley".', 'e'); return; }
-    planLive({ region: 'jezero', goal: goal, vehicle: $('fVehicle').value, season: $('fSeason').value, priority: $('fPriority').value, green_only: $('fGreen').checked }, false);
+    planLive({ region: G.N ? G.N.region : (new URLSearchParams(location.search).get('region') || 'jezero'), goal: goal, vehicle: $('fVehicle').value, season: $('fSeason').value, priority: $('fPriority').value, green_only: $('fGreen').checked }, false);
   });
   $('btnIntro').addEventListener('click', () => { Snd.init(); const sk = G.skip; G.skip = false; scene('intro', null, () => { G.skip = sk; }); });
   $('bBack').addEventListener('click', () => { show('title'); titleRender(); });
@@ -3249,14 +3262,25 @@ function readHandoff() {
   return (N && N.cands.length) ? N : null;
 }
 // live planning through POST /api/mission/stream, streamed into the Houston terminal
-async function planLive(req, auto) {
-  const btn = $('fPlan'); btn.disabled = true;
+const PLAN = { generation: 0, controller: null };
+function cancelPlan() {
+  PLAN.generation++;
+  if (PLAN.controller) PLAN.controller.abort();
+  PLAN.controller = null;
+  if ($('fPlan')) $('fPlan').disabled = false;
+}
+async function planLive(req, auto, selected) {
+  cancelPlan();
   if (G.screen !== 'title') show('title');
+  const generation = PLAN.generation, controller = PLAN.controller = new AbortController();
+  const current = () => generation === PLAN.generation && PLAN.controller === controller;
+  const btn = $('fPlan'); btn.disabled = true;
   termLine('> PLAN  goal="' + req.goal + '"  vehicle=' + req.vehicle + '  season=' + req.season + '  priority=' + req.priority + (req.green_only ? '  green-only' : ''), '');
   let raw = null, err = '';
   const ai = { goal: { reasoning: '', content: '' }, explain: { reasoning: '', content: '' } };
   try {
     await planStream(req, (ev) => {
+      if (!current()) return;
       const t = ev.type;
       if (t === 'status') termLine('HOUSTON: ' + str(ev.text));
       else if (t === 'ai') { const ph = ev.phase === 'explain' ? ai.explain : ai.goal, kd = ev.kind === 'reasoning' ? 'reasoning' : 'content', tx = str(ev.text); if (ph[kd].length < 6000) ph[kd] += tx; termAI(kd, tx); }
@@ -3264,15 +3288,17 @@ async function planLive(req, auto) {
       else if (t === 'note') termLine('NOTE: ' + str(ev.text));
       else if (t === 'explanation') { if (raw) { raw.explanation = str(ev.text); raw.explanation_source = str(ev.source, 'template'); } termLine('FLIGHT: ' + str(ev.text)); }
       else if (t === 'error') { err = str(ev.text, 'The planner reported an error.'); }
-    });
+    }, controller);
   } catch (e) { err = (e && e.message) ? String(e.message) : 'The planner could not be reached.'; }
+  if (!current()) return null;
+  PLAN.controller = null;
   btn.disabled = false;
   if (err && !raw) {
     termLine('PLANNER: ' + err, 'e');
     if (auto) { const fb = G.baked[0]; G.missionNote = 'Live planning failed (' + err.slice(0, 140) + '). Showing a baked mission instead.'; if (fb) { fb.note = G.missionNote; openBriefing(fb); } else titleRender(); }
     return null;
   }
-  const N = raw ? normMission(raw, { src: 'live', request: req, ai: ai, region: req.region }) : null;
+  const N = raw ? normMission(raw, { src: 'live', request: req, ai: ai, region: req.region, selected: selected }) : null;
   if (!N || !N.cands.length) {
     termLine(N ? 'PLANNER: no candidate passed the safety and resource checks. ' + N.explanation : 'PLANNER: the reply held no usable plan.', 'e');
     if (N) N.dropped.forEach((d) => termLine('  dropped B' + d.id + ': ' + d.reason, 'e'));
@@ -3297,11 +3323,29 @@ function tracksToWorld(W) {
   }).filter((t) => t.p.length >= 4);
 }
 function decorFetch(N) {            // optional real-data decorations; every call silent on failure
+  const key = N.region + '|' + N.veh.key;
+  if (G.decorKey !== key) {
+    G.decorKey = key; G.imgs.imagery = null; G.imageryRect = null; G.imgReq = false; G.tracksReal = false; BMAP.bg = null;
+    G.tracksLL = N.region === 'jezero' ? tracksDecode() : [];
+    if (G.W) tracksToWorld(G.W);
+    if (G.screen === 'brief') drawBriefMap();
+  }
   if (!API.ok) return;
-  if (!G.imgs.imagery && !G.imgReq) { G.imgReq = true; apiJSON('/api/layer/imagery', { region: N.region }).then((r) => loadImg(r && r.image)).then((im) => { if (im) { G.imgs.imagery = im; BMAP.bg = null; if (G.screen === 'brief') drawBriefMap(); } else G.imgReq = false; }); }
-  if (G.tracksReal !== N.veh.key) {
+  if (!G.imgs.imagery && !G.imgReq) {
+    G.imgReq = true;
+    apiJSON('/api/layer/imagery', { region: N.region }).then(async (r) => {
+      const rect = geoRect(r && r.rect);
+      const im = rect ? await loadImg(r.image) : null;
+      if (G.decorKey !== key) return;
+      if (im) {
+        G.imgs.imagery = im; G.imageryRect = rect; BMAP.bg = null;
+        if (G.screen === 'brief') drawBriefMap();
+      } else G.imgReq = false;
+    });
+  }
+  if (G.tracksReal !== key) {
     apiJSON('/api/tracks?region=' + encodeURIComponent(N.region) + '&vehicle=' + encodeURIComponent(N.veh.key)).then((r) => {
-      if (!r || !Array.isArray(r.segments) || !r.segments.length) return;
+      if (G.decorKey !== key || !r || !Array.isArray(r.segments)) return;
       const out = [];
       r.segments.forEach((sg) => {
         const co = arr(sg && sg.coords); if (co.length < 2 || out.length > 800) return;
@@ -3309,8 +3353,7 @@ function decorFetch(N) {            // optional real-data decorations; every cal
         for (let i = 0; i < co.length; i++) { const c = co[i]; if (!Array.isArray(c) || !isFinite(+c[0]) || !isFinite(+c[1])) { ok = false; break; } ll_[i * 2] = +c[0]; ll_[i * 2 + 1] = +c[1]; }
         if (ok) out.push({ c: sg.class === 'yellow' ? 1 : 0, ll: ll_ });
       });
-      if (!out.length) return;
-      G.tracksLL = out; G.tracksReal = N.veh.key;
+      G.tracksLL = out; G.tracksReal = key;
       if (G.W) tracksToWorld(G.W);
       if (G.screen === 'brief') drawBriefMap();
     });
@@ -3334,6 +3377,7 @@ function briefRender() {
   drawBriefMap();
 }
 function openBriefing(N) {
+  cancelPlan();
   G.N = N; G.ci = clamp(N.selected | 0, 0, N.cands.length - 1); G.imgs.science = null; G.imgs.off = null;
   show('brief'); $('brief').scrollTop = 0; briefRender();
   loadImg(N.scienceImg).then((im) => { if (G.N === N) { G.imgs.science = im; if (G.screen === 'brief') drawBriefMap(); } });
@@ -3364,7 +3408,11 @@ function drawBriefMap() {
   c.imageSmoothingEnabled = true;
   const rx0 = X(rc.west), rx1 = X(rc.east), ry0 = Y(rc.north), ry1 = Y(rc.south);
   c.fillStyle = '#120c09'; c.fillRect(0, 0, w, hh);
-  if (G.imgs.imagery) { c.drawImage(G.imgs.imagery, rx0, ry0, rx1 - rx0, ry1 - ry0); c.globalCompositeOperation = 'multiply'; c.fillStyle = '#d98a55'; c.fillRect(0, 0, w, hh); c.globalCompositeOperation = 'source-over'; }
+  if (G.imgs.imagery && G.imageryRect) {
+    const ir = G.imageryRect, ix0 = X(ir.west), iy0 = Y(ir.north);
+    c.drawImage(G.imgs.imagery, ix0, iy0, X(ir.east) - ix0, Y(ir.south) - iy0);
+    c.globalCompositeOperation = 'multiply'; c.fillStyle = '#d98a55'; c.fillRect(0, 0, w, hh); c.globalCompositeOperation = 'source-over';
+  }
   else c.drawImage(BMAP.bg, rx0, ry0, rx1 - rx0, ry1 - ry0);
   if (G.imgs.science) { c.globalAlpha = 0.5; c.drawImage(G.imgs.science, rx0, ry0, rx1 - rx0, ry1 - ry0); }
   if (G.imgs.off) { c.globalAlpha = 0.7; c.drawImage(G.imgs.off, rx0, ry0, rx1 - rx0, ry1 - ry0); }
@@ -3398,6 +3446,7 @@ function drawBriefMap() {
 
 // ---- mission start
 function startMission(N, ci, diffKey) {
+  cancelPlan();
   ci = clamp(ci | 0, 0, N.cands.length - 1);
   worldDispose(G.W); worldDispose(G.attract);
   const seed = isFinite(G.seedParam) ? (G.seedParam >>> 0) : hashStr(N.id + '|' + N.cands[ci].id + '|' + ci);
@@ -3707,8 +3756,10 @@ function routeStart() {
   } else if (Q.get('goal')) {
     const req = { region: Q.get('region') || 'jezero', goal: String(Q.get('goal')).slice(0, 300), vehicle: VEH[Q.get('vehicle')] ? Q.get('vehicle') : 'on_foot', season: SEASONS[Q.get('season')] ? Q.get('season') : 'northern_summer',
       priority: PRIORITIES[Q.get('priority')] ? Q.get('priority') : 'safety', green_only: Q.get('green_only') === '1' || Q.get('green_only') === 'true' };
+    const ls = Q.has('ls') && Q.get('ls').trim() !== '' ? Number(Q.get('ls')) : NaN;
+    if (isFinite(ls) && ls >= 0 && ls <= 360) req.ls = ls;
     show('title'); titleRender(); $('fGoal').value = req.goal; $('fVehicle').value = req.vehicle; $('fSeason').value = req.season; $('fPriority').value = req.priority; $('fGreen').checked = req.green_only;
-    planLive(req, true).then((N) => { if (N && direct) { N.briefed = true; startMission(N, clamp(cand, 0, N.cands.length - 1), G.diffKey); } });
+    planLive(req, true, cand).then((N) => { if (N && direct) { N.briefed = true; startMission(N, N.selected, G.diffKey); } });
     return;
   }
   show('title'); titleRender();

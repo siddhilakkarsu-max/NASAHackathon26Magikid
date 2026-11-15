@@ -1275,7 +1275,8 @@ async function runMission() {
   try {
     if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) setMsg($("mStatus"), t); });
     if (!isCurrent()) return;
-    await streamEvents("/api/mission/stream", { region: regionId(), goal, vehicle: $("mVehicle").value,
+    const requestRegion = regionId();
+    await streamEvents("/api/mission/stream", { region: requestRegion, goal, vehicle: $("mVehicle").value,
       ls: +$("ls").value, priority: $("mPriority").value, green_only: $("greenOnly").checked }, async (e) => {
       if (!isCurrent()) return;
       if (e.type === "ai" && /^Waiting for the AI/.test($("mStatus").innerText))   // our turn now
@@ -1290,7 +1291,7 @@ async function runMission() {
       }
       else if (e.type === "ai" && e.phase === "goal") { goalAI[e.kind] += e.text; renderLiveGoal(goalAI); }
       else if (e.type === "result") {
-        res = e.mission; res.goal_ai = goalAI;
+        res = e.mission; res.goal_ai = goalAI; res.request_region = requestRegion;
         res.explain_ai = { reasoning: "", content: "", live: !!res.candidates.length };
         res.annot_ai = { reasoning: "", content: "", live: res.candidates.some((c) => (c.map_notes || []).length) };
         if (mission) prevMission = mission;
@@ -1499,7 +1500,7 @@ const MISSION_GEAR_VEHICLE = { on_foot: "astronaut", two_wheel: "unpressurized_r
                                four_wheel: "unpressurized_rover", buggy: "pressurized_rover" };
 function missionGearHref(c) {
   const s = mission.settings, v = MISSION_GEAR_VEHICLE[s.vehicle.key];
-  const q = new URLSearchParams({ archetype: "traverse", region: $("region").value || "jezero" });
+  const q = new URLSearchParams({ archetype: "traverse", region: mission.request_region || regionId() });
   if (v) q.set("vehicle", v);
   q.set("base", `${c.A.lat},${c.A.lon}`); q.set("target", `${c.B.lat},${c.B.lon}`);
   q.set("ls", s.season.ls); q.set("hour", s.local_hour);

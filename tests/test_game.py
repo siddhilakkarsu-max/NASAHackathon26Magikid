@@ -10,7 +10,6 @@ import re
 import shutil
 import subprocess
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 
@@ -53,11 +52,18 @@ class GameTest(unittest.TestCase):
         node = shutil.which("node")
         if not node:
             self.skipTest("node is not installed")
-        with tempfile.TemporaryDirectory() as d:
-            f = Path(d) / "game.js"
-            f.write_text(self.script, encoding="utf-8")
-            r = subprocess.run([node, "--check", str(f)], capture_output=True, text=True)
+        r = subprocess.run([node, "--check"], input=self.script, capture_output=True,
+                           text=True, encoding="utf-8")
         self.assertEqual(r.returncode, 0, r.stderr[:500])
+
+    def test_launcher_behavior(self):
+        """The selected plan survives edited controls, dynamic regions, and storage failure."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("node is not installed")
+        r = subprocess.run([node, str(ROOT / "docs" / "game" / "launcher_test.js")],
+                           capture_output=True, text=True, cwd=ROOT)
+        self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
 
     def test_baked_missions_are_playable_plans(self):
         self.assertGreaterEqual(len(self.baked), 3)
