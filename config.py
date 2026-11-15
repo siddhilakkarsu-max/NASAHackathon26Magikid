@@ -186,6 +186,13 @@ CONSUMABLE_SOURCES = {
                     "~3.3 kWh per km.",
     "estimate": "Engineering estimate for a conceptual crew rover - no published NASA figure was "
                 "available for these loads. Treat the numbers as tunable, not as fact.",
+    "mars_pr_battery": "NASA Mars Architecture Team pressurized rover (Chappell, Hoffman and Bekdash, \"Human Mars "
+                       "Mission Surface Power Impacts on Timeline and Traverse Capabilities\", IEEE Aerospace "
+                       "Conference 2022, NTRS 20210022250): 5,193 kg with 60 kWh of batteries, a 1.85 kW hotel load "
+                       "for everything but driving, and transport cost = rolling resistance 0.15 x mass x gravity x "
+                       "distance, which on Mars is 0.80 kWh per km. The study keeps crewed traverses within about "
+                       "20 km of the landing site. Speed 10 km/h is the NASA SEV / Lunar Electric Rover prototype's "
+                       "(NASA fact sheet); the study assumed an 8 km/h average.",
     "lrv_battery": "Apollo LRV: two 36 V silver-zinc batteries of 121 A-h each (about 8.7 kWh together) "
                    "and a 92 km range, so about 0.095 kWh per km averaged over everything the batteries "
                    "ran. The crew breathe suit oxygen at the astronaut rate. NASA's DRA 5.0 proposes "
@@ -220,9 +227,10 @@ CONSUMABLE_RESERVE = dict(normal=0.15, dust_season=0.20, dust_season_ls=(180.0, 
 #   recharge_ratio: hours of charging per hour of driving (team research, Gia), used only where
 #                   no published array figure exists
 VEHICLE_POWER = {
-    "pressurized_rover": dict(source="battery", mass_kg=4000.0, recharge_ratio=2.0,
-                              note="SEV concept: cabin 3,000 kg + chassis 1,000 kg. Recharge ratio 2:1 is the "
-                                   "team's resource research figure, not a NASA one."),
+    "pressurized_rover": dict(source="battery", mass_kg=5193.0, recharge_ratio=2.0,
+                              note="NASA Mars pressurized rover study (Chappell et al. 2022): 5,193 kg with its "
+                                   "60 kWh battery. Recharge ratio 2:1 is the team's resource research figure, "
+                                   "not a NASA one."),
     "unpressurized_rover": dict(source="primary", mass_kg=210.0,
                                 note="Apollo LRV mass; its silver-zinc batteries were not rechargeable."),
     "small_rover": dict(source="nuclear", mass_kg=899.0, note="Curiosity, MMRTG."),
@@ -234,16 +242,25 @@ VEHICLE_POWER = {
 }
 
 # Vehicle / walker profiles. Weights are tunable during the demo.
+# The crewed ones (astronaut, pressurized_rover, unpressurized_rover) are also the mission planner's on_foot,
+# buggy and four_wheel: MISSION_VEHICLES below is built from these entries, so change the numbers here only.
 VEHICLES = {
+    # max_slope 18: NASA sizes the exploration suit for walking up, down and across slopes of up to 20 deg
+    # (Exploration EVA System Concept of Operations, EVA-EXP-0075, 2020); Apollo 15 crews walked ~17 deg slopes
+    # and Apollo crews put the unassisted limit at 20-26 deg (Scheuring et al. 2007, NTRS 20070030109).
+    # 18 keeps a margin under the 20 deg design figure; the margin itself is the team's choice.
     "astronaut": dict(label="Astronaut on foot (suited)", max_slope=18.0, base_speed_kmh=6.0,
                       suit_factor=0.5, sand_penalty=1.5, rough_penalty=1.0, uses_slip_table=False,
                       rated_hours=8.0, consumable_source="suit_o2",
                       consumables=dict(_SUIT_O2_SUPPLY)),
+    # NASA Mars pressurized rover (see CONSUMABLE_SOURCES["mars_pr_battery"]): 60 kWh, 1.85 kW hotel load,
+    # 0.15 x 5,193 kg x 3.711 m/s2 = 2.89 kN of rolling resistance = 0.80 kWh per km. Terrain penalties are
+    # the team's, not NASA's.
     "pressurized_rover": dict(label="Pressurized crew rover", max_slope=20.0, base_speed_kmh=10.0,
                               suit_factor=1.0, sand_penalty=3.0, rough_penalty=2.0, uses_slip_table=True,
-                              rated_hours=12.0, consumable_source="estimate",
-                              consumables=dict(energy_capacity_kwh=20.0, energy_idle_kw=1.5,
-                                               energy_per_km_kwh=0.12)),
+                              rated_hours=12.0, consumable_source="mars_pr_battery",
+                              consumables=dict(energy_capacity_kwh=60.0, energy_idle_kw=1.85,
+                                               energy_per_km_kwh=0.80)),
     # Apollo LRV figures (flown 1971-72). Design top speed 10 km/h; NASA's LRV mobility report found
     # 20-23 deg slopes workable (spec 25), so 20 here. Terrain penalties copied from the crew rover.
     "unpressurized_rover": dict(label="Open crew rover (Apollo LRV-class)", max_slope=20.0, base_speed_kmh=10.0,
@@ -291,7 +308,8 @@ VEHICLES = {
 
 # ===========================================================================
 # MISSION PLANNER (mission.py). Every number below is a first-order assumption for the demo:
-# tune freely, and say "approximate" if judges ask.
+# tune freely, and say "approximate" if judges ask. Exception: the vehicles shared with VEHICLES (see
+# MISSION_VEHICLE_OF) take their numbers, and sources, from there.
 # ===========================================================================
 
 # Real rover traverses (NASA/JPL mission maps), fetched with: python fetch_tracks.py <region>
@@ -311,19 +329,43 @@ TRACK_RULES = dict(
 # Vehicles. max_slope / range_km are hard limits. Suited crews (on foot, open rovers) are also limited by
 # suit oxygen (SUIT below).
 # Battery vehicles: battery_wh, wh_per_km on flat firm ground, hotel_w for computers/heaters/radios.
+# on_foot, four_wheel and buggy are the route planner's astronaut, unpressurized_rover and pressurized_rover:
+# their physical numbers (slope, speed, terrain penalties, mass, battery, energy per km, idle power) come from
+# VEHICLES / VEHICLE_POWER and their sources. Only range_km and suited are set here.
+MISSION_VEHICLE_OF = {"on_foot": "astronaut", "four_wheel": "unpressurized_rover", "buggy": "pressurized_rover"}
+
+
+def _mission_vehicle(mission_key, range_km, suited):
+    """The mission planner entry for `mission_key`, read from its VEHICLES profile (kWh -> Wh, kW -> W),
+    plus the mission-only range_km (one way) and suited."""
+    key = MISSION_VEHICLE_OF[mission_key]
+    v = VEHICLES[key]
+    c = v.get("consumables") or {}
+    out = dict(label=v["label"], max_slope=v["max_slope"], range_km=range_km, base_speed_kmh=v["base_speed_kmh"],
+               suit_factor=v["suit_factor"], sand_penalty=v["sand_penalty"], rough_penalty=v["rough_penalty"],
+               uses_slip_table=v["uses_slip_table"],
+               mass_kg=VEHICLE_POWER.get(key, {}).get("mass_kg", WALKER["body_kg"] + WALKER["suit_kg"]),
+               suited=suited, battery_wh=None)
+    if c.get("energy_capacity_kwh"):
+        out.update(battery_wh=round(c["energy_capacity_kwh"] * 1000, 3),
+                   wh_per_km=round(c["energy_per_km_kwh"] * 1000, 3), hotel_w=round(c["energy_idle_kw"] * 1000, 3))
+    return out
+
+
 MISSION_VEHICLES = {
-    "on_foot": dict(label="On foot (suited astronaut)", max_slope=15.0, range_km=2.0, base_speed_kmh=6.0,
-                    suit_factor=0.5, sand_penalty=1.5, rough_penalty=1.0, uses_slip_table=False,
-                    mass_kg=170, suited=True, battery_wh=None),
-    "two_wheel": dict(label="2-wheel scout bike", max_slope=15.0, range_km=15.0, base_speed_kmh=8.0,
+    # range 2 km: NASA's exploration EVA concept of operations plans walking traverses up to 2 km from the lander
+    "on_foot": _mission_vehicle("on_foot", range_km=2.0, suited=True),
+    # Team estimate, not a published vehicle: no source for any of these numbers. 14 km (was 15) so the round
+    # trip (1.8 kWh) fits in the 2.5 kWh battery after the largest (25 %) reserve.
+    "two_wheel": dict(label="2-wheel scout bike", max_slope=15.0, range_km=14.0, base_speed_kmh=8.0,
                       suit_factor=1.0, sand_penalty=3.5, rough_penalty=2.5, uses_slip_table=True,
                       mass_kg=250, suited=True, battery_wh=2500, wh_per_km=60, hotel_w=30),
-    "four_wheel": dict(label="4-wheel open rover (LRV-class)", max_slope=20.0, range_km=30.0, base_speed_kmh=10.0,
-                       suit_factor=1.0, sand_penalty=2.5, rough_penalty=2.0, uses_slip_table=True,
-                       mass_kg=550, suited=True, battery_wh=12000, wh_per_km=150, hotel_w=100),
-    "buggy": dict(label="Pressurized buggy (6-wheel)", max_slope=20.0, range_km=100.0, base_speed_kmh=12.0,
-                  suit_factor=1.0, sand_penalty=2.0, rough_penalty=1.5, uses_slip_table=True,
-                  mass_kg=3000, suited=False, battery_wh=90000, wh_per_km=600, hotel_w=1500),
+    # 30 km one way: 60 km x 95 Wh/km = 5.7 kWh, inside the 8.71 kWh LRV battery after the largest (25 %) reserve
+    "four_wheel": _mission_vehicle("four_wheel", range_km=30.0, suited=True),
+    # 20 km one way: NASA's Mars pressurized rover study keeps crewed traverses within about 20 km of the landing
+    # site, and 40 km at 0.80 kWh/km + 1.85 kW for 4 h of driving and 1 h on site (41.3 kWh) fits in the
+    # 45 kWh its 60 kWh battery leaves after the largest (25 %) reserve; the old 100 km did not
+    "buggy": _mission_vehicle("buggy", range_km=20.0, suited=False),
 }
 # Suit oxygen = the astronaut profile in VEHICLES (NASA-sourced, see CONSUMABLE_SOURCES["suit_o2"]). The same rate
 # applies walking, riding an open rover and sampling; mission.py adds the extra cost of walking uphill.
