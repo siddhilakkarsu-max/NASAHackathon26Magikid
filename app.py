@@ -1424,7 +1424,24 @@ def _build_status(region):
     total = int(crism.split("CRISM:")[1].split()[0]) if crism else 0
     return {"region": region, "label": region_label(region), "status": status, "ready": ready,
             "seconds": round(time.time() - b["started"]), "crism_done": done_products, "crism_total": total,
-            "log": lines[-6:]}
+            **_build_progress(lines, ready, status, done_products, total), "log": lines[-6:]}
+
+
+def _build_progress(lines, ready, status, crism_done, crism_total):
+    """0..1 progress of the two build stages, from the builder's log: the map layers (then the save) before
+    planning can start, and the CRISM mineral observations after it."""
+    stage = next((i for i, l in enumerate(lines) if l.startswith("STAGE terrain ready")), len(lines))
+    total = next((int(l.split()[2]) for l in lines if l.startswith("STAGE layers ")), 0)
+    done = sum(1 for l in lines[:stage] if l.startswith("  [ok]") or l.startswith("  [--]"))
+    terrain = 1.0 if ready or status == "done" else round(min(done, total) / (total + 1), 3) if total else 0.0
+    if status == "done":
+        minerals = 1.0
+    elif crism_total:
+        minerals = round(min(crism_done, crism_total) / (crism_total + 1), 3)
+    else:
+        minerals = 0.0
+    return {"layers_done": min(done, total), "layers_total": total,
+            "terrain_progress": terrain, "minerals_progress": minerals}
 
 
 def covering_cube(lat, lon, margin=0.12):

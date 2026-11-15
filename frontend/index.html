@@ -212,6 +212,22 @@
   body #tourCard, body .helmut-bubble, body #playFab, body #playFab small { font-family: var(--ui-font); }
   /* form fields don't inherit the page font by default (the search bar, the assistant's message box) */
   input, textarea, select, button, body #marsSearch input { font-family: var(--ui-font); }
+  /* loading progress for an area of Mars (top centre of the map) */
+  #areaProgress { position: absolute; z-index: 40; top: 64px; left: 50%; transform: translateX(-50%);
+                  width: min(420px, calc(100% - 32px)); box-sizing: border-box; padding: 9px 14px 11px;
+                  background: #1c1d22e8; border: 1px solid #ffffff1f; border-radius: 10px; color: var(--fg);
+                  font-size: 12px; letter-spacing: .03em; pointer-events: none; box-shadow: 0 6px 22px #0006; }
+  #areaProgress[hidden] { display: none; }
+  #areaProgress .text { margin-bottom: 7px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  #areaProgress .track { position: relative; height: 6px; border-radius: 3px; background: #ffffff1f; overflow: hidden; }
+  #areaProgress .fill { position: relative; height: 100%; width: 4%; border-radius: 3px; background: var(--accent);
+                        transition: width .6s ease; overflow: hidden; }
+  #areaProgress .fill::after { content: ""; position: absolute; inset: 0; animation: areaProgressShine 1.3s linear infinite;
+                               background: linear-gradient(90deg, transparent, #ffffff66, transparent); }
+  #areaProgress.background { padding: 7px 12px 9px; font-size: 11px; color: var(--muted); }
+  #areaProgress.background .track { height: 4px; }
+  @keyframes areaProgressShine { from { transform: translateX(-100%); } to { transform: translateX(100%); } }
+  @media (prefers-reduced-motion: reduce) { #areaProgress .fill { transition: none; } #areaProgress .fill::after { animation: none; } }
   /* Advanced (technical) details: hidden until the A key is pressed */
   body:not(.adv-on) .adv, body:not(.adv-on) .adv-only { display: none !important; }
   .adv { color: var(--muted); }
@@ -868,6 +884,15 @@ async function refreshLayer() {
     $("layerStatus").textContent = "Regional planning data is still unavailable here. The topographic map is ready to explore.";
     return false;
   }
+  if (anywhere() && !globalLayerSelected()) {       // area maps show the place in the middle of the map
+    try {
+      await ensureArea(viewCenter(), t => { if (request === layerRequest) setMsg($("layerStatus"), t); });
+    } catch (e) {
+      if (request === layerRequest) $("layerStatus").textContent = e.message;
+      return false;
+    }
+    if (request !== layerRequest) return false;
+  }
   const load = new AbortController();
   layerLoad = load;
   $("layerStatus").textContent = "Loading layer…";
@@ -1322,11 +1347,12 @@ $("plan").onclick = async () => {
   $("explain").textContent = "Planning…"; $("warn").textContent = "";
   const planId = ++planRequest;
   planBusy = true;
-  const requestAtStart = layerRequest;
+  let requestAtStart = layerRequest;
   try {
     if (anywhere()) await ensureArea({ lat: (base.lat + target.lat) / 2, lon: (base.lon + target.lon) / 2 },
                                      (t) => { if (planId === planRequest) setMsg($("explain"), t); }, [base, target]);
     if (planId !== planRequest) return;
+    requestAtStart = layerRequest;          // loading the area refreshes the map layer; only later changes count
     const res = await api("/api/plan", { ...conditions(), base, target });
     if (planId !== planRequest) return;
     await showAnalysisOverlay({
@@ -1433,7 +1459,7 @@ async function runMission() {
   const goal = $("goal").value.trim();
   if (!goal) { $("mStatus").textContent = "Type a goal, e.g. sample clay where water once flowed."; return; }
   const id = ++missionRequest;
-  const requestAtStart = layerRequest;
+  let requestAtStart = layerRequest;
   const isCurrent = () => id === missionRequest;
   if (missionCtl) missionCtl.abort();                          // stop the previous plan's stream
   const ctl = missionCtl = new AbortController();
@@ -1444,6 +1470,7 @@ async function runMission() {
   try {
     if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) setMsg($("mStatus"), t); });
     if (!isCurrent()) return;
+    requestAtStart = layerRequest;          // loading the area refreshes the map layer; only later changes count
     const requestRegion = regionId();
     await streamEvents("/api/mission/stream", { region: requestRegion, goal, vehicle: $("mVehicle").value,
       ls: +$("ls").value, local_hour: +$("hour").value, priority: $("mPriority").value,
@@ -1468,12 +1495,12 @@ async function runMission() {
         mission = res; selected = 0;
         $("runMission").disabled = false;                          // a new plan may start while the AI explains
         renderMission();
-        const scienceShown = await showAnalysisOverlay({
+        await showAnalysisOverlay({
           image: res.science_image, rect: res.rect, name: "mission",
           label: "Brighter areas match the mission goal more closely.", requestAtStart, isCurrent
         });
         if (!isCurrent()) return;
-        drawMission(scienceShown);
+        drawMission(true);                   // zoom to the planned route (also when the goal overlay isn't shown)
         showMissionPlayback();
         if ($("showTracks").checked) await showTracks(true);
       } else if (e.type === "ai" && e.phase === "explain" && res) { res.explain_ai[e.kind] += e.text; updateExplain(); }
@@ -2674,29 +2701,61 @@ const regionId = () => current?.region || "jezero";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Make sure the area around `p` is loaded (and every point in `need` lies inside it), building it from the
 // globe's 3D terrain if needed; it becomes `current`. Minerals keep loading in the background (watchArea).
-const ZOOMED_OUT_M = 1.5e6;                      // above this camera height "where you're looking" is too vague
-const zoomedOut = () => viewer.camera.positionCartographic.height > ZOOMED_OUT_M;
+// Progress bar over the map while an area loads: first its map layers (planning waits for these), then its
+// mineral maps in the background. The builder reports how many layers / observations are done.
+const areaProgress = (() => {
+  const text = el("div", { className: "text" }), fill = el("div", { className: "fill" });
+  const box = el("div", { id: "areaProgress", hidden: true }, text, el("div", { className: "track" }, fill));
+  box.setAttribute("role", "progressbar");
+  box.setAttribute("aria-valuemin", "0"); box.setAttribute("aria-valuemax", "100");
+  $("map").append(box);
+  let owner = null, hideTimer = 0;
+  return {
+    // background (mineral) progress never replaces a foreground (area) load
+    show(key, label, fraction, background = false) {
+      if (background && owner && owner !== key) return;
+      clearTimeout(hideTimer);
+      owner = key; box.hidden = false; box.classList.toggle("background", background);
+      const pct = Math.round(Math.max(0.04, Math.min(1, fraction || 0)) * 100);
+      text.textContent = label; fill.style.width = pct + "%"; box.setAttribute("aria-valuenow", String(pct));
+      box.setAttribute("aria-valuetext", label);
+    },
+    done(key, label) {
+      if (owner !== key) return;
+      if (label) this.show(key, label, 1, box.classList.contains("background"));
+      hideTimer = setTimeout(() => { if (owner === key) { box.hidden = true; owner = null; } }, label ? 900 : 0);
+    },
+  };
+})();
 async function ensureArea(p, say = () => {}, need = [p]) {
   const selection = regionSelectionRequest;
   if (current?.planningReady === false) throw new Error("This region's planning data is not ready. You can explore its topographic map while it loads.");
-  if (zoomedOut() && current && need.length === 1) {       // whole-planet view: keep the current area
-    say(`Planning in ${current.label}. Zoom in on any other place on Mars to plan there.`);
-    return current.region;
-  }
   if (!p) throw new Error("Point the map at the surface of Mars first.");
   const inside = (r, q, m = 0.05) => q.lat > r.rect.south + m && q.lat < r.rect.north - m &&
                                       q.lon > r.rect.west + m && q.lon < r.rect.east - m;
   if (current && need.every((q) => inside(current, q))) return current.region;
   say(`Loading this part of Mars… | 3D terrain around ${pointLabel(p)}`);
-  let st = await api("/api/sites/build", { lat: p.lat, lon: p.lon });
-  const t0 = Date.now();
-  while (!st.ready) {
-    if (selection !== regionSelectionRequest) throw new Error("Region selection changed.");
-    if (st.status === "failed") throw new Error("Couldn't load this area: " + (st.log || []).slice(-1).join(" "));
-    say(`Loading this part of Mars… ${Math.round((Date.now() - t0) / 1000)} s | 3D terrain (MDEM200M), THEMIS ` +
-        `thermal inertia and night-time IR, TES albedo around ${pointLabel(p)}`);
-    await sleep(2000);
-    st = await api(`/api/sites/build/${st.region}`);
+  const key = `area:${pointLabel(p)}`, t0 = Date.now();
+  const where = `Loading Mars around ${pointLabel(p)}`;
+  areaProgress.show(key, `${where} · starting`, 0);
+  let st, loaded = false;
+  try {
+    st = await api("/api/sites/build", { lat: p.lat, lon: p.lon });
+    while (!st.ready) {
+      if (selection !== regionSelectionRequest) throw new Error("Region selection changed.");
+      if (st.status === "failed") throw new Error("Couldn't load this area: " + (st.log || []).slice(-1).join(" "));
+      const secs = Math.round((Date.now() - t0) / 1000);
+      const step = st.layers_total ? `map layer ${Math.min(st.layers_done + 1, st.layers_total)} of ${st.layers_total}`
+                                   : "starting";
+      areaProgress.show(key, `${where} · ${step} · ${secs} s`, st.terrain_progress);
+      say(`Loading this part of Mars… ${Math.round((st.terrain_progress || 0) * 100)}% | 3D terrain (MDEM200M), ` +
+          `THEMIS thermal inertia and night-time IR, TES albedo around ${pointLabel(p)} (${secs} s)`);
+      await sleep(1000);
+      st = await api(`/api/sites/build/${st.region}`);
+    }
+    loaded = true;
+  } finally {
+    areaProgress.done(key, loaded ? "This part of Mars is ready" : "");
   }
   if (!await useArea(st.region, selection)) throw new Error("Region selection changed.");
   if (!need.every((q) => inside(current, q, 0))) throw new Error("Base and target are too far apart for one area " +
@@ -2726,6 +2785,7 @@ async function watchArea(region) {                // CRISM minerals arrive a few
       const st = await api(`/api/sites/build/${region}`);
       const mine = current?.region === region;
       if (st.status === "done" || st.status === "failed") {
+        areaProgress.done(`minerals:${region}`, st.status === "done" ? "Mineral maps loaded" : "");
         regions = (await api("/api/regions")).regions; fillRegions();
         if (current?.region === region) { current = regions.find((r) => r.region === region); showRegionInfo(); }
         if (mine) setMsg($("areaStatus"), st.status === "done"
@@ -2734,6 +2794,9 @@ async function watchArea(region) {                // CRISM minerals arrive a few
       }
       if (mine) setMsg($("areaStatus"), "Loading the mineral maps for this area… goals like \"clay\" work once " +
         `they're in. | ${st.label}: CRISM ` + (st.crism_total ? `${st.crism_done}/${st.crism_total} observations` : "query"));
+      if (mine) areaProgress.show(`minerals:${region}`, "Loading mineral maps for this area · " +
+        (st.crism_total ? `${Math.min(st.crism_done + 1, st.crism_total)} of ${st.crism_total} observations`
+                        : "finding observations"), st.minerals_progress, true);
       await sleep(5000);
     }
   } catch (e) { /* the server restarted: the next plan reloads the area */ }
@@ -2840,7 +2903,7 @@ $("layer").onchange = () => {
   applyGlobalMap();
   const isGlobal = globalLayerSelected();
   if (isGlobal && !wasGlobal) showWholeMars();
-  else if (!isGlobal && $("layer").value && current) flyTo(current.rect);
+  else if (!isGlobal && $("layer").value && current && !anywhere()) flyTo(current.rect);
   wasGlobal = isGlobal;
   timeline?.setEnabled(isGlobal);
   refreshLayer();
@@ -2851,12 +2914,11 @@ $("region").onchange = () => {
   siteLoad?.abort(); siteLoad = null;
   clearRegionResults();
   if ($("region").value.startsWith("site:")) { void loadNamedSite($("region").value.slice(5), request); return; }
-  setMsg($("areaStatus"), anywhere() ? "Zoom in anywhere on Mars and plan: the plan uses the place in the middle " +
-    `of the map. Zoomed out, it uses ${current ? current.label : "the current area"}. | New areas load from the ` +
-    "3D terrain (MDEM200M) in seconds; CRISM minerals follow." : "");
+  setMsg($("areaStatus"), anywhere() ? "Plan anywhere on Mars: plans and area maps use the place in the middle " +
+    "of the map. | New areas load from the 3D terrain (MDEM200M) in seconds; CRISM minerals follow." : "");
   if (anywhere()) {
     // A cancelled named-site build cannot leave Anywhere planning against an absent cube.
-    if (current?.planningReady === false) current = regions.find(r => r.region === "jezero") || regions[0] || null;
+    if (current?.planningReady === false) current = null;
     syncRegionReady();
     if (current) { showRegionInfo(); syncGlobeLighting(); refreshLayer(); }
     return;
@@ -2919,12 +2981,11 @@ api("/api/weather/calendar").then(calendar => {
     Object.assign(SPECS, meta.vehicle_specs || {});
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
     fillRegions(ANYWHERE);
-    current = regions.find((r) => r.region === "jezero") || regions[0] || null;
+    current = null;               // no default area: plans and area maps load where the camera is looking
     applyVehicleLimits();
     renderConsumables();
     if (current) {
       showRegionInfo(); syncGlobeLighting(); setSharpBox(current.rect);
-      if (!globalLayerSelected()) flyTo(current.rect);
     } else $("status").textContent = "Move the globe anywhere on Mars and plan: the area loads from the 3D terrain.";
     refreshLayer();
     $("region").onchange();
