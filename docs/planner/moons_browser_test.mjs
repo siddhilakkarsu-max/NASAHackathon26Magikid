@@ -92,12 +92,13 @@ try {
     viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(0, 0, 6e6, MARS), orientation: {heading:0,pitch:-Math.PI/2,roll:0} });
   }); await frame();
   assert.deepEqual(await page.evaluate(() => [nearAudit.label.show.getValue(), farAudit.label.show.getValue()]), [true, false]);
+  assert.match(await page.evaluate(() => nearAudit.label.font.getValue()), /^12px Electrolize/);
   await page.screenshot({ path: path.join(out, 'labels-near-side-only.png') });
   await page.evaluate(() => viewer.camera.setView({ destination: Cesium.Cartesian3.fromDegrees(180, 0, 6e6, MARS), orientation: {heading:0,pitch:-Math.PI/2,roll:0} }));
   await frame();
   assert.deepEqual(await page.evaluate(() => [nearAudit.label.show.getValue(), farAudit.label.show.getValue()]), [false, true]);
   await page.evaluate(() => viewer.dataSources.remove(occlusionAudit, true));
-  pass('Place labels hide behind Mars and reverse visibility as the camera rotates');
+  pass('Place labels retain the Electrolize font and hide behind Mars as the camera rotates');
   await page.evaluate(() => marsMoons.setSpeed(60));
   const before = await state();
   await new Promise(resolve => setTimeout(resolve, 350));
