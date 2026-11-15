@@ -21,7 +21,7 @@
   const check = (id) => { if (!running || id !== run) throw new Stopped(); };
   const wait = async (ms, id) => {
     const end = performance.now() + ms;
-    while (performance.now() < end) { check(id); await new Promise(r => setTimeout(r, 100)); }
+    while (performance.now() < end) { check(id); await new Promise(r => setTimeout(r, Math.min(100, end - performance.now()))); }
     check(id);
   };
   const fly = (options, id) => new Promise((resolve) => {
@@ -145,17 +145,99 @@
       if (!(e instanceof Stopped)) console.error(e);
     }
   }
-  function stop() {
+  let stop = function () {
     if (!running) return;
     running = false; run++; spin = 0;
     cam().cancelFlight();
     card.hidden = true;
     document.body.classList.remove("touring");
     if (!$("walkerNav").hidden) $("walkerExit").click();
-  }
-  stopBtn.onclick = stop;
+  };
+  stopBtn.onclick = () => stop();
   document.addEventListener("keydown", (e) => { if (e.key === "Escape" && running) stop(); });
   $("map").addEventListener("pointerdown", (e) => { if (running && !card.contains(e.target)) stop(); }, true);
+
+  // ------------------------------------------------------------- flythrough ----
+  // Every map view, weather layer, area layer, overlay and panel in about ten seconds, then it puts things back.
+  // It starts a Jezero mission plan at the beginning so the route, playback and Walker's view can close the show.
+  const fast = (options, id) => fly({ ...options, duration: 0.4 }, id);
+  async function flythrough() {
+    if (running) return;
+    running = true;
+    const id = ++run;
+    document.body.classList.add("touring", "flashing");
+    document.body.classList.remove("drawer");
+    window.marsAssistant?.open(false);
+    $("landing")?.classList.add("gone");
+    card.hidden = false;
+    const items = [];
+    const add = (label, fn, ms) => items.push({ label, fn, ms });
+    const opts = (sel) => [...($(sel)?.options || [])].filter(o => o.value && !o.disabled);
+    // queue: map views, weather, area layers, overlays, panels, features
+    for (const o of opts("globalLayer")) {
+      if (o.parentElement.id === "" && o.value.startsWith("map:") || o.value.startsWith("map:")) add(o.textContent, () => layer(o.value));
+    }
+    for (const o of opts("globalLayer").filter(o => !o.value.startsWith("map:"))) add(o.textContent, () => layer(o.value));
+    add("Jezero crater", () => fast(above(77.45, 18.44, 120e3, 0, -75), id), 500);
+    for (const o of opts("regionalLayer")) add(o.textContent, () => layer(o.value));
+    add("Clear layers", () => layer(""));
+    for (const box of [...document.querySelectorAll('#murrayLayers input[type="checkbox"]')]) {
+      const name = box.closest("label")?.childNodes[1]?.textContent?.trim() || box.id;
+      add(name, () => { if (!box.checked) box.click(); });
+      add(name, () => { if (box.checked) box.click(); }, 60);
+    }
+    for (const b of [...($("gmRail")?.querySelectorAll("button[data-section]") || [])]) {
+      if (b.disabled || b.dataset.section === "all") continue;
+      add(b.title, () => { if (!b.classList.contains("on")) b.click(); });
+    }
+    add("Close panel", () => { const on = $("gmRail")?.querySelector("button.on[data-section]"); if (on) on.click(); }, 80);
+    add("Planner assistant", () => window.marsAssistant?.open(true), 500);
+    add("Help manual", () => { window.marsAssistant?.open(false); window.openMapManual?.("mission"); }, 500);
+    add("Close", () => document.querySelector("#mapManual header button")?.click(), 80);
+    add("Your route", async () => {
+      if (!mission?.candidates?.length) return;
+      if (!$("routePlayback").hidden && !$("playRoute").disabled) $("playRoute").click();
+    }, 900);
+    add("Walker's view", () => { if (!$("walkerView").hidden) $("walkerView").click(); }, 500);
+    add("Walker's view", () => { if (!$("walkerNext").disabled) $("walkerNext").click(); }, 350);
+    add("Walker's view", () => { if (!$("walkerNext").disabled) $("walkerNext").click(); }, 350);
+    add("Whole Mars", () => { if (!$("walkerNav").hidden) $("walkerExit").click(); return fast(above(60, 10, 9.5e6), id); }, 700);
+
+    const per = Math.max(110, Math.min(260, Math.round(9000 / items.length)));
+    try {
+      // start a plan at Jezero so the route is ready for the end
+      const sel = $("region");
+      if ([...sel.options].some(o => o.value === "jezero") && sel.value !== "jezero") { sel.value = "jezero"; sel.onchange(); }
+      if (!mission?.candidates?.length && !$("runMission").disabled) {
+        $("goal").value = "sample clay where water once flowed";
+        $("runMission").click();
+      }
+      // keep to the clock: if the computer is slow to draw a layer, the next items wait less (or not at all)
+      const t0 = performance.now();
+      let due = 0;
+      for (let i = 0; i < items.length; i++) {
+        check(id);
+        const it = items[i];
+        title.textContent = it.label;
+        line.textContent = `${i + 1} / ${items.length}`;
+        try { await it.fn(); } catch (e) { if (e instanceof Stopped) throw e; }
+        due += it.ms ?? per;
+        const left = t0 + due - performance.now();
+        if (left > 0) await wait(left, id); else await new Promise(r => requestAnimationFrame(() => r()));
+      }
+      title.textContent = "Marswalk Planner";
+      line.textContent = `${items.length} features in ${(items.reduce((s, it) => s + (it.ms ?? per), 0) / 1000).toFixed(1)} s`;
+      await wait(1800, id);
+    } catch (e) {
+      if (!(e instanceof Stopped)) console.error(e);
+    }
+    layer("");
+    for (const box of document.querySelectorAll('#murrayLayers input[type="checkbox"]')) if (box.checked) box.click();
+    stop();
+  }
+  const baseStop = stop;
+  stop = function () { document.body.classList.remove("flashing"); baseStop(); if (!running) card.hidden = true; };
+  window.marsFlythrough = flythrough;
 
   // "Tour" on the left bar, just above Help
   const rail = $("gmRail");
@@ -166,9 +248,17 @@
     const b = el("button", { type: "button", title: "Autoplay tour", onclick: start }, icon, el("span", { textContent: "Tour" }));
     const help = [...rail.querySelectorAll("button")].find(x => x.title === "Help");
     help ? help.before(b) : rail.append(b);
+    const bolt = icon.cloneNode(false);
+    bolt.innerHTML = '<path d="M13 2.5 5 13.5h6l-1 8 8-11h-6z"/>';
+    const f = el("button", { type: "button", title: "10-second flythrough of every feature",
+                             onclick: () => window.marsFlythrough() }, bolt, el("span", { textContent: "Flythrough" }));
+    b.before(f);
   }
-  window.marsTour = { start, stop };
-  if (new URLSearchParams(location.search).has("tour")) {
+  window.marsTour = { start, stop: () => stop() };
+  if (new URLSearchParams(location.search).has("flythrough")) {
+    const go = () => setTimeout(() => window.marsFlythrough(), 5000);
+    document.readyState === "complete" ? go() : addEventListener("load", go);
+  } else if (new URLSearchParams(location.search).has("tour")) {
     const go = () => setTimeout(start, 4000);              // let the map and data load first
     document.readyState === "complete" ? go() : addEventListener("load", go);
   }
