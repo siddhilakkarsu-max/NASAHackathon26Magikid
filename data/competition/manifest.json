@@ -1,0 +1,172 @@
+{
+  "dataset_version": "jezero-west-delta-ctx20-v1",
+  "name": "Jezero western delta mission area",
+  "artifact": {
+    "filename": "jezero_west_delta_20m.npz",
+    "sha256": "1b86f3006ef14b32e4dcb2dcf1b8eeeea0030a863dfb9e226ee5d8b682cf938e",
+    "size_bytes": 674058
+  },
+  "grid": {
+    "shape": [
+      321,
+      321
+    ],
+    "resolution_m": 20,
+    "row_order": "north_to_south",
+    "column_order": "west_to_east",
+    "sample_location": "native DEM pixel centres",
+    "source_transform": [
+      20.0,
+      0.0,
+      4328999.999999998,
+      0.0,
+      -20.0,
+      1143420.0000000028
+    ],
+    "source_window": {
+      "row": 2309,
+      "column": 985,
+      "height": 321,
+      "width": 321
+    }
+  },
+  "projection": {
+    "name": "Source equirectangular projection, local translated metres",
+    "radius_m": 3396190.0,
+    "standard_parallel_degrees": 18.4663,
+    "central_meridian_degrees": 0,
+    "origin_easting_m": 4348709.999999998,
+    "origin_northing_m": 1090830.0000000028,
+    "origin_longitude": 77.34800751294567,
+    "origin_latitude": 18.402961897377867,
+    "x_axis": "east",
+    "y_axis": "north",
+    "latitude_type": "planetocentric",
+    "longitude_direction": "east",
+    "source_wkt": "PROJCS[\"Jezero_Crater_Projection\",GEOGCS[\"GCS_Mars_2000_Sphere\",DATUM[\"Mars_2000_(Sphere)\",SPHEROID[\"Mars_2000_Sphere\",3396190,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",18.4663],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]"
+  },
+  "geographic_bounds": {
+    "west": 77.34800751294567,
+    "south": 18.402961897377867,
+    "east": 77.46184063773045,
+    "north": 18.51093376846981
+  },
+  "elevation": {
+    "label": "Measured CTX elevation",
+    "units": "m",
+    "resolution_m": 20,
+    "source_url": "https://planetarymaps.usgs.gov/mosaic/mars2020_trn/CTX/ScienceInvestigationMaps_JPL/M20_JezeroCrater_CTXDEM_20m.tif",
+    "documentation_url": "https://astrogeology.usgs.gov/search/map/mars_2020_science_investigation_ctx_dem_mosaic",
+    "source_sha256": "ba7f706ea1b5d63a562f28a7dcf7a7f3c79bce7f048e6974b57e8a33c30d1ba2",
+    "credit": "NASA/JPL/USGS; Fred Calef, Mars 2020 Science Investigation CTX DEM Mosaic (2021)",
+    "vertical_reference": "Source DEM elevations, controlled vertically to MOLA",
+    "processing": "Exact native-pixel crop; no resampling, exaggeration, smoothing, hole filling or boundary blend",
+    "minimum_m": -2591.492431640625,
+    "maximum_m": -2391.66259765625,
+    "valid_nodes": 103041,
+    "total_nodes": 103041
+  },
+  "slope": {
+    "label": "Slope derived from measured elevation",
+    "units": "degrees",
+    "resolution_m": 20,
+    "derivative_baseline_m": 40,
+    "required_stencil_nodes": [
+      3,
+      3
+    ],
+    "processing": "Central differences at 20 m spacing (40 m baseline); arctan of gradient magnitude. A full 3x3 measured stencil is required.",
+    "maximum_degrees": 34.37902069091797
+  },
+  "thermal_inertia": {
+    "label": "Surface-material estimate (thermal inertia)",
+    "units": "J m^-2 K^-1 s^-1/2",
+    "available": true,
+    "grid_resolution_degrees": 0.125,
+    "resolution_north_south_m": 7409.337190413277,
+    "resolution_east_west_m_at_center": 7028.214302491128,
+    "original_product_grid_degrees": 0.05,
+    "source_url": "https://pds-geosciences.wustl.edu/missions/mgs/tes-timap.html",
+    "source_dataset_id": "MGS-M-TES-5-TIMAP-V1.0",
+    "source_derived_file": "thermal_data/tes_detail_8ppd.npz",
+    "source_derived_sha256": "eaa0f4f6fc2830268d26d9c7cdd7ee690a29deb403907f0a5e883103400c1ef0",
+    "processing": "Existing area-weighted 0.125 degree TES derivative; observed source pixels only, nightside preferred with dayside fallback. Display uses constant geographic cells, without interpolation.",
+    "missing_data": "Zero in the source derivative becomes invalid/NaN; serialized missing values are null. No fill or material classification.",
+    "interpretation": "A coarse estimate of resistance to temperature change. It does not measure firmness, traction, bearing strength, rocks, or drivable ground.",
+    "cells": [
+      {
+        "source_row": 571,
+        "source_column": 2058,
+        "geographic_bounds": {
+          "west": 77.25,
+          "east": 77.375,
+          "north": 18.625,
+          "south": 18.5
+        },
+        "value": 289.3,
+        "valid": true
+      },
+      {
+        "source_row": 571,
+        "source_column": 2059,
+        "geographic_bounds": {
+          "west": 77.375,
+          "east": 77.5,
+          "north": 18.625,
+          "south": 18.5
+        },
+        "value": 316.4,
+        "valid": true
+      },
+      {
+        "source_row": 572,
+        "source_column": 2058,
+        "geographic_bounds": {
+          "west": 77.25,
+          "east": 77.375,
+          "north": 18.5,
+          "south": 18.375
+        },
+        "value": 284.9,
+        "valid": true
+      },
+      {
+        "source_row": 572,
+        "source_column": 2059,
+        "geographic_bounds": {
+          "west": 77.375,
+          "east": 77.5,
+          "north": 18.5,
+          "south": 18.375
+        },
+        "value": 323.2,
+        "valid": true
+      }
+    ]
+  },
+  "limitations": [
+    "20 m DEM samples do not resolve rover-scale rocks, small ledges, or soil bearing strength.",
+    "The local route boundary is a game mission boundary within measured coverage, not a physical wall.",
+    "Projection distances use the source equirectangular metric frame; this 6.4 km area has less than 0.04% longitude scale variation.",
+    "TES thermal inertia is about 7.4 km north-south and 7.0 km east-west here; it cannot support 20 m material detail.",
+    "The GeoTIFF uses radius 3396190 m; this is retained exactly despite the catalogue listing 3396160 m."
+  ],
+  "suggested_reference_route_m": [
+    [
+      3900,
+      2500
+    ],
+    [
+      4100,
+      2650
+    ],
+    [
+      4300,
+      2550
+    ],
+    [
+      4450,
+      2750
+    ]
+  ]
+}
