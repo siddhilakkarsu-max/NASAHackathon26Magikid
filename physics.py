@@ -229,3 +229,51 @@ def shelter_seeds(slope, passable, steep_deg=22.0, extra=()):
     foot = binary_dilation(steep, iterations=4) & passable & ~steep   # within ~4 px of a wall
     seeds = [tuple(map(int, rc)) for rc in zip(*np.nonzero(foot))]
     return seeds + list(extra)
+
+
+# ------------------------------------------------- path out and back ----
+def path_resources(elev_along, seg_len_m, base_cost_per_m, walker=False, slope_deg=None, mass_kg=None):
+    """Cost a planned path out and back, the return leg being the same path reversed (round_trip_walk's model,
+    step by step, so a turnaround point can be found).
+
+    elev_along: elevation (m) at each of the n path points. seg_len_m: length (m) of the n-1 steps between them.
+    base_cost_per_m: cost per metre of each step (array of n-1, or one number), the same in both directions
+                     (e.g. kg O2 per metre at the planner's pace, or Wh per metre of driving).
+    walker: charge each step Minetti's cost ratio to flat ground, Cw(grade) / Cw(0): climbs are dear on the way
+            out and become cheap descents on the way back.
+    slope_deg: terrain slope under each step. For a walker whose base cost came from the planner's time, the
+               Tobler slope slowdown is taken back out first (sand and rock kept), as round_trip_walk does.
+    mass_kg: lift the vehicle up every climb, m g h via climb_energy_kwh (Wh, a lower bound), per leg.
+
+    Returns totals out / back (base units), climb_wh_out / climb_wh_back, gain_m / loss_m (outbound),
+    slope_factor_out / _back / slope_factor (cost vs the same steps on flat ground) and the per-step arrays
+    step_out, step_back, climb_out_wh, climb_back_wh (step i joins point i and i+1; the return leg walks
+    step i from i+1 back to i)."""
+    z = np.asarray(elev_along, dtype="float64")
+    if z.size and not np.isfinite(z).all():
+        z = np.where(np.isfinite(z), z, np.nanmean(z) if np.isfinite(z).any() else 0.0)
+    run = np.maximum(np.asarray(seg_len_m, dtype="float64"), 1e-6)
+    n = run.size
+    dz = np.diff(z) if z.size == n + 1 else np.zeros(n)
+    base = np.broadcast_to(np.asarray(base_cost_per_m, dtype="float64"), (n,)) * run
+    if walker:
+        if slope_deg is not None:
+            base = base * walker_slope_slowdown(np.broadcast_to(slope_deg, (n,)))
+        grade = dz / run
+        ratio_out, ratio_back = minetti_cw(grade) / minetti_cw(0.0), minetti_cw(-grade) / minetti_cw(0.0)
+    else:
+        ratio_out = ratio_back = np.ones(n)
+    step_out, step_back = base * ratio_out, base * ratio_back
+    flat = float(base.sum())
+    ratio = (lambda x: x / flat) if flat > 1e-12 else (lambda x: 1.0)
+    if mass_kg:
+        climb_out = np.array([climb_energy_kwh(mass_kg, d) for d in dz]) * 1000.0
+        climb_back = np.array([climb_energy_kwh(mass_kg, -d) for d in dz]) * 1000.0
+    else:
+        climb_out = climb_back = np.zeros(n)
+    return {"out": float(step_out.sum()), "back": float(step_back.sum()),
+            "climb_wh_out": float(climb_out.sum()), "climb_wh_back": float(climb_back.sum()),
+            "gain_m": float(dz[dz > 0].sum()), "loss_m": float(-dz[dz < 0].sum()),
+            "slope_factor_out": ratio(float(step_out.sum())), "slope_factor_back": ratio(float(step_back.sum())),
+            "slope_factor": ratio(float(step_out.sum() + step_back.sum()) / 2),
+            "step_out": step_out, "step_back": step_back, "climb_out_wh": climb_out, "climb_back_wh": climb_back}
