@@ -109,6 +109,7 @@
   const b3d = btn("mountain", "3D view: tilt and show hills", () => set3d(!is3d()), "solo");
   function set3d(on) {
     terrainNeeds.manual3d = on;
+    if (!on) terrainNeeds.route3d = false;
     syncTerrain();
     tilt(on ? -35 : -90);
     b3d.classList.toggle("on", on);

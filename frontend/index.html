@@ -280,7 +280,7 @@
     <button id="zoomRegion" class="secondary" type="button">Zoom to region</button>
   </div>
   <label>Jump to a place <select id="jumpTo"><option value="">Famous places (Murray Lab CTX viewer list)…</option></select></label>
-  <label class="check"><input type="checkbox" id="auto3d" checked> 3D terrain when zoomed in on a key site</label>
+  <label class="check"><input type="checkbox" id="auto3d"> 3D terrain when zoomed in on a key site</label>
   <div class="small" id="auto3dStatus" role="status"></div>
 
   <details id="missionSetup" class="panel-section" name="workspace" open>
@@ -2025,13 +2025,13 @@ async function syncTerrain() {
   }
   if (request !== terrainSync) return;
   if (viewer.terrainProvider !== provider) viewer.terrainProvider = provider;
-  viewer.scene.globe.depthTestAgainstTerrain = provider !== flatTerrain;
+  // Never let the 3D ground hide routes, pins and data overlays (they are drawn at a fixed height).
+  viewer.scene.globe.depthTestAgainstTerrain = false;
   const name = area && provider !== flatTerrain ? area.name : null;
   $("auto3dStatus").textContent = failed ? "3D terrain could not load (the elevation service didn't answer). " +
       "It retries when you move the map."
     : name && !murrayOn("terrain") ? `3D terrain on near ${name}: NASA MOLA/HRSC heights, 200 m. ` +
       "Ctrl-drag or right-drag to tilt." : "";
-  if (name && name !== auto3dArea && !murrayOn("terrain")) tiltToShowRelief(name);
   auto3dArea = name;
   viewer.scene.requestRender();
 }
