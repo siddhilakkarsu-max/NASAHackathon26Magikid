@@ -30,6 +30,28 @@ The gear page is at http://localhost:8000/kit.html; **Gear for this route** unde
 planned route (see `gear/README.md`).
 
 ## 3. Swap in real NASA data
+
+### Radiation map
+
+Choose **Radiation · modeled GCR effective dose** in Map layer, or open
+`http://localhost:8000/?layer=radiation_dose`. Hover for coordinates, the estimated
+effective dose rate in **µSv/h**, atmospheric pressure, and seasonal dust context.
+The existing local-hour and season controls change historical OpenMARS pressure.
+Solar activity is a separate, explicit 400/700/1000 MV model scenario.
+
+Purple indicates lower rates and green higher rates. **Show spatial differences**
+uses fixed bounds for the selected solar scenario; **Compare solar scenarios**
+uses a shared 12–30 µSv/h scale. The underlying values are identical in both views.
+The native pressure grid is 5°; smooth rendering does not add measured detail.
+
+This layer interpolates the published AtRIS surface effective-dose model, not
+global NASA radiation observations or a current forecast. Dust is context only;
+solar particle events and local shielding are excluded. Cells outside the source
+pressure range (82–1200 Pa) stay N/A. See [method, numeric provenance and
+limitations](radiation_data/README.md), also linked from the layer legend.
+
+### Terrain and instrument maps
+
 ```bash
 python build_cube.py jezero                   # overwrites the demo cube (~29 m/px as set in config.py)
 python build_cube.py jezero --px-per-deg 512  # ~115 m/px: the committed cube (small enough for git)

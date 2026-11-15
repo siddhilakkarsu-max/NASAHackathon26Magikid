@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "quantity": "modeled GCR body effective dose rate",
+  "pressure_pa": [
+    82.0,
+    305.0,
+    529.0,
+    753.0,
+    975.0,
+    1200.0
+  ],
+  "scenarios": {
+    "400": {
+      "label": "Solar minimum scenario (higher GCR)",
+      "solar_modulation_mv": 400.0,
+      "effective_dose_msv_per_year": [
+        245.00007617289194,
+        250.87874911927238,
+        250.2949124071563,
+        245.21381349564055,
+        246.93849340472542,
+        247.27118360669027
+      ],
+      "source_columns_one_based": [
+        2,
+        3,
+        4,
+        5,
+        6,
+        7
+      ]
+    },
+    "700": {
+      "label": "Medium solar activity scenario",
+      "solar_modulation_mv": 700.0,
+      "effective_dose_msv_per_year": [
+        161.17091924097252,
+        167.67866158667562,
+        169.30193609534481,
+        167.5192166580123,
+        170.6930641608758,
+        172.2381066674945
+      ],
+      "source_columns_one_based": [
+        8,
+        9,
+        10,
+        11,
+        12,
+        13
+      ]
+    },
+    "1000": {
+      "label": "Solar maximum scenario (lower GCR)",
+      "solar_modulation_mv": 1000.0,
+      "effective_dose_msv_per_year": [
+        118.07775748164914,
+        124.09948167158205,
+        126.54707674720656,
+        126.22331782711333,
+        129.20890956483908,
+        130.60323975954293
+      ],
+      "source_columns_one_based": [
+        14,
+        15,
+        16,
+        17,
+        18,
+        19
+      ]
+    }
+  },
+  "year_hours": 8766.0,
+  "year_conversion_note": "Display convention: one Julian Earth year = 365.25 x 24 hours. The source labels rates per year without specifying 365 versus 365.25 days. This convention changes rates by 0.0685% relative to a 365-day year.",
+  "height_km": 0.0,
+  "source_path": "PAPER1/figure11_eff_depth.txt",
+  "source_sha256": "0da024d59e554f4a6f635271d251feb655715f92907cab3cf3230dbed633bc0f",
+  "source_line_one_based": 45,
+  "dataset_doi": "10.5281/zenodo.5953666",
+  "dataset_url": "https://zenodo.org/records/5953666",
+  "article_doi": "10.1029/2021JE007157",
+  "article_url": "https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2021JE007157",
+  "authors": "Jian Zhang and Jingnan Guo; article also by Mikhail I. Dobynde, Yuming Wang, and Robert F. Wimmer-Schweingruber",
+  "license": "CC-BY-4.0 (Zenodo dataset metadata)",
+  "archive_filename": "FigureData.tar",
+  "archive_md5": "f65945053d690414dbbbb9481073333d",
+  "interpolation": "App approximation: piecewise linear interpolation in surface pressure across the six published model pressure scenarios (82, 305, 529, 753, 975, 1200 Pa). The authors separately simulated heavy ions at 82, 753 and 1200 Pa and interpolated their contribution to the other pressure scenarios. This is not a new transport calculation or a directly measured global radiation map.",
+  "solar_interpolation": "None; choose a published 400, 700 or 1000 MV scenario. These are scenario assumptions, not inferred solar activity for a selected weather date.",
+  "outside_pressure_range": "N/A; do not clamp or extrapolate",
+  "model_conditions": [
+    "AtRIS/GEANT4 with Badhwar-O'Neill GCR spectra; atmospheric profiles from the Mars Climate Database.",
+    "Body effective dose uses the particle-flux conversion factors described in the paper, incorporating tissue weighting. It is distinct from absorbed dose and water-sphere dose equivalent. No further quality factor should be applied.",
+    "Dry regolith model; local water/ice, nearby cliffs, caves, suits, and habitats are not resolved.",
+    "Season and local time enter through supplied atmospheric surface pressure. No solar energetic particle event contribution is modeled.",
+    "Dust optical depth is context only, not a direct multiplicative correction to ionizing radiation dose."
+  ],
+  "uncertainty_usv_per_hour": null,
+  "uncertainty_note": "The numerical table supplies no per-point uncertainty. The app must not invent an error bar or claim validated global accuracy.",
+  "nasa_rad_context_url": "https://science.nasa.gov/resource/radiation-measurements-on-mars/",
+  "nasa_rad_data_url": "https://doi.org/10.17189/1519761",
+  "dust_caveat_url": "https://arxiv.org/html/1507.03473"
+}
