@@ -1,10 +1,15 @@
 """
-Make frontend/rover.glb: a small low-poly six-wheeled rover (Perseverance-like proportions, ~3 m long) that the
-map shows where you hover over a route. Built from boxes and cylinders, no dependencies beyond numpy.
+Make the low-poly vehicle models the map shows where you hover over a route, one per vehicle:
+  frontend/rover.glb      six-wheeled robotic rover (Perseverance/Curiosity-like, ~3 m)
+  frontend/astronaut.glb  suited astronaut on foot (~1.9 m)
+  frontend/bike.glb       2-wheel scout bike with a cargo box
+  frontend/lrv.glb        4-wheel open rover (Apollo LRV-like)
+  frontend/buggy.glb      pressurized 6-wheel buggy
+Built from boxes, cylinders and spheres, no dependencies beyond numpy.
 
     python tools/make_rover_glb.py
 
-Model axes (glTF): +X = front of the rover, +Y = up, +Z = right side. Units: metres.
+Model axes (glTF): +X = front, +Y = up, +Z = right side. Units: metres.
 """
 import json
 import struct
@@ -12,7 +17,7 @@ from pathlib import Path
 
 import numpy as np
 
-OUT = Path(__file__).resolve().parent.parent / "frontend" / "rover.glb"
+OUT_DIR = Path(__file__).resolve().parent.parent / "frontend"
 
 COLORS = {                                # base colour, metallic, roughness
     "body": ([0.90, 0.90, 0.88], 0.1, 0.6),
@@ -20,6 +25,9 @@ COLORS = {                                # base colour, metallic, roughness
     "dark": ([0.16, 0.16, 0.18], 0.2, 0.7),
     "wheel": ([0.33, 0.33, 0.35], 0.5, 0.6),
     "accent": ([0.88, 0.44, 0.23], 0.1, 0.5),  # matches the app's orange
+    "glass": ([0.10, 0.16, 0.22], 0.3, 0.1),
+    "visor": ([0.85, 0.65, 0.20], 0.9, 0.15),   # gold sun visor
+    "panel": ([0.12, 0.18, 0.40], 0.4, 0.3),    # solar cells
 }
 
 
@@ -64,6 +72,88 @@ def cylinder(c, radius, length, axis, n=20):
         for i in range(n):
             idx += [base, base + 1 + i, base + 1 + (i + 1) % n]
     return np.array(pos), np.array(nrm), np.array(idx)
+
+
+def sphere(c, radius, n=14):
+    """UV sphere."""
+    c = np.array(c, float)
+    pos, idx = [], []
+    for i in range(n + 1):
+        th = np.pi * i / n
+        for j in range(2 * n):
+            ph = 2 * np.pi * j / (2 * n)
+            pos.append([np.sin(th) * np.cos(ph), np.cos(th), np.sin(th) * np.sin(ph)])
+    for i in range(n):
+        for j in range(2 * n):
+            a, b = i * 2 * n + j, i * 2 * n + (j + 1) % (2 * n)
+            idx += [a, a + 2 * n, b, b, a + 2 * n, b + 2 * n]
+    nrm = np.array(pos)
+    return c + nrm * radius, nrm, np.array(idx)
+
+
+def astronaut():
+    parts = []
+    add = lambda mat, geom: parts.append((mat, geom))
+    for z in (-0.13, 0.13):
+        add("body", box((0.0, 0.42, z), (0.2, 0.84, 0.18)))          # legs
+        add("dark", box((0.04, 0.05, z), (0.3, 0.1, 0.2)))            # boots
+        add("body", box((0.0, 1.15, z * 2.8), (0.16, 0.62, 0.15)))   # arms
+    add("body", box((0.0, 1.22, 0.0), (0.36, 0.72, 0.5)))             # torso
+    add("body", box((-0.33, 1.25, 0.0), (0.3, 0.7, 0.46)))            # life-support backpack
+    add("accent", box((0.19, 1.3, 0.0), (0.02, 0.18, 0.28)))          # chest controls
+    add("body", sphere((0.03, 1.78, 0.0), 0.2))                       # helmet
+    add("visor", box((0.17, 1.79, 0.0), (0.08, 0.2, 0.26)))           # visor
+    return parts
+
+
+def bike():
+    parts = []
+    add = lambda mat, geom: parts.append((mat, geom))
+    for x in (0.75, -0.75):
+        add("wheel", cylinder((x, 0.38, 0.0), 0.38, 0.22, axis=2))    # balloon wheels
+        add("dark", cylinder((x, 0.38, 0.0), 0.12, 0.3, axis=2))      # hub motors
+    add("body", box((0.0, 0.72, 0.0), (1.3, 0.16, 0.16)))             # frame
+    add("body", box((0.62, 0.95, 0.0), (0.1, 0.55, 0.1)))             # fork
+    add("dark", box((0.62, 1.22, 0.0), (0.08, 0.06, 0.7)))            # handlebar
+    add("dark", box((-0.15, 0.95, 0.0), (0.45, 0.1, 0.3)))            # seat
+    add("accent", box((-0.62, 0.95, 0.0), (0.45, 0.35, 0.5)))         # cargo box
+    add("panel", box((-0.62, 1.14, 0.0), (0.5, 0.03, 0.55)))          # solar lid
+    return parts
+
+
+def lrv():
+    parts = []
+    add = lambda mat, geom: parts.append((mat, geom))
+    add("body", box((0.0, 0.62, 0.0), (3.0, 0.12, 1.5)))              # flat chassis
+    for x in (1.15, -1.15):
+        for z in (-0.95, 0.95):
+            add("wheel", cylinder((x, 0.4, z), 0.4, 0.25, axis=2))    # wire-mesh wheels
+            add("deck", box((x, 0.88, z * 0.9), (0.9, 0.06, 0.32)))   # gold fenders
+    for z in (-0.38, 0.38):
+        add("dark", box((0.1, 0.78, z), (0.55, 0.2, 0.55)))           # seats
+        add("dark", box((-0.15, 1.05, z), (0.08, 0.55, 0.55)))        # seat backs
+    add("dark", box((0.75, 0.95, 0.0), (0.2, 0.5, 0.6)))              # control console
+    add("body", cylinder((0.95, 1.4, -0.45), 0.03, 1.2, axis=1))      # antenna mast
+    add("body", cylinder((0.95, 2.0, -0.45), 0.5, 0.04, axis=1))      # umbrella high-gain antenna
+    add("deck", box((-1.25, 0.85, 0.0), (0.5, 0.4, 1.1)))             # tool / sample rack
+    return parts
+
+
+def buggy():
+    parts = []
+    add = lambda mat, geom: parts.append((mat, geom))
+    add("body", box((0.0, 1.55, 0.0), (4.2, 1.9, 2.4)))               # pressurized cabin
+    add("glass", box((2.12, 1.85, 0.0), (0.06, 0.8, 2.0)))            # front windows
+    for z in (-1.21, 1.21):
+        add("glass", box((1.3, 1.9, z), (0.9, 0.5, 0.04)))            # side windows
+    add("accent", box((0.0, 0.7, 0.0), (4.4, 0.25, 2.5)))             # orange skirt
+    add("dark", box((-2.15, 1.35, 0.0), (0.12, 1.2, 1.0)))            # suit ports / hatch
+    add("panel", box((-0.4, 2.55, 0.0), (3.0, 0.06, 2.2)))            # solar roof
+    add("body", cylinder((1.4, 2.8, 0.7), 0.28, 0.04, axis=1))        # antenna dish
+    for x in (1.5, 0.0, -1.5):
+        for z in (-1.35, 1.35):
+            add("wheel", cylinder((x, 0.5, z), 0.5, 0.4, axis=2))
+    return parts
 
 
 def rover():
@@ -131,6 +221,10 @@ def write_glb(parts, path):
     return total
 
 
+MODELS = {"rover": rover, "astronaut": astronaut, "bike": bike, "lrv": lrv, "buggy": buggy}
+
 if __name__ == "__main__":
-    size = write_glb(rover(), OUT)
-    print(f"wrote {OUT} ({size / 1024:.1f} KB)")
+    for name, make in MODELS.items():
+        out = OUT_DIR / f"{name}.glb"
+        size = write_glb(make(), out)
+        print(f"wrote {out.name} ({size / 1024:.1f} KB)")

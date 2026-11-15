@@ -888,7 +888,7 @@ $("plan").onclick = async () => {
       (res.stats ? `\n\nMax slope ${res.stats.max_slope_deg}°, mean ${res.stats.mean_slope_deg}°` : "") +
       "\nGreen area = places you can reach and still return within the budget.";
     lastPlan = { stats: res.stats || null, route: res.route || null,               // route: for the hover readout
-                 vehicle: $("vehicle").selectedOptions[0]?.textContent || "" };
+                 vehicle: $("vehicle").selectedOptions[0]?.textContent || "", vehicleKey: $("vehicle").value };
     replanHint = "";
     renderConsumables();
   } catch (e) {
@@ -1367,7 +1367,7 @@ api("/api/murray/layers").then((d) => {
 
 // ------------------------------------------------------ route hover + rover ----
 // Hover over a route (mission candidates, the manual route, Perseverance's tracks): a 3D rover (rover.glb, made by
-// tools/make_rover_glb.py) stands at that point facing along the route, and a card shows what it would see there.
+// tools/make_rover_glb.py; one per vehicle) stands at that point facing along the route, and a card shows what it would see there.
 const DEG_M = Math.PI / 180 * 3396190;
 const ROVER_HEADING_OFFSET = 0;                   // the model faces +X, which Cesium points north at heading 0 (clockwise)
 const roverEntity = viewer.entities.add({ id: "hoverRover", show: false,
@@ -1375,6 +1375,16 @@ const roverEntity = viewer.entities.add({ id: "hoverRover", show: false,
   model: { uri: "rover.glb", minimumPixelSize: 64, maximumScale: 20000,
            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
            silhouetteColor: Cesium.Color.fromCssColorString("#e0703a"), silhouetteSize: 1.5 } });
+
+// which 3D model stands in for each vehicle (models made by tools/make_rover_glb.py)
+const VEHICLE_MODEL = { on_foot: "astronaut", two_wheel: "bike", four_wheel: "lrv", buggy: "buggy",
+                        astronaut: "astronaut", pressurized_rover: "buggy", small_rover: "rover" };
+function modelFor(path) {
+  if (path.kind === "mission") return VEHICLE_MODEL[mission.settings.vehicle.key] || "rover";
+  if (path.kind === "manual") return VEHICLE_MODEL[path.plan.vehicleKey] || "rover";
+  return "rover";                                    // Perseverance's own tracks
+}
+let roverModel = "rover";
 
 function hoverPaths() {
   const paths = [];
@@ -1484,6 +1494,8 @@ function updateRoverHover() {
   const p0 = hit.path.pts[hit.i], p1 = hit.path.pts[hit.i + 1], p = lerpPoint(p0, p1, hit.t);
   const bearing = Math.atan2((p1.lon - p0.lon) * Math.cos(p.lat * Math.PI / 180), p1.lat - p0.lat);   // clockwise from north
   const pos = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS);
+  const model = modelFor(hit.path);
+  if (model !== roverModel) { roverModel = model; roverEntity.model.uri = `${model}.glb`; }
   roverEntity.position = pos;
   roverEntity.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(bearing + ROVER_HEADING_OFFSET, 0, 0), MARS);
   roverEntity.show = true;
