@@ -1,5 +1,6 @@
 """Map service regressions: Windows text decoding and HiRISE spatial queries."""
 import json
+import math
 from pathlib import Path
 import sys
 import tempfile
@@ -24,6 +25,17 @@ def footprint_index(rings):
 
 
 class MurrayServices(unittest.TestCase):
+    def test_public_catalog_caps_ctx_at_real_five_meter_cache(self):
+        # The upstream generic metadata lists 17, but real tiles stop at 12.
+        # This public catalogue drives both whole-globe and sharp-box imagery.
+        layers = {layer["id"]: layer for layer in murray.murray_layers()["layers"]}
+        ctx = layers["ctx"]
+        self.assertEqual(ctx["max_level"], 12)
+        self.assertIn("/CTX1/MapServer/tile/", ctx["url"])
+        meters_per_pixel = 2 * math.pi * murray.MARS_R / (512 * 2 ** (ctx["max_level"] + 1))
+        self.assertAlmostEqual(meters_per_pixel, 5.0875, delta=0.01)
+        self.assertEqual(layers["terrain"]["max_level"], 7)
+
     def test_quad_source_east_edge_rounds_before_longitude_wrapping(self):
         source = {"features": [{"properties": {"Quad": "E176_N0", "Data": "https://example.org/tile"},
                                "geometry": {"coordinates": [[[176, 4], [180.0000000000001, 4],

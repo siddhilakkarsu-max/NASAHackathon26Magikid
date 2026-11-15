@@ -10,7 +10,7 @@ const out = process.env.MARSWALK_AUDIT_DIR || await fs.mkdtemp(path.join(os.tmpd
 await fs.mkdir(out, { recursive: true });
 console.log('Audit artifacts: ' + out);
 const base = process.env.MARSWALK_TEST_URL || 'http://127.0.0.1:8001';
-const checks = [], pageErrors = [];
+const checks = [], pageErrors = [], sourceFailures = [];
 const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, headless: true,
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 let page, failure;
@@ -18,14 +18,17 @@ async function open() {
   const p = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   p.setDefaultTimeout(45000);
   p.on('pageerror', e => pageErrors.push(String(e)));
+  p.on('response', r => { if (r.status() >= 400 && r.url().includes('/OnMars/')) sourceFailures.push({url:r.url(), status:r.status()}); });
+  p.on('requestfailed', r => { if (r.url().includes('/OnMars/')) sourceFailures.push({url:r.url(), error:r.failure()?.errorText}); });
   await p.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await p.locator('#startExploring').click();
   await p.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight && document.querySelector('#globalLayer option[value="map:terrain"]'));
-  await p.evaluate(() => {
+  await p.evaluate(scale => {
+    viewer.resolutionScale = scale;
     document.querySelector('#globalMaps').open = true;
     window.selectionRenderErrors = [];
     viewer.scene.renderError.addEventListener((scene, error) => window.selectionRenderErrors.push(String(error)));
-  });
+  }, Number(process.env.MARSWALK_RENDER_SCALE || 1));
   return p;
 }
 async function state(p = page) {
@@ -50,10 +53,11 @@ async function check(value, p = page, annotations = true) {
   assert.equal(s.choice, value); assert.equal(s.visible, value);
   assert.equal(s.canonical, mapId ? '' : value); assert.equal(s.regional, '');
   assert.equal(s.selectedMap, mapId);
-  assert.deepEqual(s.activeSurfaces, mapId ? [mapId] : []);
+  assert.deepEqual(s.activeSurfaces, mapId === 'ctx' ? ['ctx', 'terrain'] : mapId ? [mapId] : []);
   assert.deepEqual(s.imagerySurfaces, mapId && mapId !== 'terrain' ? [mapId] : []);
   assert(s.own.every(visible => visible === own), 'Planner imagery visibility must follow surface choice: ' + JSON.stringify(s));
-  assert.equal(s.flat, mapId !== 'terrain'); assert.equal(s.depthTest, mapId === 'terrain');
+  const terrain = mapId === 'ctx' || mapId === 'terrain';
+  assert.equal(s.flat, !terrain); assert.equal(s.depthTest, terrain);
   assert.equal(s.overlayCount, weather ? 1 : 0); assert.equal(s.displayedLayer, weather ? value : '');
   assert.equal(s.radiation, value === 'radiation_dose');
   assert.equal(s.status, '', 'Selected layer failed: ' + s.status);
@@ -63,7 +67,7 @@ async function check(value, p = page, annotations = true) {
 }
 async function choose(value, p = page, annotations = true) {
   await p.locator('#globalLayer').selectOption(value);
-  if (value === 'map:terrain') await p.waitForFunction(() => murray.state.terrain?.on && !murray.state.terrain.loading && viewer.terrainProvider === murray.state.terrain.provider, null, { timeout: 120000 });
+  if (value === 'map:terrain' || value === 'map:ctx') await p.waitForFunction(() => murray.state.terrain?.on && !murray.state.terrain.loading && viewer.terrainProvider === murray.state.terrain.provider, null, { timeout: 120000 });
   else if (value && !value.startsWith('map:')) {
     await p.waitForFunction(value => displayedLayer === value || document.querySelector('#layerStatus').textContent.startsWith('Layer could not load'), value, { timeout: 180000 });
   }
@@ -140,7 +144,7 @@ try {
     await new Promise(resolve => releaseTerrain = resolve);
     await route.continue().catch(() => {});
   });
-  await lateTerrainPage.locator('#globalLayer').selectOption('map:terrain');
+  await lateTerrainPage.locator('#globalLayer').selectOption('map:ctx');
   await lateTerrainPage.waitForFunction(() => !!murray.state.terrain?.loading);
   const deadline = Date.now() + 30000;
   while (!terrainSeen && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
@@ -157,7 +161,7 @@ try {
   failure = String(error.stack || error);
   await page?.screenshot({ path: path.join(out, 'global-selection-failure.png') }).catch(() => {});
 } finally {
-  await fs.writeFile(path.join(out, 'global-selection-results.json'), JSON.stringify({ checks, pageErrors, failure }, null, 2));
+  await fs.writeFile(path.join(out, 'global-selection-results.json'), JSON.stringify({ checks, pageErrors, sourceFailures, failure }, null, 2));
   await browser.close();
 }
 if (failure) throw new Error(failure);

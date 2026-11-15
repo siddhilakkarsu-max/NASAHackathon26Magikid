@@ -31,12 +31,16 @@ CRATERS = ("https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/"
            "Mars_Nomenclature_Mountains/FeatureServer/7")
 CALTECH_CA = ROOT / "certs" / "InCommon_RSA_OV_SSL_CA_3.pem"
 MARS_R = 3396190.0
+CTX_MAX_LEVEL = 12
 TERRAIN_MAX_LEVEL = 7
 UA = {"User-Agent": "Mozilla/5.0 (compatible; mars-cube-builder)"}
 
 # The viewer's layers, in its order. "default" = shown by default on the Murray Lab page.
 LAYERS = [
-    dict(id="ctx", kind="tiles", title="CTX mosaic, 5 m (Murray Lab)", default=True, max_level=17,
+    # CTX1 advertises a generic 0..17 pyramid, but its native ~5 m imagery
+    # ends at level 12. Level 13..17 requests return HTTP 400 (verified at
+    # Jezero, Gale, Olympus Mons and Valles Marineris on 2026-11-15).
+    dict(id="ctx", kind="tiles", title="CTX mosaic, 5 m (Murray Lab)", default=True, max_level=CTX_MAX_LEVEL,
          url=f"{ESRI}/CTX1/MapServer/tile/{{z}}/{{y}}/{{x}}", credit="Imagery: NASA, JPL, MSSS, Caltech/Murray Lab, Esri"),
     # These global products have usable cached tiles through level 7. The service's
     # generic image metadata lists finer levels, but their level-8 tile requests fail.
