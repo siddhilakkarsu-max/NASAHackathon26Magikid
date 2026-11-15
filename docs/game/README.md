@@ -52,6 +52,11 @@ the world (blue ring and label), you walk at on-foot speed and oxygen rate, and 
 load. Sampling is done on foot, so starting site work steps you off automatically. The pressurised rover is
 sampled from inside. The autopilot never dismounts.
 
+Each vehicle is one complete model (`g3VehModel`): the bike, the open rover with two seats, console, dish, camera
+and tool pallet, and the pressurised rover with its cabin, six wheels and rear module. The same model is drawn
+around the driver's eye while riding (`G3C.SEAT`) and placed on the ground when parked, so looking around from
+the seat shows the whole vehicle and what you walk away from is what you were sitting in.
+
 The planner's sampling spots can all lie 100 to 600 m from B. The game places the nearest one on B itself, so
 there is always a sample to take where the route ends.
 
@@ -198,7 +203,7 @@ A wrong use wastes a charge.
 ### Test hook
 
 `window.__MW`: `getSnapshot()`, `startBaked(i, cand, diff)`, `setSpeed(n)`, `kill(cause)`, `teleport(metres)`,
-`autopilot(bool)`, `probe(x, y)`, `hazards()`, `perf()`, plus `state` and `CFG`.
+`autopilot(bool)`, `look(yawDeg, pitchDeg)`, `probe(x, y)`, `hazards()`, `perf()`, plus `state` and `CFG`.
 
 ### Verify before committing
 
