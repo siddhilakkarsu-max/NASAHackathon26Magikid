@@ -6,6 +6,8 @@ These original low-poly GLB files were rebuilt against the rover reference pack 
 
 The pack includes an ISS EVA photograph and a picture of the ExoMy educational rover. The corresponding route assets use NASA's xEMU prototype and ESA's Rosalind Franklin flight-rover imagery as their primary visual references.
 
+The 40-round model gauntlet also includes a material-readability pass: metal and foil use restrained metallic response, solar cells receive a very small blue emissive lift, and glass/visors use lower roughness so route-scale silhouettes remain readable under Cesium lighting. The review log is generated at `outputs/marswalk-model-gauntlet-40.html`.
+
 | Model | Visual reference |
 |---|---|
 | Suited astronaut | [NASA xEMU prototype](https://www.nasa.gov/image-article/new-spacesuit-artemis-generation-astronauts/) |

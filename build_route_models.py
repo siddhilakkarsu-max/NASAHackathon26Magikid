@@ -189,9 +189,24 @@ class Asset:
                 rgb = [int(COLORS[color][i:i + 2], 16) / 255 for i in (0, 2, 4)]
                 linear = [v / 12.92 if v <= .04045 else ((v + .055) / 1.055) ** 2.4 for v in rgb]
                 self.materials[color] = len(self.data["materials"])
-                self.data["materials"].append({"name": color, "pbrMetallicRoughness": {
-                    "baseColorFactor": linear + [1], "metallicFactor": 0, "roughnessFactor": .72,
-                }})
+                # Use restrained, physically legible responses so the small route
+                # models keep their silhouette while metal, glass, visor, and
+                # solar surfaces separate cleanly under Cesium lighting.
+                surface_response = {
+                    "metal": (.78, .36), "foil": (.62, .30), "solar": (.28, .40),
+                    "glass": (.12, .18), "visor": (.60, .22), "gold": (.54, .28),
+                    "rubber": (.02, .86), "black": (.04, .82), "dark": (.10, .70),
+                }
+                metallic, roughness = surface_response.get(color, (0, .72))
+                material = {"name": color, "pbrMetallicRoughness": {
+                    "baseColorFactor": linear + [1], "metallicFactor": metallic,
+                    "roughnessFactor": roughness,
+                }}
+                if color == "solar":
+                    material["emissiveFactor"] = [linear[0] * .025, linear[1] * .025, linear[2] * .04]
+                elif color in ("glass", "visor"):
+                    material["alphaMode"] = "OPAQUE"
+                self.data["materials"].append(material)
             primitive = {**self.geometry[shape], "material": self.materials[color]}
             self.meshes[key] = len(self.data["meshes"])
             self.data["meshes"].append({"primitives": [primitive]})
