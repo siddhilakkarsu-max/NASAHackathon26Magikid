@@ -36,7 +36,7 @@ async function state() {
 async function choose(value) {
   await page.evaluate(() => { document.querySelector('#globalMaps').open = true; });
   await page.locator('#globalLayer').selectOption(value);
-  if (value === 'map:ctx' || value === 'map:terrain') {
+  if (value === 'map:terrain') {
     await page.waitForFunction(() => murrayOn('terrain') && !murray.state.terrain.loading &&
       viewer.terrainProvider === murray.state.terrain.provider, null, { timeout: 120000 });
   }
@@ -113,8 +113,10 @@ try {
       sourceFailures.push({ url: response.url(), status: response.status() });
     }
   });
+  await page.addInitScript(() => localStorage.setItem('mapManualSeen', '1'));
   await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.locator('#startExploring').click();
+  await page.locator('#regionsButton').click();
   await page.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight &&
     document.querySelector('#globalLayer option[value="map:ctx"]'));
   await page.evaluate(scale => {
@@ -133,12 +135,12 @@ try {
   assert.equal(metadata.resolution_m, 20);
   const localLevel = metadata.maximum_level;
   assert(Number.isInteger(localLevel) && localLevel > 7);
-  await choose('map:ctx');
+  await choose('map:terrain');
   let s = await state();
   assert.equal(s.scale, 2.7); assert.equal(s.input, 2.7); assert.equal(s.regionalInput, 2.7);
   assert.equal(s.flat, false);
   assert(await page.locator('#terrainDisplayControls').isVisible());
-  record({ name: 'Detailed photos start with visibly labelled 2.7x terrain relief and real regional elevation',
+  record({ name: 'Topographic map starts with visibly labelled 2.7x terrain relief and real regional elevation',
     resolution: metadata.resolution_m, nativeLevel: localLevel });
 
   await page.locator('#terrainTrueScale').click();
@@ -224,7 +226,7 @@ try {
   record({ name: 'Pinned-area controls stay synchronized, tilt their area and restore true scale without changing data' });
   await page.locator('#clearBox').click();
 
-  await choose('map:ctx');
+  await choose('map:terrain');
   await setRange('terrainScale', 2.7);
   for (const site of [
     {name:'olympus', rect:{west:-136, south:16, east:-131, north:21}, points:[[-133.8,18.65],[-135,17]]},
@@ -252,6 +254,12 @@ try {
     requestedLevels: [...new Set(regionalRequests.map(tile => tile.level))].sort((a,b) => a-b) });
 } catch (error) {
   failure = String(error.stack || error);
+  console.error('Relief failure state:', JSON.stringify(await page?.evaluate(() => ({ scale: viewer.scene.verticalExaggeration,
+    height: viewer.scene.globe.getHeight(Cesium.Cartographic.fromDegrees(77.45, 18.45)),
+    tilesLoaded: viewer.scene.globe.tilesLoaded,
+    rendered: viewer.scene.globe._surface._tilesToRender.map(t => ({level:t.level,
+      scale:t.data?.mesh?.encoding?.exaggeration})),
+  })).catch(() => null)));
   await page?.screenshot({ path: path.join(out, 'terrain-relief-failure.png') }).catch(() => {});
 } finally {
   await fs.writeFile(path.join(out, 'terrain-relief-results.json'), JSON.stringify({checks, pageErrors, regionalRequests, sourceFailures, failure}, null, 2));

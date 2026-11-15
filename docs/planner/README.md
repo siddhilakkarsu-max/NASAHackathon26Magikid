@@ -1,14 +1,31 @@
 # Planner map controls
 
 Mars global maps has one Map view selector. Planner imagery, CTX, MOLA, Viking,
-weather and radiation replace one another as full-surface maps. Detailed photos
-includes real 3D terrain underneath the imagery. Names, crater outlines,
+weather and radiation replace one another as full-surface maps. **Topographic map
+(3D + detailed photos)** is the only map that enables elevation and camera tilt.
+Detailed photos and Elevation colours are overhead views. Names, crater outlines,
 rover tracks, the photo tile grid and HiRISE footprints are independent overlays.
 Choosing a regional data layer restores the planner background.
 
+## Regions and 3D navigation
+
+**Regions** in the left tool rail opens the existing region selector. Selecting
+a region flies to its cataloged bounds and selects the topographic map. The
+**View this region in 3D** button sits directly below the selector; **3D view**
+is also available beside the map chips. Right-drag tilts the view. Choosing any
+other global or regional map disables tilt and returns to an overhead camera.
+Walker’s view selects topography; changing maps exits Walker’s view.
+
+All loaded areas and named sites from `/api/sites` are available (24 choices in
+the current default installation). Terrain and photos stream independently of
+planning cubes. Named sites without planning data can be explored immediately;
+planning and regional analysis controls become available when their data arrives.
+Failures keep terrain usable and explain how to retry. Late planning responses
+cannot move the camera, restore an old map, or replace a newer region selection.
+
 ## Detailed photos and terrain
 
-The detailed black-and-white map combines Murray Lab CTX imagery with the
+The topographic map combines Murray Lab CTX imagery with the
 MOLA/HRSC global elevation model served by Esri, USGS 20 m CTX stereo surveys
 distributed around Mars, and verified ESA/DLR 50 m HRSC quadrangle mosaics.
 The installed USGS Jezero mosaic remains preferred within its survey.
@@ -23,12 +40,13 @@ not stretched. **Angled terrain view** frames the visible surface or pinned box;
 **Explore Jezero in 3D** frames the crater. `?view=jezero3d` opens that view directly;
 `?view=terrain` opens the whole planet with detailed photos and terrain selected.
 
-**Box a sharp area** pins the selected area's CTX imagery and terrain. The box
+**Box a sharp area** pins the selected area's CTX imagery. The box
 stays visible when zooming out; camera distance does not fade it away. **Clear**
 removes that pinned area. Selecting another global map changes the background
 outside the pinned rectangle; inside it, the pinned CTX imagery remains on top.
-Actual elevation is kept continuous across the globe to avoid artificial cliffs
-along a box's boundary. The automatic region preview is not a pinned box and
+Pinning photos never enables 3D on other maps. Within the topographic map,
+elevation stays continuous across the globe instead of being clipped at the box.
+The automatic region preview is not a pinned box and
 continues to fade at distant camera positions. A small box can occupy less than a screen pixel from
 far away, and fine features become visible as it fills more of the screen.
 
@@ -173,6 +191,7 @@ node docs/planner/terrain_relief_test.mjs
 node docs/planner/global_terrain_browser_test.mjs
 node docs/planner/mars_sky_browser_test.mjs
 node docs/planner/time_slider_test.mjs
+node docs/planner/region_topography_test.mjs
 ```
 
 Set `MARSWALK_TEST_URL` for another app URL, `CHROME` for an existing Chrome
@@ -187,6 +206,11 @@ The map test checks every enabled view, retained annotations, regional transitio
 and late weather/terrain responses. The slider test uses real Control+A selection,
 mouse drags and keyboard input across four viewport sizes. Its optional
 `MARSWALK_SLIDER_MODE=fixture` mode isolates the controls from the globe.
+
+The region audit checks every menu choice against its catalog bounds, accessible
+3D controls, map exclusivity, pending/failed planning data and stale responses.
+It uses real map providers but deliberately fixtures planning-job responses so
+the test does not start dozens of long-running regional builds.
 
 The terrain test uses mouse gestures to tilt, zoom and draw boxes; checks pinning
 at several camera distances, clearing, terrain picking and dateline crossing;

@@ -18,10 +18,12 @@ async function open() {
   const p = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   p.setDefaultTimeout(45000);
   p.on('pageerror', e => pageErrors.push(String(e)));
+  await p.addInitScript(() => localStorage.setItem('mapManualSeen', '1'));
   p.on('response', r => { if (r.status() >= 400 && /\/OnMars\/|\/murray\/ctx\//.test(r.url())) sourceFailures.push({url:r.url(), status:r.status()}); });
   p.on('requestfailed', r => { if (/\/OnMars\/|\/murray\/ctx\//.test(r.url())) sourceFailures.push({url:r.url(), error:r.failure()?.errorText}); });
   await p.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await p.locator('#startExploring').click();
+  await p.locator('#regionsButton').click();
   await p.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight && document.querySelector('#globalLayer option[value="map:terrain"]'));
   await p.evaluate(scale => {
     viewer.resolutionScale = scale;
@@ -48,15 +50,15 @@ async function state(p = page) {
 async function check(value, p = page, annotations = true) {
   const mapId = value.startsWith('map:') ? value.slice(4) : null;
   const weather = !!value && !mapId;
-  const own = !weather && (!mapId || mapId === 'terrain');
+  const own = !weather && !mapId;
   const s = await state(p);
   assert.equal(s.choice, value); assert.equal(s.visible, value);
   assert.equal(s.canonical, mapId ? '' : value); assert.equal(s.regional, '');
   assert.equal(s.selectedMap, mapId);
-  assert.deepEqual(s.activeSurfaces, mapId === 'ctx' ? ['ctx', 'terrain'] : mapId ? [mapId] : []);
-  assert.deepEqual(s.imagerySurfaces, mapId && mapId !== 'terrain' ? [mapId] : []);
+  assert.deepEqual(s.activeSurfaces, mapId === 'terrain' ? ['ctx', 'terrain'] : mapId ? [mapId] : []);
+  assert.deepEqual(s.imagerySurfaces, mapId === 'terrain' ? ['ctx'] : mapId ? [mapId] : []);
   assert(s.own.every(visible => visible === own), 'Planner imagery visibility must follow surface choice: ' + JSON.stringify(s));
-  const terrain = mapId === 'ctx' || mapId === 'terrain';
+  const terrain = mapId === 'terrain';
   assert.equal(s.flat, !terrain); assert.equal(s.depthTest, terrain);
   assert.equal(s.overlayCount, weather ? 1 : 0); assert.equal(s.displayedLayer, weather ? value : '');
   assert.equal(s.radiation, value === 'radiation_dose');
@@ -67,7 +69,7 @@ async function check(value, p = page, annotations = true) {
 }
 async function choose(value, p = page, annotations = true) {
   await p.locator('#globalLayer').selectOption(value);
-  if (value === 'map:terrain' || value === 'map:ctx') await p.waitForFunction(() => murray.state.terrain?.on && !murray.state.terrain.loading && viewer.terrainProvider === murray.state.terrain.provider, null, { timeout: 120000 });
+  if (value === 'map:terrain') await p.waitForFunction(() => murray.state.terrain?.on && !murray.state.terrain.loading && viewer.terrainProvider === murray.state.terrain.provider, null, { timeout: 120000 });
   else if (value && !value.startsWith('map:')) {
     await p.waitForFunction(value => displayedLayer === value || document.querySelector('#layerStatus').textContent.startsWith('Layer could not load'), value, { timeout: 180000 });
   }
@@ -144,7 +146,7 @@ try {
     await new Promise(resolve => releaseTerrain = resolve);
     await route.continue().catch(() => {});
   });
-  await lateTerrainPage.locator('#globalLayer').selectOption('map:ctx');
+  await lateTerrainPage.locator('#globalLayer').selectOption('map:terrain');
   await lateTerrainPage.waitForFunction(() => !!murray.state.terrain?.loading);
   const deadline = Date.now() + 30000;
   while (!terrainSeen && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));

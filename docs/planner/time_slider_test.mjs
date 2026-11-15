@@ -33,9 +33,14 @@ async function setup(viewport) {
     const binding = html.slice(html.indexOf('["hour", "ls", "budget"].forEach'), html.indexOf('["hour", "ls", "vehicle"].forEach'));
     await p.addScriptTag({ content: `const $=id=>document.getElementById(id); const el=(tag,props)=>Object.assign(document.createElement(tag),props); function solForLs(){return null;} function syncGlobeLighting(){}; ${labels}; ${binding}; labels();` });
   } else {
+    await p.addInitScript(() => localStorage.setItem('mapManualSeen', '1'));
     await p.goto((process.env.MARSWALK_TEST_URL || 'http://127.0.0.1:8001') + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await p.locator('#startExploring').click();
-    await p.waitForFunction(() => current && document.querySelector('#globalLayer option[value="map:terrain"]') && !viewer.camera._currentFlight, null, { timeout: 60000 });
+    await p.locator('#regionsButton').click();
+    // Sliders are usable while the camera flies. On narrow screens the open
+    // drawer can cover the entire globe, so camera rendering is not UI readiness.
+    await p.waitForFunction(() => current && document.querySelector('#globalLayer option[value="map:terrain"]'), null, { timeout: 60000 });
+    await p.evaluate(scale => { viewer.resolutionScale = scale; }, Number(process.env.MARSWALK_RENDER_SCALE || 1));
   }
   await p.locator('#conditionsPanel > summary').click();
   await p.locator('#hour').scrollIntoViewIfNeeded();
@@ -108,6 +113,7 @@ try {
       assert.equal(await page.locator('#hourVal').textContent(), label);
     }
     await page.close();
+    console.log(`PASS slider gestures and keyboard input at ${viewport.width}×${viewport.height}`);
   }
   console.log(JSON.stringify({ ok: true, mode, selection, pointerDrags: checks.length, keyboardChecks: 16,
     minInputEvents: Math.min(...checks.map(c=>c.inputEvents)), maxInputEvents: Math.max(...checks.map(c=>c.inputEvents)),

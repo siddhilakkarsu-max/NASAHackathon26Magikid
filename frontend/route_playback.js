@@ -148,6 +148,7 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
         return;
       }
       route.model = model;
+      model.show = walker?.route !== route;
       pose(route);
       model.readyEvent.addEventListener(() => {
         route.ready = true;
@@ -181,8 +182,9 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
     const terrain = walker?.terrain;
     if (terrain?.provider) {
       try {
-        const [sample] = await Cesium.sampleTerrain(terrain.provider, terrain.level, [Cesium.Cartographic.clone(carto)]);
-        if (Number.isFinite(sample?.height)) return sample.height;
+        const level = terrain.level || terrain.provider.getDetailForPosition?.(carto)?.maximum_level || 7;
+        const [sample] = await Cesium.sampleTerrain(terrain.provider, level, [Cesium.Cartographic.clone(carto)]);
+        if (Number.isFinite(sample?.height)) return sample.height * (scene.verticalExaggeration || 1);
       } catch { /* fall back to what the globe has loaded */ }
     }
     const height = scene.globe.getHeight(carto);
@@ -210,16 +212,15 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
     const carto = ellipsoid.cartesianToCartographic(at);
     const ground = await groundHeight(carto);
     if (!walker || current !== route || walker.stop !== stop) return;
-    const exaggeration = scene.verticalExaggeration || 1;
     camera.flyTo({
       destination: Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude,
-        ground * exaggeration + WALKER_EYE_M, ellipsoid),
+        ground + WALKER_EYE_M, ellipsoid),
       orientation: { heading, pitch: Cesium.Math.toRadians(-4), roll: 0 },
       duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.6,
     });
     walkStatus.textContent = `Walker's view ${stop + 1}/${WALKER_STOPS.length}: ${WALKER_STOP_NAMES[stop]} ` +
-      `(${(distance / 1000).toFixed(2)} km along), eye height ${WALKER_EYE_M} m. Ground from 200 m NASA ` +
-      "elevation data, so boulders are not shown. Shift-drag to look around.";
+      `(${(distance / 1000).toFixed(2)} km along), eye height ${WALKER_EYE_M} m above displayed terrain. ` +
+      "Measured elevation; detail depends on survey coverage. Right-drag to look around.";
   }
 
   async function enterWalker() {
@@ -231,7 +232,16 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
     scene.backgroundColor = Cesium.Color.fromCssColorString(WALKER_SKY);
     walkStatus.textContent = "Loading the 3D ground…";
     updateControls();
-    try { walker.terrain = await beforeWalk?.(); } catch { walker && (walker.terrain = null); }
+    try {
+      const terrain = await beforeWalk?.();
+      if (walker?.route !== route) return;
+      walker.terrain = terrain;
+    } catch (error) {
+      if (walker?.route !== route) return;
+      exitWalker(false);
+      walkStatus.textContent = `Walker's view unavailable: ${error.message}`;
+      return;
+    }
     if (walker?.route === route) walkerTo(0);
   }
 
@@ -245,7 +255,7 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
     if (flyBack && route === current) {
       const range = Cesium.Math.clamp(route.path.bounds.radius * 3.2, 320, 80000);
       camera.flyToBoundingSphere(route.path.bounds, {
-        offset: new Cesium.HeadingPitchRange(Cesium.Math.toRadians(-20), Cesium.Math.toRadians(-55), range),
+        offset: new Cesium.HeadingPitchRange(Cesium.Math.toRadians(-20), Cesium.Math.toRadians(scene.screenSpaceCameraController.enableTilt ? -55 : -90), range),
         duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.2,
       });
     }
@@ -272,7 +282,7 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
       if (route.elapsed === route.duration) route.elapsed = 0;
       if (route.elapsed === 0) {
         const range = Cesium.Math.clamp(route.path.bounds.radius * 3.2, 320, 80000);
-        const offset = new Cesium.HeadingPitchRange(Cesium.Math.toRadians(-20), Cesium.Math.toRadians(-55), range);
+        const offset = new Cesium.HeadingPitchRange(Cesium.Math.toRadians(-20), Cesium.Math.toRadians(scene.screenSpaceCameraController.enableTilt ? -55 : -90), range);
         const immediate = matchMedia("(prefers-reduced-motion: reduce)").matches;
         camera.flyToBoundingSphere(route.path.bounds, { offset, duration: immediate ? 0 : 0.8 });
       }
@@ -296,6 +306,7 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
       load(current);
     },
     clear,
+    exitWalker,
     walking: () => !!walker,
   };
 }

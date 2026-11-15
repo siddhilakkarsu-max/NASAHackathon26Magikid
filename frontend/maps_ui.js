@@ -63,6 +63,11 @@
   const toggle = (section) => () => (openSection === section ? drawer(false) : drawer(true, section));
   rail.append(el("div", { className: "logo", title: "Marswalk Planner" }));
   railBtn("menu", "Menu", toggle("all"), "all");
+  const regionsBtn = railBtn("globe", "Regions", () => {
+    drawer(true, "regionPicker");
+    setTimeout(() => $("region").focus(), 250);
+  }, "regionPicker");
+  regionsBtn.id = "regionsButton";
   railBtn("chat", "Assistant", () => chat.open(true));
   railBtn("route", "Plan", toggle("missionSetup"), "missionSetup");
   const resultsBtn = railBtn("list", "Results", toggle("missionResults"), "missionResults");
@@ -112,6 +117,7 @@
       return true;
     }
     const s = layerSelect(id);
+    if (s.disabled) return false;
     if (![...s.options].some(o => o.value === id && !o.disabled)) return false;
     s.value = id;
     s.dispatchEvent(new Event("change"));
@@ -122,21 +128,29 @@
   const CHIPS = [
     ["radiation", "Radiation", "radiation_dose"], ["thermo", "Temperature", "global_temperature"],
     ["wind", "Wind", "wind_direction"], ["gem", "Minerals", "science"], ["sun", "Sunlight", "illumination"],
-    ["photo", "Sharp photos", "map:ctx"],
+    ["globe", "Topographic", "map:terrain"], ["photo", "Sharp photos", "map:ctx"],
     ["tracks", "Rover tracks", () => $("showTracks").click(), () => $("showTracks").checked],
   ];
   const chipEls = CHIPS.map(([icon, label, act, isOn]) => {
     const b = el("button", { type: "button" }, svg(ICON[icon]), label);
     b.onclick = () => {
       if (typeof act === "function") act();
-      else if (!setLayer(currentLayer() === act ? "" : act)) chat.say(`${label} isn't available for this area yet: pick a region first.`);
+      else if (!setLayer(currentLayer() === act ? "" : act)) chat.say(current?.planningReady === false
+        ? `${label} needs this region's planning data. You can explore the topographic map while it loads.`
+        : `${label} isn't available for this area yet: pick a region first.`);
       setTimeout(syncChips, 50);
     };
     b._on = typeof act === "function" ? isOn : () => currentLayer() === act;
     chipsBar.append(b);
     return b;
   });
-  function syncChips() { for (const b of chipEls) b.classList.toggle("on", !!b._on()); }
+  const view3d = el("button", { id: "map3dView", type: "button", textContent: "3D view", hidden: true,
+    title: "Tilt the topographic map; right-drag to look around", onclick: () => angledTerrainView() });
+  chipsBar.append(view3d);
+  function syncChips() {
+    for (const b of chipEls) b.classList.toggle("on", !!b._on());
+    view3d.hidden = !topographicSelected();
+  }
   $("layer").addEventListener("change", () => setTimeout(syncChips, 0));
   for (const s of ["globalLayer", "regionalLayer", "showTracks"]) $(s).addEventListener("change", () => setTimeout(syncChips, 0));
   camera().moveEnd.addEventListener(syncChips);

@@ -18,8 +18,10 @@ async function open() {
   const p = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   p.setDefaultTimeout(45000);
   p.on('pageerror', error => pageErrors.push(String(error)));
+  await p.addInitScript(() => localStorage.setItem('mapManualSeen', '1'));
   await p.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await p.locator('#startExploring').click();
+  await p.locator('#regionsButton').click();
   await p.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight &&
     document.querySelector('#globalLayer option[value="map:ctx"]'));
   await p.evaluate(scale => {
@@ -70,6 +72,9 @@ async function pinBox() {
   // The separate interaction audit draws the two corners with real pointer input.
   // This fixture isolates service failure/recovery using the same production path.
   await page.evaluate(() => setSharpBox({ west: 77.2, south: 18.2, east: 77.6, north: 18.6 }, { persistent: true }));
+  await page.evaluate(() => { document.querySelector('#globalMaps').open = true; });
+  await page.locator('#globalLayer').selectOption('map:terrain');
+  await page.evaluate(() => { document.querySelector('#regionalMaps').open = true; });
 }
 
 async function failMetadata(p) {
@@ -119,7 +124,7 @@ try {
     assert.equal(result.displayedLayer, 'surface_pressure', 'Real pressure layer loaded');
     assert(result.overlayIndexes.length > 0);
     assert(result.overlayIndexes.every(index => index >= 0 && index < result.ctx.index), 'Pinned photos stay above weather imagery');
-    assert.equal(result.providerActive, true);
+    assert.equal(result.providerActive, false);
     await record('pinned photos remain above the real pressure layer');
     await page.evaluate(() => { document.querySelector('#regionalMaps').open = true; });
     await page.locator('#clearBox').click();
@@ -139,7 +144,7 @@ try {
   page = await open();
   const globalFailedRequests = await failMetadata(page);
   await page.evaluate(() => { document.querySelector('#globalMaps').open = true; });
-  await page.locator('#globalLayer').selectOption('map:ctx');
+  await page.locator('#globalLayer').selectOption('map:terrain');
   await page.waitForFunction(() => !murray.state.terrain?.loading && !murrayOn('terrain') &&
     !document.querySelector('#murrayTerrainRetry').hidden);
   assert(globalFailedRequests() > 0);
@@ -171,6 +176,9 @@ try {
   const deadline = Date.now() + 30000;
   while (!seen && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 25));
   assert(seen, 'A real metadata request must be held');
+  await page.evaluate(() => { document.querySelector('#globalMaps').open = true; });
+  await page.locator('#globalLayer').selectOption('map:ctx');
+  await page.evaluate(() => { document.querySelector('#regionalMaps').open = true; });
   await page.locator('#clearBox').click();
   result = await state();
   assert.equal(result.pinned, false);
@@ -189,7 +197,7 @@ try {
   assert.equal(result.globalStatus, '');
   assert.equal(result.globalRetryHidden, true);
   assert.equal(result.localRetryHidden, true);
-  await record('clearing while metadata loads rejects late terrain activation');
+  await record('switching away and clearing while metadata loads rejects late terrain activation');
   await closePage();
 
   // A detailed-source catalog failure should retain the genuine global terrain,
@@ -199,7 +207,7 @@ try {
   await page.route(detailCatalog, route => route.fulfill({ status: 503,
     contentType: 'application/json', body: JSON.stringify({ detail: 'Intentional catalog failure' }) }));
   await page.evaluate(() => { document.querySelector('#globalMaps').open = true; });
-  await page.locator('#globalLayer').selectOption('map:ctx');
+  await page.locator('#globalLayer').selectOption('map:terrain');
   await page.waitForFunction(() => murrayOn('terrain') && !murray.state.terrain.loading &&
     !!murray.state.terrain.provider?.regionalError && !document.querySelector('#murrayTerrainRetry').hidden);
   result = await state();

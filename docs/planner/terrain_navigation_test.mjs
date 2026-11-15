@@ -22,6 +22,7 @@ async function open() {
   const p = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   p.setDefaultTimeout(60000);
   p.on('pageerror', error => pageErrors.push(String(error)));
+  await p.addInitScript(() => localStorage.setItem('mapManualSeen', '1'));
   p.on('request', request => {
     const match = new URL(request.url()).pathname.match(/^\/murray\/elevation\/tile\/(\d+)\/(\d+)\/(\d+)$/);
     if (match) terrainRequests.push({ level: +match[1], y: +match[2], x: +match[3] });
@@ -30,6 +31,7 @@ async function open() {
   });
   await p.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await p.locator('#startExploring').click();
+  await p.locator('#regionsButton').click();
   await p.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight &&
     document.querySelector('#globalLayer option[value="map:ctx"]'));
   await p.evaluate(scale => {
@@ -46,7 +48,7 @@ async function open() {
 async function choose(value) {
   await page.evaluate(() => { document.querySelector('#globalMaps').open = true; });
   await page.locator('#globalLayer').selectOption(value);
-  if (value === 'map:ctx' || value === 'map:terrain' || await page.evaluate(() => sharpBoxPinned)) {
+  if (value === 'map:terrain') {
     await page.waitForFunction(() => murray.state.terrain?.on && !murray.state.terrain.loading &&
       viewer.terrainProvider === murray.state.terrain.provider, null, { timeout: 120000 });
   }
@@ -92,10 +94,10 @@ async function drawBox(first = [0.4, 0.4], second = [0.6, 0.6]) {
     null, { timeout: 120000 });
   return state();
 }
-function assertPinned(s, expectedBox) {
+function assertPinned(s, expectedBox, terrain = true) {
   assert.equal(s.pinned, true); assert.equal(s.image?.show, true); assert.equal(s.image?.alpha, 1);
-  assert.equal(s.outline, true); assert.equal(s.terrain, true); assert.equal(s.flat, false);
-  assert.equal(s.depthTest, true); assert.equal(s.exaggeration, 1);
+  assert.equal(s.outline, true); assert.equal(s.terrain, terrain); assert.equal(s.flat, !terrain);
+  assert.equal(s.depthTest, terrain); assert.equal(s.exaggeration, 1);
   if (expectedBox) assert.deepEqual(s.box, expectedBox);
   assert.deepEqual(s.renderErrors, []);
 }
@@ -103,11 +105,11 @@ function assertPinned(s, expectedBox) {
 try {
   page = await open();
   await view(77.45, 18.45, 9000000);
-  await choose('map:ctx');
+  await choose('map:terrain');
   let s = await state();
   assert.equal(s.terrain, true); assert.equal(s.flat, false); assert.equal(s.exaggeration, 1);
   assert(await page.evaluate(() => murrayOn('ctx') && !!murray.state.ctx.layer));
-  record({ name: 'Detailed photos automatically use real terrain without exaggeration' });
+  record({ name: 'Topographic map combines detailed photos with true-scale measured terrain' });
 
   await view();
   await page.waitForFunction(() => {
@@ -166,12 +168,12 @@ try {
 
   for (const choice of ['map:mola', 'map:viking', '']) {
     await choose(choice);
-    assertPinned(await state(), pinned);
+    assertPinned(await state(), pinned, false);
     if (choice) assert(await page.evaluate(choice => viewer.imageryLayers.indexOf(ctxLayer) >
       viewer.imageryLayers.indexOf(murray.state[choice.slice(4)].layer), choice), 'Pinned photos remain above the global background');
   }
   await page.evaluate(() => setSharpBox(current.rect));
-  assertPinned(await state(), pinned);
+  assertPinned(await state(), pinned, false);
   record({ name: 'Pinned box survives global selections and automatic regional imagery updates' });
 
   await page.evaluate(() => { document.querySelector('#regionalMaps').open = true; });
@@ -181,13 +183,13 @@ try {
   assert.equal(s.flat, true); assert.equal(s.terrain, false);
   record({ name: 'Clear removes the last terrain demand and returns the planner to its normal background' });
 
-  await choose('map:ctx');
+  await choose('map:terrain');
   await view();
   await drawBox();
   await page.locator('#clearBox').click();
   s = await state();
   assert.equal(s.box, null); assert.equal(s.pinned, false); assert.equal(s.flat, false); assert.equal(s.terrain, true);
-  record({ name: 'Clearing a box preserves terrain still required by Detailed photos' });
+  record({ name: 'Clearing a box preserves the selected topographic terrain' });
 
   await page.locator('#boxBtn').click();
   const first = await canvasPoint(0.45, 0.45);

@@ -42,7 +42,7 @@ function heightAt(bytes, size, u, northV) {
 async function choose(value) {
   await page.evaluate(() => { document.querySelector('#globalMaps').open = true; });
   await page.locator('#globalLayer').selectOption(value);
-  if (value === 'map:terrain' || value === 'map:ctx') {
+  if (value === 'map:terrain') {
     await page.waitForFunction(() => murrayOn('terrain') && !murray.state.terrain.loading &&
       viewer.terrainProvider === murray.state.terrain.provider, null, { timeout: 120000 });
   } else {
@@ -60,8 +60,10 @@ try {
       sourceResponses.push({ url: response.url(), httpStatus: response.status(), ...provenance(response.headers()) });
     }
   });
+  await page.addInitScript(() => localStorage.setItem('mapManualSeen', '1'));
   await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 90000 });
   await page.locator('#startExploring').click();
+  await page.locator('#regionsButton').click();
   await page.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight &&
     document.querySelector('#globalLayer option[value="map:terrain"]'));
   await page.evaluate(scale => {
