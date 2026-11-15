@@ -12,3 +12,5 @@ cubes/*.tif
 cubes/tilecache/
 cubes/jezero_hirise.npz
 cubes/murraycache/
+# game leaderboard database (leaderboard.py)
+game_state/

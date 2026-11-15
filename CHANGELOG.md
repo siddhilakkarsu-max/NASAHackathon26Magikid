@@ -6,6 +6,34 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-15, game: leaderboard, callsigns and a "mission ready" button
+
+Branch `feat/Gk`.
+
+### Added
+
+- **Leaderboard and callsigns** (`leaderboard.py`, routes `/api/game/players`, `/api/game/scores`,
+  `/api/game/leaderboard`; one include line in `app.py`). A player claims a callsign on the game's title screen;
+  successful missions flown by hand at normal speed are posted; the end screen shows the rank and top ten for that
+  mission and route, the title screen the overall board. Stored in `game_state/leaderboard.sqlite3` (not in git,
+  folder set by `MARSWALK_GAME_STATE_DIR`). Browser storage: `marswalk.game.player`.
+- **"Mission ready · Play" button** (`frontend/game-launch.js`). A green pulsing button appears at the top right
+  of the planner map when a plan is ready and opens the selected route in the game. Hidden while planning.
+- 8 tests (174 total): `tests/test_leaderboard.py` (7) and one in `tests/test_game.py`.
+
+### Verification
+
+- Headless Chrome against the local server: claim a callsign, finish a mission by hand, see the rank and board;
+  duplicate and invalid callsigns refused with a message; autopilot runs not posted. On the planner: the button is
+  hidden before and during planning, appears when the plan is ready, overlaps no other control, and launches the
+  game with the selected route.
+
+### Limits
+
+- Scores come from the browser and can be faked; the server checks ranges, the callsign token and a 4 s gap.
+- A callsign has no password and cannot be recovered on another device. No name filter beyond the character rule,
+  no admin page. Each server keeps its own board.
+
 ## [Unreleased] - 2026-11-15, game: vehicle handling, dismounting and a sample at B
 
 Branch `feat/Gk`.

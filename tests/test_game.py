@@ -121,6 +121,15 @@ class GameTest(unittest.TestCase):
                      "DRIVE_ACCEL", "MOUNT_M", "k === snapK", "if (kl === 'v')"):
             self.assertIn(word, self.script, word)
 
+    def test_leaderboard_client_and_ready_button(self):
+        """The game posts to the leaderboard API, and the planner gets a "mission ready" launch button."""
+        for word in ("/api/game/players", "/api/game/scores", "/api/game/leaderboard", "marswalk.game.player",
+                     "function lbSubmit(", "R.bot || R.fast"):
+            self.assertIn(word, self.script, word)
+        self.assertIn('id="lb"', self.html)
+        for word in ('"playFab"', "playFabPulse", "MISSION READY"):
+            self.assertIn(word, self.launch, word)
+
     def test_handoff_contract(self):
         self.assertIn(HANDOFF_KEY, self.html)
         self.assertIn(HANDOFF_KEY, self.launch)
