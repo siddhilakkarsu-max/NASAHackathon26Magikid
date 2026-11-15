@@ -8,9 +8,14 @@ set -euo pipefail
 APP=/home/ubuntu/marswalk
 cd "$APP"
 
-echo "== packages"
+echo "== security updates (Lightsail flags pending Linux CVEs on new instances)"
 sudo apt-get update -qq
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv python3-pip caddy curl >/dev/null
+sudo DEBIAN_FRONTEND=noninteractive apt-get -y -qq -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold \
+  full-upgrade >/dev/null
+if command -v php >/dev/null; then echo "note: PHP is installed on this server ($(php -r 'echo PHP_VERSION;')); Marswalk doesn't use it"; fi
+
+echo "== packages"
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq python3-venv python3-pip caddy curl unattended-upgrades >/dev/null
 
 echo "== swap (2 GB, so building a new area never runs out of memory)"
 if ! sudo swapon --show | grep -q /swapfile; then
@@ -59,7 +64,7 @@ sudo systemctl enable -q marswalk
 sudo systemctl restart marswalk
 
 echo "== Caddy (HTTPS)"
-IP=$(curl -s -4 --max-time 5 https://checkip.amazonaws.com || true)
+IP=$(curl -s -4 --max-time 5 https://checkip.amazonaws.com || curl -s -4 --max-time 5 https://ifconfig.co || true)
 HOST=""
 [ -n "$IP" ] && HOST="$(echo "$IP" | tr . -).sslip.io"
 {
@@ -75,3 +80,4 @@ echo "== check"
 for i in $(seq 60); do curl -sf http://127.0.0.1:8000/api/sites >/dev/null && break; sleep 1; done
 curl -s -o /dev/null -w "app: %{http_code}\n" http://127.0.0.1:8000/
 [ -n "$HOST" ] && echo "Public address: https://$HOST  (and http://$IP)"
+[ -f /var/run/reboot-required ] && echo "REBOOT-REQUIRED" || true

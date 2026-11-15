@@ -21,7 +21,14 @@ if grep -rlIE "sk-ant-[A-Za-z0-9_-]{20,}" "$TMP" >/dev/null; then echo "refusing
 rsync -az -e "ssh -i $KEY -o StrictHostKeyChecking=accept-new" "$TMP/" "ubuntu@$IP:marswalk/"
 if [ "$SETUP" = "--setup" ]; then
   # the key travels over SSH on stdin and only into ~/marswalk/ai.env (chmod 600)
-  printf '%s' "${ANTHROPIC_API_KEY:-}" | "${SSH[@]}" 'read -r K; ANTHROPIC_API_KEY="$K" bash ~/marswalk/deploy/aws/setup_server.sh'
+  OUT=$(printf '%s' "${ANTHROPIC_API_KEY:-}" | "${SSH[@]}" 'read -r K; ANTHROPIC_API_KEY="$K" bash ~/marswalk/deploy/aws/setup_server.sh' | tee /dev/stderr)
+  if grep -q REBOOT-REQUIRED <<<"$OUT"; then     # a security update (e.g. a new kernel) needs a restart
+    echo "Rebooting to finish security updates..."
+    "${SSH[@]}" 'sudo systemctl reboot' || true
+    sleep 20
+    for i in $(seq 40); do "${SSH[@]}" -o ConnectTimeout=5 true 2>/dev/null && break; sleep 5; done
+    "${SSH[@]}" 'for i in $(seq 60); do curl -sf http://127.0.0.1:8000/api/sites >/dev/null && break; sleep 1; done; curl -s -o /dev/null -w "app after reboot: %{http_code}\n" http://127.0.0.1:8000/'
+  fi
 else
   "${SSH[@]}" "cd ~/marswalk && .venv/bin/pip install -q -r requirements.txt && sudo systemctl restart marswalk && for i in \$(seq 60); do curl -sf http://127.0.0.1:8000/api/sites >/dev/null && break; sleep 1; done; curl -s -o /dev/null -w 'app: %{http_code}\n' http://127.0.0.1:8000/"
 fi
