@@ -115,6 +115,12 @@ class GameTest(unittest.TestCase):
         self.assertIn("SCENE_RADIO = { storm: 1, arrival: 1, objective: 1, abandon: 1 }", self.script)
         self.assertIn("if (STORY && !G.skip && !prefs.intro)", self.script)
 
+    def test_vehicle_driving_and_dismount(self):
+        """Vehicles steer and carry momentum, the crew can step off and mount again, and B always has a sample."""
+        for word in ("function dismount(", "function mount(", "function g3Parked(", "function g3Driving(",
+                     "DRIVE_ACCEL", "MOUNT_M", "k === snapK", "if (kl === 'v')"):
+            self.assertIn(word, self.script, word)
+
     def test_handoff_contract(self):
         self.assertIn(HANDOFF_KEY, self.html)
         self.assertIn(HANDOFF_KEY, self.launch)
