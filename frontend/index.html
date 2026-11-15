@@ -532,12 +532,28 @@ const viewer = new Cesium.Viewer("map", {
   baseLayer: baseMap,
   baseLayerPicker: false, geocoder: false, timeline: false, animation: false,
   sceneModePicker: false, homeButton: false, navigationHelpButton: false, infoBox: false, selectionIndicator: false,
+  useBrowserRecommendedResolution: false,   // high-DPI: see applyPixelRatio
 });
 const trekLayer = viewer.imageryLayers.addImageryProvider(marsTiles);
 // Stream only visible tiles, refining the measured terrain and photos as they
 // occupy more screen pixels. Height amplification is a labeled display setting;
 // providers and planning calculations always retain the original measured values.
-viewer.scene.globe.maximumScreenSpaceError = 1;
+// High-DPI screens: by default Cesium draws at CSS-pixel resolution and the browser stretches the picture, so
+// a Retina screen shows a soft map. Draw at the screen's real pixel density (capped at 2x to keep frame rates
+// up), and load terrain and photos detailed enough for those pixels: Cesium measures tile detail in CSS pixels.
+const MAX_PIXEL_RATIO = 2;
+function applyPixelRatio() {
+  const dpr = window.devicePixelRatio || 1, ratio = Math.min(MAX_PIXEL_RATIO, dpr);
+  viewer.resolutionScale = ratio / dpr;
+  viewer.scene.globe.maximumScreenSpaceError = 1 / Math.max(1, ratio);
+}
+applyPixelRatio();
+// the ratio changes when the window moves to another screen or the page is zoomed
+(function watchPixelRatio() {
+  matchMedia(`(resolution: ${window.devicePixelRatio}dppx)`).addEventListener("change", () => {
+    applyPixelRatio(); watchPixelRatio();
+  }, { once: true });
+})();
 viewer.scene.globe.tileCacheSize = 256;
 let terrainScale = 2.7;
 viewer.scene.verticalExaggeration = terrainScale;
