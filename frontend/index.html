@@ -401,12 +401,16 @@ function setSharpBox(r) {                       // r = {west, south, east, north
   sharpBox = r;
   if (!r) { viewer.scene.requestRender(); return; }
   const rect = Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north);
+  // The Murray Lab "Detailed photos (black and white)" map (CTX mosaic, 5 m, straight from Esri's OnMars tiles),
+  // clipped to the box.
+  const ctxDef = murray.defs.find((d) => d.id === "ctx");
   ctxLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-    url: API + "/ctxtiles/{z}/{y}/{x}.jpg",
+    url: ctxDef ? ctxDef.url : "https://astro.arcgis.com/arcgis/rest/services/OnMars/CTX1/MapServer/tile/{z}/{y}/{x}",
     tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
-    tileWidth: 512, tileHeight: 512, minimumLevel: 8, maximumLevel: 12, rectangle: rect,
-    credit: "Global CTX Mosaic of Mars, Murray Lab/Caltech (NASA/JPL/MSSS)",
-  }), 1);
+    tileWidth: 512, tileHeight: 512, maximumLevel: ctxDef ? ctxDef.max_level : 17, rectangle: rect,
+    credit: ctxDef ? ctxDef.credit : "Imagery: NASA, JPL, MSSS, Caltech/Murray Lab, Esri",
+  }));                                              // above every background map...
+  for (const l of overlay) if (viewer.imageryLayers.contains(l)) viewer.imageryLayers.raiseToTop(l);   // ...below data
   boxEntity = viewer.entities.add({ rectangle: { coordinates: rect, fill: false, outline: true,
     outlineColor: Cesium.Color.ORANGE.withAlpha(0.8), height: 0 } });
   fadePhoto();
@@ -1527,6 +1531,7 @@ async function murrayToggle(def, on) {
         st.layer = coll.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
           url: def.url, tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
           tileWidth: 512, tileHeight: 512, maximumLevel: def.max_level, credit: def.credit }));
+        if (ctxLayer && coll.contains(ctxLayer)) coll.raiseToTop(ctxLayer);   // the boxed sharp photo stays visible
         for (const l of overlay) if (coll.contains(l)) coll.raiseToTop(l);
       }
       if (!on && st.layer) { coll.remove(st.layer, true); st.layer = null; }
