@@ -1232,6 +1232,19 @@ function renderMission() {
   for (const d of r.dropped) out.append(el("div", { className: "small bad", textContent: `Dropped B${d.id} (${deg(d.B)}): ${d.reason}` }));
 }
 
+// Mission-planner vehicle (config.MISSION_VEHICLES) -> closest gear-page traveller (config.VEHICLES).
+// The scout bike has no own profile; the open LRV-class rover is the nearest (suited crew, battery, ~10 km/h).
+const MISSION_GEAR_VEHICLE = { on_foot: "astronaut", two_wheel: "unpressurized_rover",
+                               four_wheel: "unpressurized_rover", buggy: "pressurized_rover" };
+function missionGearHref(c) {
+  const s = mission.settings, v = MISSION_GEAR_VEHICLE[s.vehicle.key];
+  const q = new URLSearchParams({ archetype: "traverse", region: $("region").value || "jezero" });
+  if (v) q.set("vehicle", v);
+  q.set("base", `${c.A.lat},${c.A.lon}`); q.set("target", `${c.B.lat},${c.B.lon}`);
+  q.set("ls", s.season.ls); q.set("hour", s.local_hour);
+  return "kit.html?" + q;
+}
+
 function candidateCard(c, i) {
   const d = el("details", { className: "card" + (i === selected ? " sel" : ""), open: i === selected });
   const chip = el("span", { className: "chip" + (c.A.kind === "NASA candidate" ? " nasa" : ""), textContent: c.A.kind });
@@ -1254,7 +1267,9 @@ function candidateCard(c, i) {
   }
   add(`Turn back no later than ${ta.h} h after leaving A` + (ta.at_B ? " (B is reached before then)" : ` (at ${deg(ta)})`));
   d.append(ul, el("button", { className: "secondary", textContent: i === selected ? "Showing this route" : "Show this route",
-                              onclick: () => selectRoute(i) }));
+                              onclick: () => selectRoute(i) }),
+           el("p", { className: "small" }, el("a", { href: missionGearHref(c), target: "_blank", rel: "noopener",
+                                                    textContent: "Gear for this mission" })));
   return d;
 }
 
