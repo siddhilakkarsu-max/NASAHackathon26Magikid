@@ -143,8 +143,9 @@ def size_consumables(r: Resolved, carry=None):
         if rt.energy_used_kwh is not None:
             lines.append(_line("Round-trip vehicle energy", rt.energy_used_kwh, "kWh",
                                f"capacity {rt.energy_max_kwh} kWh ({rt.energy_pct}%)", "I", (), per="this route",
-                               note="Driving plus housekeeping loads for the route's hours. The crew rover's loads "
-                                    "are a labelled engineering estimate."))
+                               note="Driving plus housekeeping loads for the route's hours. The crew rover's "
+                                    "battery, hotel load and energy per km are from NASA's Mars pressurized rover "
+                                    "study (Chappell et al. 2022)."))
             if rt.climb_kwh is not None:
                 lines.append(_line("of which climbing", rt.climb_kwh, "kWh", f"mass x 3.711 m/s2 x height, route {climb}",
                                    "I", (), per="this route",
