@@ -3,6 +3,41 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-14, survival game that plays the plan
+
+Branch `feat/Gk`.
+
+### Added
+
+- **Marswalk: Survive the Route** (`frontend/game.html`, one self-contained file, served at `/game.html`). The
+  player follows the planned route A to B and back with the plan's tools, oxygen, battery and reserve; six ways to
+  die (`oxygen`, `battery`, `integrity`, `tools`, `offlimits`, `storm`); Houston cutscenes with the signal delay.
+  The briefing shows the planner's settings, tools, decision matrix, candidate cards, dropped routes and notes;
+  layers, weather, rover tracks and clicked-point values are in a drawer. Plans live through
+  `/api/mission/stream`, or runs offline on five baked real plans.
+- **Play buttons** (`frontend/game-launch.js`). `kit.html` loads it and gets a Play button that opens the game with
+  the kit form's vehicle, season, region and goals. On the planner it adds "Play this mission", which saves the
+  plan and selected route to `localStorage["marswalk.game.mission"]` and opens `game.html?src=planner`.
+- URL params: `baked`, `cand`, `difficulty`, `src=planner`, `goal`, `vehicle`, `season`, `priority`, `green_only`,
+  `region`, `autopilot`, `speed`, `skip`, `mute`, `seed`, `touch`. Storage: `marswalk.game.mission`,
+  `marswalk.game.best`, `marswalk.game.last`, `marswalk.game.prefs`.
+- `docs/game/README.md` (player guide and hand-over) and `docs/game/smoke_test.js` (headless autopilot run).
+- 10 tests (136 total), `tests/test_game.py`. One fails if the game's vehicle table drifts from
+  `config.MISSION_VEHICLES`.
+
+### Verification
+
+- Headless Chrome: autopilot completes all 14 baked routes served and from `file://`; all six death causes fire;
+  42 UI checks and 16 planning and hand-off checks pass; no console errors; 59-60 frames per second on Intel UHD.
+
+### Limits
+
+- `frontend/index.html` is not edited, so the planner has no Play button until
+  `<script src="/game-launch.js" defer></script>` is added to its `<head>`.
+- Terrain away from the planned corridor is generated. Storms, breaches, tool charges and scoring are game rules,
+  not planner output. Time is compressed: a round trip takes about 2.5 to 6.5 minutes.
+- Baked missions and the embedded weather table are Jezero only. Not checked on a phone, Firefox or Safari.
+
 ## [Unreleased] - 2026-11-14, gear page, app hookup and run scripts
 
 PRs #9 to #16 (merged just after midnight UTC, 2026-11-15).
