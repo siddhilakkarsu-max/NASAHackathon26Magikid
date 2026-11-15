@@ -12,6 +12,8 @@
 <script src="/temperature_view.js"></script>
 <script src="/mars_lighting.js"></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap" rel="stylesheet" />
 <style>
   /* Designers: restyle freely. Everything visual lives in this file. */
   :root { --bg: rgba(18, 12, 10, 0.88); --fg: #f3e7dd; --accent: #e0703a; --muted: #b9a79a; }
@@ -118,16 +120,92 @@
   #murrayLayers label.check { margin: 3px 0; } #panel a { color: var(--accent); }
   #infoLinks a { display: block; }
   .legendkey span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 8px; }
+
+  /* ===== Design (Figma "mars - home page"): landing page + panel restyle. Overrides the styles above. ===== */
+  :root { --bg: #1c1d22; --fg: #ebebeb; --accent: #f7943a; --muted: #8e9097; --line: #8e909766;
+          --page: #131318; --navy: #111820; }
+  html, body { font-family: Inter, system-ui, sans-serif; background: var(--page); }
+  #panel { background: var(--bg); margin: 12px; padding: 18px 16px; border-radius: 14px;
+           font-size: 12px; letter-spacing: .02em; }
+  h1 { font-size: 12px; font-weight: 500; color: var(--fg); text-transform: uppercase; letter-spacing: .12em;
+       margin: 6px 0 8px; }
+  #status { padding-bottom: 12px; margin-bottom: 6px; border-bottom: 1px solid #d9d9d9; line-height: 1.35; }
+  h2 { font-size: 12px; font-weight: 500; color: var(--fg); letter-spacing: .1em; margin: 18px 0 6px; }
+  label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .1em; color: var(--fg);
+          margin: 10px 0 4px; }
+  label.check { text-transform: none; letter-spacing: .03em; font-size: 11px; }
+  .small { color: var(--muted); font-size: 10.5px; }
+  select, input[type=text], input[type=number] {
+    box-sizing: border-box; width: 100%; padding: 7px 34px 7px 12px; margin-top: 4px; font: inherit; font-size: 11.5px;
+    letter-spacing: .04em; color: var(--fg); background-color: transparent; border: 1px solid var(--line);
+    border-radius: 999px; appearance: none; -webkit-appearance: none; }
+  input[type=text], input[type=number] { padding-right: 12px; }
+  select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='10' viewBox='0 0 12 10'%3E%3Cpath d='M1 1l5 8 5-8' fill='none' stroke='%23ebebeb' stroke-width='1.6'/%3E%3C/svg%3E");
+           background-repeat: no-repeat; background-position: right 13px center; cursor: pointer; }
+  select option, select optgroup { background: var(--bg); color: var(--fg); }
+  select:focus, input[type=text]:focus, input[type=number]:focus { outline: none; border-color: var(--accent); }
+  button { margin-top: 10px; padding: 9px 12px; border-radius: 7px; background: var(--accent); color: #fff;
+           font: inherit; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .12em; }
+  button:hover { filter: brightness(1.07); }
+  button:disabled { opacity: .55; cursor: wait; }
+  button.secondary { background: transparent; border: 1px solid var(--line); border-radius: 999px; color: var(--fg); }
+  button.secondary:hover { border-color: var(--fg); }
+  button.active { outline: 1px solid var(--accent); }
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; margin: 6px 0 2px; }
+  input[type=range]::-webkit-slider-runnable-track { height: 3px; background: #f2f2f2; border-radius: 2px; }
+  input[type=range]::-moz-range-track { height: 3px; background: #f2f2f2; border-radius: 2px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; margin-top: -6px;
+                                            border-radius: 50%; background: var(--accent); border: 0; }
+  input[type=range]::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: var(--accent); border: 0; }
+  input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; flex: 0 0 15px;
+                         border: 1.5px solid var(--accent); border-radius: 3px; background: transparent; cursor: pointer;
+                         display: inline-grid; place-content: center; }
+  input[type=checkbox]:checked { background: var(--accent); }
+  input[type=checkbox]:checked::after { content: ""; width: 8px; height: 4px; border: 2px solid #fff; border-top: 0;
+                                        border-right: 0; transform: translateY(-1px) rotate(-45deg); }
+  details > summary { font-size: 11px; font-weight: 500; color: var(--fg); letter-spacing: .1em; }
+  .card { border-color: #ffffff22; border-radius: 10px; } .card.sel { border-color: var(--accent); }
+  table.matrix th, table.matrix td { border-bottom-color: #ffffff1a; }
+  #mResult h3 { color: var(--accent); font-weight: 500; letter-spacing: .06em; }
+  .chip { background: #ffffff1a; }
+  #routeHover, #weatherHover { font-family: Inter, system-ui, sans-serif; border-radius: 8px; }
+
+  /* landing page */
+  #landing { position: fixed; inset: 0; z-index: 1000; background: var(--navy); display: grid; place-items: center;
+             transition: opacity .6s ease, visibility .6s; font-family: Inter, system-ui, sans-serif; }
+  #landing.gone { opacity: 0; visibility: hidden; }
+  #landing .globe { position: relative; width: min(72vmin, 620px); aspect-ratio: 1; }
+  #landing img { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0 60px #f7943a22); }
+  #landing .hero { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+                   justify-content: center; color: #fff; text-align: center; }
+  #landing .title { font-size: clamp(44px, 11vmin, 92px); font-weight: 200; letter-spacing: .14em; line-height: 1;
+                    margin-left: .14em; text-shadow: 0 2px 18px #0007; }
+  #landing .sub { margin: 14px 0 26px; font-size: clamp(11px, 1.7vmin, 15px); letter-spacing: .12em;
+                  text-shadow: 0 1px 8px #000a; }
+  #landing button { width: auto; margin: 0; padding: 10px 26px; background: #fff; color: #111; border-radius: 999px;
+                    font-size: clamp(10px, 1.5vmin, 13px); font-weight: 500; letter-spacing: .12em; }
+  #landing button:hover { background: #ffe9d6; }
+  #landing button:focus { outline: none; } #landing button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 </style>
 </head>
 <body>
+<div id="landing" role="dialog" aria-label="Mars">
+  <div class="globe">
+    <img src="mars-disk.webp" alt="Mars, seen from space (NASA Viking colour mosaic)" />
+    <div class="hero">
+      <div class="title">MARS</div>
+      <div class="sub">Explore Plan Navigate</div>
+      <button id="startExploring" type="button">Start exploring</button>
+    </div>
+  </div>
+</div>
 <div id="map">
   <div id="marsSun" aria-hidden="true" hidden></div>
   <div id="weatherHover" aria-hidden="true" hidden></div>
   <div id="routeHover" aria-hidden="true" hidden></div>
 </div>
 <div id="panel">
-  <h1>Marswalk Planner</h1>
+  <h1>Mars Walk Planner</h1>
   <div class="small" id="status">Connecting to back end…</div>
 
   <label>Region <select id="region"></select></label>
@@ -1516,6 +1594,18 @@ viewer.scene.canvas.addEventListener("pointermove", (event) => {
 });
 $("map").addEventListener("pointerleave", () => { roverMove = null; hideRover(); });
 
+
+// ---------------------------------------------------------------- landing ----
+function startExploring() {
+  const l = $("landing");
+  if (l.classList.contains("gone")) return;
+  l.classList.add("gone");
+  setTimeout(() => viewer.resize(), 50);
+}
+$("startExploring").onclick = startExploring;
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") startExploring(); });
+$("startExploring").focus();
+
 // ------------------------------------------------------------------ boot ----
 function flyTo(r) {
   viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
@@ -1611,7 +1701,9 @@ api("/api/weather/calendar").then(calendar => {
     regions = meta.regions;
     Object.assign(SPECS, meta.vehicle_specs || {});
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
-    $("region").innerHTML = regions.map((r) => `<option>${r.region}</option>`).join("");
+    const regionName = (id) => ({ jezero: "Jezero", jezero_hirise: "Jezero close-up (HiRISE)" }[id]
+                                 || id.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()));
+    $("region").innerHTML = regions.map((r) => `<option value="${r.region}">${regionName(r.region)}</option>`).join("");
     applyVehicleLimits();
     renderConsumables();
     if (regions.length) $("region").onchange();
