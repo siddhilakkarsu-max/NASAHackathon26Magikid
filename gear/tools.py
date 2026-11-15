@@ -12,8 +12,13 @@ Suggested order for an agent: list_mission_archetypes, then get_route_context fo
 plans, then recommend_gear with publish=true so the page shows the kit it chose.
 """
 import inspect
+import json
+import logging
+import os
 import re
+import tempfile
 import time
+from pathlib import Path
 from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, ValidationError
@@ -24,7 +29,91 @@ from .context import ARCHETYPES, MissionContext, RouteRequest, archetype_public,
 from .engine import build_manifest
 from .sources import CONFIDENCE, SOURCES
 
-PUBLISHED = {"manifest": None, "published_at": None, "note": None}
+log = logging.getLogger(__name__)
+
+# In-memory copy is the source of truth; the file only lets the kit survive a server restart.
+PUBLISHED = {"manifest": None, "published_at": None, "note": None, "source": None}
+STATE_FILE = "published_kit.json"
+
+
+def state_path() -> Path:
+    """Where the published kit is saved. Read on every call so MARSWALK_GEAR_STATE_DIR can change at runtime."""
+    base = os.environ.get("MARSWALK_GEAR_STATE_DIR") or Path(__file__).resolve().parent / "state"
+    return Path(base) / STATE_FILE
+
+
+def _jsonable(o):
+    if hasattr(o, "tolist"):  # numpy arrays and scalars
+        return o.tolist()
+    if hasattr(o, "item"):
+        return o.item()
+    if isinstance(o, (set, frozenset)):
+        return sorted(o, key=str)
+    return str(o)
+
+
+def _save(record):
+    path = state_path()
+    tmp = None
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=".published_", suffix=".tmp", dir=path.parent)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(record, f, default=_jsonable)
+        os.replace(tmp, path)
+        tmp = None
+    except (OSError, TypeError, ValueError) as e:
+        log.warning("could not save the published gear kit to %s (kept in memory only): %s", path, e)
+    finally:
+        if tmp:
+            try:
+                os.remove(tmp)
+            except OSError:
+                pass
+
+
+def _publish(manifest, note=None):
+    """The one place a kit gets published: memory first, then a best-effort copy on disk."""
+    PUBLISHED.update(manifest=manifest, published_at=time.time(), note=note, source="memory")
+    _save({"manifest": manifest, "published_at": PUBLISHED["published_at"], "note": note})
+
+
+def load_published():
+    """Restore the last published kit from disk. A missing, empty or broken file means nothing is published."""
+    path = state_path()
+    try:
+        with open(path, encoding="utf-8") as f:
+            text = f.read()
+        data = json.loads(text) if text.strip() else None
+    except FileNotFoundError:
+        data = None
+    except (OSError, ValueError) as e:
+        log.warning("ignoring unreadable published gear kit at %s: %s", path, e)
+        data = None
+    if isinstance(data, dict) and isinstance(data.get("manifest"), dict):
+        at = data.get("published_at")
+        note = data.get("note")
+        PUBLISHED.update(manifest=data["manifest"], published_at=at if isinstance(at, (int, float)) else None,
+                         note=note if isinstance(note, str) else None, source="disk")
+    else:
+        PUBLISHED.update(manifest=None, published_at=None, note=None, source=None)
+    return PUBLISHED
+
+
+def clear_published():
+    """Forget the published kit, in memory and on disk."""
+    PUBLISHED.update(manifest=None, published_at=None, note=None, source=None)
+    path = state_path()
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        log.warning("could not delete the published gear kit at %s: %s", path, e)
+    return PUBLISHED
+
+
+load_published()
 
 
 # ------------------------------------------------------------------ input models
@@ -205,7 +294,7 @@ def _recommend(a: RecommendIn):
     adj = a.adjustments.model_dump() if a.adjustments else None
     m = build_manifest(ctx, adj)
     if a.publish:
-        PUBLISHED.update(manifest=m, published_at=time.time(), note=a.note)
+        _publish(m, a.note)
     out = compact(m) if a.detail == "summary" else m
     out["published"] = bool(a.publish)
     return out
