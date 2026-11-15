@@ -60,6 +60,11 @@
                   padding: 7px 9px; background: #131520ed; color: #fff; font-size: 12px;
                   line-height: 1.45; border: 1px solid #ffffff48; border-radius: 5px; }
   .small { color: var(--muted); font-size: 11px; }
+  #routeHover { position: absolute; z-index: 6; pointer-events: none; max-width: 300px; padding: 7px 9px;
+                background: #131520f0; color: #fff; font-size: 12px; line-height: 1.45;
+                border: 1px solid #e0703a99; border-radius: 5px; }
+  #routeHover .title { font-weight: 600; color: #ffb27f; }
+  #routeHover .warn { color: #ff9a85; }
   @media (max-width: 600px) {
     body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 55% minmax(0, 1fr); }
     #map { grid-area: 1 / 1; }
@@ -119,6 +124,7 @@
 <div id="map">
   <div id="marsSun" aria-hidden="true" hidden></div>
   <div id="weatherHover" aria-hidden="true" hidden></div>
+  <div id="routeHover" aria-hidden="true" hidden></div>
 </div>
 <div id="panel">
   <h1>Marswalk Planner</h1>
@@ -881,7 +887,8 @@ $("plan").onclick = async () => {
     $("explain").textContent = res.explanation +
       (res.stats ? `\n\nMax slope ${res.stats.max_slope_deg}°, mean ${res.stats.mean_slope_deg}°` : "") +
       "\nGreen area = places you can reach and still return within the budget.";
-    lastPlan = { stats: res.stats || null };
+    lastPlan = { stats: res.stats || null, route: res.route || null,               // route: for the hover readout
+                 vehicle: $("vehicle").selectedOptions[0]?.textContent || "" };
     replanHint = "";
     renderConsumables();
   } catch (e) {
@@ -1356,6 +1363,146 @@ api("/api/murray/layers").then((d) => {
     $("murrayLayers").append(el("label", { className: "check", title: def.credit }, box, def.title));
   }
 }).catch((e) => { $("murrayInfo").textContent = "Murray Lab maps unavailable: " + e.message; });
+
+
+// ------------------------------------------------------ route hover + rover ----
+// Hover over a route (mission candidates, the manual route, Perseverance's tracks): a 3D rover (rover.glb, made by
+// tools/make_rover_glb.py) stands at that point facing along the route, and a card shows what it would see there.
+const DEG_M = Math.PI / 180 * 3396190;
+const ROVER_HEADING_OFFSET = 0;                   // the model faces +X, which Cesium points north at heading 0 (clockwise)
+const roverEntity = viewer.entities.add({ id: "hoverRover", show: false,
+  position: Cesium.Cartesian3.fromDegrees(0, 0, 0, MARS),
+  model: { uri: "rover.glb", minimumPixelSize: 64, maximumScale: 20000,
+           heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+           silhouetteColor: Cesium.Color.fromCssColorString("#e0703a"), silhouetteSize: 1.5 } });
+
+function hoverPaths() {
+  const paths = [];
+  if (mission) mission.candidates.forEach((c, i) => paths.push({ kind: "mission", c, selected: i === selected, pts: c.route.points }));
+  if (lastPlan && lastPlan.route) paths.push({ kind: "manual", plan: lastPlan, pts: lastPlan.route });
+  if ($("showTracks").checked && tracksData && tracksData.segments)
+    for (const sg of tracksData.segments) paths.push({ kind: "track", seg: sg, pts: sg._pts || (sg._pts = sg.coords.map(([lon, lat]) => ({ lon, lat }))) });
+  return paths;
+}
+
+function nearestOnPaths(lat, lon, maxM) {          // closest point on any route segment, within maxM metres
+  const kx = Math.cos(lat * Math.PI / 180) * DEG_M, ky = DEG_M;
+  let best = null;
+  for (const path of hoverPaths()) {
+    const p = path.pts;
+    for (let i = 0; i + 1 < p.length; i++) {
+      const ax = (p[i].lon - lon) * kx, ay = (p[i].lat - lat) * ky;
+      const dx = (p[i + 1].lon - p[i].lon) * kx, dy = (p[i + 1].lat - p[i].lat) * ky, l2 = dx * dx + dy * dy;
+      const t = l2 > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+      const qx = ax + t * dx, qy = ay + t * dy, d2 = qx * qx + qy * qy;
+      if (d2 > maxM * maxM) continue;
+      const score = path.selected ? d2 / 4 : d2;   // prefer the route being shown
+      if (!best || score < best.score) best = { path, i, t, score };
+    }
+  }
+  return best;
+}
+
+function lerpPoint(a, b, t) {
+  const out = {};
+  for (const k of Object.keys(a)) {
+    const x = a[k], y = b[k];
+    if (typeof x === "number" && typeof y === "number") out[k] = x + (y - x) * t;
+    else if (k === "used" && x && y) { out.used = {}; for (const n of Object.keys(x)) out.used[n] = x[n] == null || y[n] == null ? x[n] : x[n] + (y[n] - x[n]) * t; }
+    else out[k] = t < 0.5 ? x : y;
+  }
+  return out;
+}
+
+const fmt = (x, d = 1) => (x == null || Number.isNaN(x) ? "–" : (+x).toFixed(d));
+const hm = (h) => (h == null ? "–" : h < 1 ? `${Math.round(h * 60)} min` : `${Math.floor(h)} h ${String(Math.round((h % 1) * 60)).padStart(2, "0")} min`);
+function groundText(p) {
+  if (p.ti != null) {
+    const cls = p.ti < 150 ? "fine dust" : p.ti < 300 ? "sand" : p.ti < 600 ? "coarse sand / crusted" : "bedrock";
+    return `Ground: ${cls} (thermal inertia ${fmt(p.ti, 0)})` + (p.firm != null ? `, firmness ${fmt(p.firm, 2)}` : "");
+  }
+  return p.firm != null ? `Ground firmness ${fmt(p.firm, 2)}` : "";
+}
+
+function roverCard(path, p) {
+  const lines = [];                                  // [text, className]
+  if (path.kind === "mission") {
+    const c = path.c, r = c.route;
+    lines.push([`Route #${c.rank}${path.selected ? "" : " (backup)"} · ${mission.settings.vehicle.label}`, "title"]);
+    lines.push([`${fmt(p.d, 2)} of ${r.distance_km} km · ${hm(p.t)} of ${hm(r.one_way_h)} out`]);
+    lines.push([`Elevation ${fmt(p.elev, 0)} m · slope ${fmt(p.slope)}°`]);
+    lines.push([groundText(p)]);
+    lines.push([`Risk: ${["low", "moderate", "high"][Math.round(p.risk)] || "–"}` +
+                (p.green ? " · on green rover-verified track" : p.yellow ? " · on high-strain (yellow) track" : ""),
+                p.risk >= 1.5 ? "warn" : ""]);
+    lines.push([`Sunlight cos(i) ${fmt(p.sun, 2)} · surface ~${fmt(p.temp, 0)} K at ${mission.settings.local_hour}:00`]);
+    for (const it of c.resources.items) {
+      const used = p.used && p.used[it.name];
+      if (used == null) continue;
+      const left = 100 * (1 - used / it.capacity), back = 100 * (1 - 2 * used / it.capacity);
+      const name = it.name[0].toUpperCase() + it.name.slice(1);
+      lines.push([`${name}: ${fmt(used, it.unit === "Wh" ? 0 : 2)} ${it.unit} used so far (${fmt(left, 0)}% left)`]);
+      lines.push([`  turning back here: ${fmt(back, 0)}% left at base`, back < c.resources.reserve_pct ? "warn" : ""]);
+    }
+  } else if (path.kind === "manual") {
+    const s = path.plan.stats || {};
+    lines.push([`Planned route · ${path.plan.vehicle}`, "title"]);
+    lines.push([`${fmt(p.d, 2)} of ${s.distance_km ?? "–"} km · ${hm(p.t)} of ${hm(s.one_way_h)} out`]);
+    lines.push([`Elevation ${fmt(p.elev, 0)} m · slope ${fmt(p.slope)}°`]);
+    lines.push([groundText(p)]);
+    if (p.o2_kg != null) lines.push([`O2: ≈${fmt(p.o2_kg, 2)} kg used so far` + (s.o2_max_kg ? ` of ${s.o2_max_kg} kg` : "")]);
+    if (p.energy_kwh != null) lines.push([`Energy: ≈${fmt(p.energy_kwh, 2)} kWh used so far` + (s.energy_max_kwh ? ` of ${s.energy_max_kwh} kWh` : "")]);
+  } else {
+    const sg = path.seg;
+    lines.push([`${tracksData.rover} · sol ${sg.sol}`, "title"]);
+    lines.push([`Drive of ${fmt(sg.length_m, 0)} m on this sol`]);
+    lines.push([sg.class === "green" ? "Green: drove without warning signs" : `Yellow, high strain: ${sg.why}`,
+                sg.class === "green" ? "" : "warn"]);
+  }
+  lines.push([`${Math.abs(p.lat).toFixed(4)}° ${p.lat < 0 ? "S" : "N"}, ${p.lon.toFixed(4)}° E`]);
+  return lines.filter(([t]) => t);
+}
+
+function hideRover() {
+  if (roverEntity.show) { roverEntity.show = false; viewer.scene.requestRender(); }
+  $("routeHover").hidden = true;
+}
+
+let roverFrame = 0, roverMove = null;
+function updateRoverHover() {
+  roverFrame = 0;
+  const e = roverMove;
+  if (!e) return;
+  const b = viewer.scene.canvas.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+  const loc = pickLatLon(new Cesium.Cartesian2(x, y));
+  if (!loc) return hideRover();
+  const scene = viewer.scene;
+  const metresPerPx = viewer.camera.getPixelSize(new Cesium.BoundingSphere(Cesium.Cartesian3.fromDegrees(loc.lon, loc.lat, 0, MARS), 0),
+                                                scene.drawingBufferWidth, scene.drawingBufferHeight) * (scene.drawingBufferWidth / scene.canvas.clientWidth);
+  const hit = nearestOnPaths(loc.lat, loc.lon, 14 * metresPerPx);
+  if (!hit) return hideRover();
+  const p0 = hit.path.pts[hit.i], p1 = hit.path.pts[hit.i + 1], p = lerpPoint(p0, p1, hit.t);
+  const bearing = Math.atan2((p1.lon - p0.lon) * Math.cos(p.lat * Math.PI / 180), p1.lat - p0.lat);   // clockwise from north
+  const pos = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS);
+  roverEntity.position = pos;
+  roverEntity.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(bearing + ROVER_HEADING_OFFSET, 0, 0), MARS);
+  roverEntity.show = true;
+  const tip = $("routeHover");
+  tip.innerHTML = "";
+  for (const [text, cls] of roverCard(hit.path, p)) tip.append(el("div", { textContent: text, className: cls || "" }));
+  tip.hidden = false;
+  const map = $("map");
+  tip.style.left = Math.max(0, Math.min(x + 18, map.clientWidth - tip.offsetWidth - 5)) + "px";
+  tip.style.top = Math.max(0, Math.min(y + 18, map.clientHeight - tip.offsetHeight - 5)) + "px";
+  $("weatherHover").hidden = true;                  // one card at a time
+  scene.requestRender();
+}
+viewer.scene.canvas.addEventListener("pointermove", (event) => {
+  if (event.pointerType === "touch" || event.buttons) { hideRover(); return; }
+  roverMove = event;
+  if (!roverFrame) roverFrame = requestAnimationFrame(updateRoverHover);
+});
+$("map").addEventListener("pointerleave", () => { roverMove = null; hideRover(); });
 
 // ------------------------------------------------------------------ boot ----
 function flyTo(r) {

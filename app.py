@@ -761,9 +761,29 @@ def plan(req: PlanRequest):
         explanation += (f" Round trip uses {' and '.join(spent)}. "
                         f"{cons['binding_label']} is the tightest vehicle limit")
         explanation += ", and the EVA time budget is already exceeded." if not within else "."
+    # per point, for hovering over the route: distance and time so far, terrain, and supplies used so far
+    # (supplies estimated as the share of the one-way total by time)
+    step_m = np.append(np.hypot(seg[:, 0], seg[:, 1]), 0.0) if len(seg) else np.zeros(1)
+    t_at = np.concatenate([[0.0], np.cumsum(step_m * cost[rr, cc])[:-1]]) / 3600
+    d_at = np.concatenate([[0.0], np.cumsum(step_m)[:-1]]) / 1000
+    one_way_h = max(seconds / 3600, 1e-9)
+    o2_rt, e_rt = cons["stats"].get("o2_used_kg"), cons["stats"].get("energy_used_kwh")
+    ti_b, firm_b = c.bands.get("thermal_inertia"), c.bands.get("firmness")
+    num = lambda x, nd=2: None if x is None or not np.isfinite(x) else round(float(x), nd)
+
+    def route_point(i):
+        r_, c_ = path[i]
+        share = t_at[i] / one_way_h
+        return {"lat": coords[i][0], "lon": coords[i][1], "d": num(d_at[i], 3), "t": num(t_at[i], 3),
+                "elev": num(c.bands["elevation"][r_, c_], 0), "slope": num(c.bands["slope"][r_, c_], 1),
+                "ti": num(ti_b[r_, c_], 0) if ti_b is not None else None,
+                "firm": num(firm_b[r_, c_]) if firm_b is not None else None,
+                "o2_kg": num(share * o2_rt / 2, 3) if o2_rt is not None else None,
+                "energy_kwh": num(share * e_rt / 2, 3) if e_rt is not None else None}
+
+    k = max(1, len(coords) // 400)
     result.update({
-        "route": [{"lat": a, "lon": b} for a, b in coords[:: max(1, len(coords) // 400)]] + [
-            {"lat": coords[-1][0], "lon": coords[-1][1]}],
+        "route": [route_point(i) for i in list(range(0, len(coords), k)) + [len(coords) - 1]],
         "stats": {"distance_km": round(dist_m / 1000, 2), "one_way_h": round(seconds / 3600, 2),
                   "round_trip_h": round(round_trip_h, 2), "max_slope_deg": round(float(np.nanmax(route_slope)), 1),
                   "mean_slope_deg": round(float(np.nanmean(route_slope)), 1), "within_budget": within,

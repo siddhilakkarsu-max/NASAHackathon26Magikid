@@ -252,23 +252,30 @@ def _route_layers(cube, v, season, priority, green_only):
 
 
 def _resources(v, tools, seg_len, rr, cc, L, priority, season):
-    """Round-trip oxygen and/or battery use, reserve, and the turnaround deadline."""
-    out_time_h = float(np.sum(seg_len * L["time"][rr, cc]) / 3600)
+    """Round-trip oxygen and/or battery use, reserve, and the turnaround deadline.
+    Each resource also gets "at": the outbound use on reaching every route pixel (for the hover readout)."""
+    step_s = seg_len * L["time"][rr, cc]                       # seconds for the step leaving each pixel
+    t_at = np.concatenate([[0.0], np.cumsum(step_s)[:-1]]) / 3600
+    out_time_h = float(step_s.sum() / 3600)
     rt_h = 2 * out_time_h + SITE_HOURS
+
+    def running(step):                                        # use on arrival at each pixel, and the total
+        c = np.cumsum(step)
+        return np.concatenate([[0.0], c[:-1]]), float(c[-1])
     reserve = PRIORITIES[priority]["reserve"] + (0.05 if SEASONS[season]["dust_risk"] >= 0.3 else 0.0)
     res = []
     load = 1 + tools["kg"] / v["mass_kg"]
     if v["suited"]:
         if v["battery_wh"]:
-            o2_out = out_time_h * SUIT["o2_ride_kg_h"]
+            o2_at, o2_out = t_at * SUIT["o2_ride_kg_h"], out_time_h * SUIT["o2_ride_kg_h"]
         else:
-            o2_out = float(np.sum(seg_len * L["energy"][rr, cc])) * load
+            o2_at, o2_out = running(seg_len * L["energy"][rr, cc] * load)
         res.append(dict(name="oxygen", unit="kg", cap=SUIT["o2_kg"], out=o2_out, site=SITE_HOURS * SUIT["o2_site_kg_h"],
-                        source=SUIT["source"]))
+                        source=SUIT["source"], at=o2_at))
     if v["battery_wh"]:
-        drive = float(np.sum(seg_len * L["energy"][rr, cc])) * load
+        drive_at, drive = running(seg_len * L["energy"][rr, cc] * load)
         res.append(dict(name="battery", unit="Wh", cap=v["battery_wh"], out=drive + out_time_h * v["hotel_w"],
-                        site=tools["site_wh"] + SITE_HOURS * v["hotel_w"]))
+                        site=tools["site_wh"] + SITE_HOURS * v["hotel_w"], at=drive_at + t_at * v["hotel_w"]))
     for r in res:
         r["used"] = 2 * r["out"] + r["site"]
         r["usable"] = r["cap"] * (1 - reserve)
@@ -277,7 +284,7 @@ def _resources(v, tools, seg_len, rr, cc, L, priority, season):
         # latest time to turn back: half of what is left after the site work, at the outbound burn rate
         r["turn_h"] = (r["usable"] - r["site"]) / 2 / max(r["out"] / max(out_time_h, 1e-6), 1e-9)
     binding = max(res, key=lambda r: r["used"] / r["usable"])
-    return dict(out_h=out_time_h, rt_h=rt_h, reserve=reserve, items=res, binding=binding,
+    return dict(out_h=out_time_h, rt_h=rt_h, reserve=reserve, items=res, binding=binding, t_at=t_at,
                 ok=all(r["ok"] for r in res), turn_h=min(r["turn_h"] for r in res))
 
 
@@ -371,7 +378,16 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
         frac = lambda m: float(np.sum(seg_len * m) / max(steps.sum(), 1e-9))
         risk = np.where(slope > 0.85 * v["max_slope"], 2, np.where((slope > 0.6 * v["max_slope"]) | loose, 1, 0))
         k = max(1, len(rr) // 400)
-        pts = [dict(lat=round(la, 5), lon=round(lo, 5), risk=int(risk[i]), green=bool(on_green[i]))
+        # per point: what the rover would see there (for the hover readout on the map)
+        d_at = np.concatenate([[0.0], np.cumsum(steps)]) / 1000
+        elev, firm_r = cube.bands["elevation"][rr, cc], cube.bands["firmness"][rr, cc]
+        ti_r = ti[rr, cc] if ti is not None else np.full(len(rr), np.nan)
+        num = lambda x, nd=2: None if not np.isfinite(x) else round(float(x), nd)
+        pts = [dict(lat=round(la, 5), lon=round(lo, 5), risk=int(risk[i]), green=bool(on_green[i]),
+                    yellow=bool(on_yellow[i]), d=num(d_at[i], 3), t=num(R["t_at"][i], 3), elev=num(elev[i], 0),
+                    slope=num(slope[i], 1), ti=num(ti_r[i], 0), firm=num(firm_r[i]),
+                    sun=num(max(float(illum[rr[i], cc[i]]), 0.0)), temp=num(temp[rr[i], cc[i]], 0),
+                    used={r["name"]: num(r["at"][i], 3) for r in R["items"]})
                for i in list(range(0, len(rr), k)) + [len(rr) - 1] for la, lo in [cube.latlon(rr[i], cc[i])]]
         # turnaround point: where the deadline falls along the outbound route (B if it comes later)
         t_cum = np.cumsum(seg_len * L["time"][rr, cc]) / 3600
