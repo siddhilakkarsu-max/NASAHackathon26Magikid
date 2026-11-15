@@ -24,7 +24,7 @@ import math
 from pathlib import Path
 
 import numpy as np
-from scipy.ndimage import binary_dilation, binary_erosion, distance_transform_edt
+from scipy.ndimage import binary_dilation, distance_transform_edt
 from skimage.draw import line as draw_line
 
 import physics
@@ -51,11 +51,6 @@ def _circle_mask(cube, lat, lon, radius_km):
     dy = (lat_g - lat) * search.DEG_M
     dx = (lon_g - lon) * search.DEG_M * math.cos(math.radians(lat))
     return np.hypot(dx, dy) <= radius_km * 1000
-
-
-def _disk(r_px):
-    y, x = np.mgrid[-r_px:r_px + 1, -r_px:r_px + 1]
-    return x * x + y * y <= r_px * r_px
 
 
 def _ti(cube):
@@ -139,12 +134,23 @@ def offlimits(cube, v):
 
 # ------------------------------------------------------------------ landing ----
 def landing_mask(cube):
-    """Pixels where a lander can touch down: config.LANDING_RULES hold over a whole circle around the spot."""
+    """Pixels where a lander can touch down: config.LANDING_RULES hold over (90 % of) a circle around the spot.
+    Slope is judged over a ~100 m baseline, as for a landing-site survey, so a sharp cube (e.g. 9 m from the
+    1 m HiRISE elevation model) isn't failed by metre-scale bumps."""
     def make():
+        from scipy.ndimage import uniform_filter
         R = LANDING_RULES
         b = cube.bands
+        px = min(cube.pixel_m)
+        k = max(1, int(round(100 / px)))
+        if k > 1:
+            z = np.nan_to_num(b["elevation"], nan=float(np.nanmean(b["elevation"])))
+            gy, gx = np.gradient(uniform_filter(z, k), cube.pixel_m[0], cube.pixel_m[1])
+            slope = np.degrees(np.arctan(np.hypot(gx, gy)))
+        else:
+            slope = np.nan_to_num(b["slope"], nan=90)
         rough = b["roughness"]
-        ok = (np.nan_to_num(b["slope"], nan=90) <= R["max_slope_deg"])
+        ok = slope <= R["max_slope_deg"]
         ok &= np.nan_to_num(rough, nan=1e9) <= np.nanpercentile(rough, R["max_rough_percentile"])
         ti = _ti(cube)
         ok &= (np.nan_to_num(ti, nan=0) >= R["min_ti"]) if ti is not None else (np.nan_to_num(b["firmness"]) >= 0.35)
@@ -152,8 +158,9 @@ def landing_mask(cube):
         lat = (cube.n - (np.arange(cube.H) + 0.5) * (cube.n - cube.s) / cube.H)[:, None]
         ok &= np.abs(lat) <= R["max_abs_lat"]
         ok &= ~special_mask(cube)
-        r_px = max(1, int(round(R["area_radius_m"] / min(cube.pixel_m))))
-        return binary_erosion(ok, structure=_disk(r_px), border_value=0)
+        r_px = max(1, int(round(R["area_radius_m"] / px)))
+        share = uniform_filter(ok.astype("float32"), 2 * r_px + 1, mode="constant")
+        return ok & (share >= 0.9)
     return _cached(cube, "landing", make)
 
 
@@ -293,15 +300,20 @@ def _turn_h(r, step_h, out_h):
 
 def _resources(cube, vehicle, v, tools, seg_len, rr, cc, L, priority, season):
     """Round-trip oxygen and/or battery use, reserve, and the turnaround deadline. The way out and the way back
-    are costed separately (physics.path_resources): the return leg is the outbound route reversed."""
+    are costed separately (physics.path_resources): the return leg is the outbound route reversed.
+    Each resource also gets "at": the outbound use on reaching every route pixel (for the hover readout)."""
     n = len(rr) - 1
     run = seg_len[:n]
     a, b_ = rr[:n], cc[:n]                                          # the pixel each step leaves from
     step_h = run * L["time"][a, b_] / 3600
+    t_at = np.concatenate([[0.0], np.cumsum(step_h)])               # hours on reaching each of the len(rr) pixels
     out_time_h = float(step_h.sum())
     rt_h = 2 * out_time_h + SITE_HOURS
     reserve = _reserve(priority, season)
     z = cube.bands["elevation"][rr, cc]
+
+    def arrival(step_out):                                          # outbound use on reaching each pixel
+        return np.concatenate([[0.0], np.cumsum(step_out)])
     res = []
     # O2 or Wh per metre, the same in both directions; slope and climbs are added by path_resources
     o2_per_m = (SUIT["o2_ride_kg_h"] if v["battery_wh"] else SUIT["o2_walk_kg_h"]) / 3600 * L["time"][a, b_]
@@ -317,7 +329,7 @@ def _resources(cube, vehicle, v, tools, seg_len, rr, cc, L, priority, season):
                          slope_factor_back=round(P["slope_factor_back"], 3), load_factor=round(load, 3))
         res.append(dict(name="oxygen", unit="kg", cap=SUIT["o2_kg"], out=P["out"], back=P["back"],
                         site=SITE_HOURS * SUIT["o2_site_kg_h"], step=P["step_out"] + P["step_back"],
-                        source=SUIT["source"], extra=extra))
+                        source=SUIT["source"], extra=extra, at=arrival(P["step_out"])))
     if v["battery_wh"]:
         load = 1 + tools["kg"] / v["mass_kg"]                      # tools add to the vehicle's mass
         wh_per_m = L["energy"][a, b_] * load + v["hotel_w"] * L["time"][a, b_] / 3600
@@ -333,7 +345,8 @@ def _resources(cube, vehicle, v, tools, seg_len, rr, cc, L, priority, season):
         res.append(dict(name="battery", unit="Wh", cap=v["battery_wh"],
                         out=P["out"] + P["climb_wh_out"], back=P["back"] + P["climb_wh_back"],
                         site=tools["site_wh"] + SITE_HOURS * v["hotel_w"],
-                        step=P["step_out"] + P["step_back"] + P["climb_out_wh"] + P["climb_back_wh"], extra=extra))
+                        step=P["step_out"] + P["step_back"] + P["climb_out_wh"] + P["climb_back_wh"], extra=extra,
+                        at=arrival(P["step_out"] + P["climb_out_wh"])))     # drive + idle + climbs so far
     for r in res:
         r["used"] = r["out"] + r["back"] + r["site"]
         r["usable"] = r["cap"] * (1 - reserve)
@@ -341,7 +354,7 @@ def _resources(cube, vehicle, v, tools, seg_len, rr, cc, L, priority, season):
         r["ok"] = r["used"] <= r["usable"]
         r["turn_h"] = _turn_h(r, step_h, out_time_h)
     binding = max(res, key=lambda r: r["used"] / r["usable"])
-    return dict(out_h=out_time_h, rt_h=rt_h, reserve=reserve, items=res, binding=binding,
+    return dict(out_h=out_time_h, rt_h=rt_h, reserve=reserve, items=res, binding=binding, t_at=t_at,
                 ok=all(r["ok"] for r in res), turn_h=min(r["turn_h"] for r in res),
                 gain_m=P["gain_m"], loss_m=P["loss_m"])
 
@@ -381,7 +394,7 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
     ls = SEASONS[season]["ls"]
     sun_e, sun_az = physics.sun_position((cube.s + cube.n) / 2, LOCAL_HOUR, ls)
     illum = physics.illumination(cube.bands["slope"], cube.bands["aspect"], sun_e, sun_az)
-    temp = physics.surface_temp_k(illum, cube.bands.get("firmness"), sun_e)
+    temp = physics.surface_temp_k(illum, cube.bands.get("firmness"), sun_e, cube.bands.get("albedo"))
     L = _route_layers(cube, v, season, priority, green_only)
 
     # 3. destinations ----------------------------------------------------------------------------
@@ -436,7 +449,16 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
         frac = lambda m: float(np.sum(seg_len * m) / max(steps.sum(), 1e-9))
         risk = np.where(slope > 0.85 * v["max_slope"], 2, np.where((slope > 0.6 * v["max_slope"]) | loose, 1, 0))
         k = max(1, len(rr) // 400)
-        pts = [dict(lat=round(la, 5), lon=round(lo, 5), risk=int(risk[i]), green=bool(on_green[i]))
+        # per point: what the rover would see there (for the hover readout on the map)
+        d_at = np.concatenate([[0.0], np.cumsum(steps)]) / 1000
+        elev, firm_r = cube.bands["elevation"][rr, cc], cube.bands["firmness"][rr, cc]
+        ti_r = ti[rr, cc] if ti is not None else np.full(len(rr), np.nan)
+        num = lambda x, nd=2: None if not np.isfinite(x) else round(float(x), nd)
+        pts = [dict(lat=round(la, 5), lon=round(lo, 5), risk=int(risk[i]), green=bool(on_green[i]),
+                    yellow=bool(on_yellow[i]), d=num(d_at[i], 3), t=num(R["t_at"][i], 3), elev=num(elev[i], 0),
+                    slope=num(slope[i], 1), ti=num(ti_r[i], 0), firm=num(firm_r[i]),
+                    sun=num(max(float(illum[rr[i], cc[i]]), 0.0)), temp=num(temp[rr[i], cc[i]], 0),
+                    used={r["name"]: num(r["at"][i], 3) for r in R["items"]})
                for i in list(range(0, len(rr), k)) + [len(rr) - 1] for la, lo in [cube.latlon(rr[i], cc[i])]]
         # turnaround point: where the deadline falls along the outbound route (B if it comes later)
         t_cum = np.cumsum(seg_len * L["time"][rr, cc]) / 3600
