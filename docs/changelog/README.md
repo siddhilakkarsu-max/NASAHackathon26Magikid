@@ -42,3 +42,9 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#36](PR-036-feat-siddhi.md) | docs: record PR #35's merge in its changelog file | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#37](PR-037-feat-siddhi.md) | docs: AI use disclosure and the reference list for the Space Apps pro… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#38](PR-038-feat-siddhi.md) | docs: AI disclosure confirmed by the team (ChatGPT for research, no A… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#39](PR-039-aisearch.md) | Claude Haiku 5.5 as the planner's AI; keep the AI thinking visible | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
+| [#40](PR-040-feat-siddhi.md) | Walker's view on routes; 3D terrain switches on automatically when zo… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#41](PR-041-feat-siddhi.md) | Easier to use: map search bar, "How to use this map" manual with a fi… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#42](PR-042-feat-siddhi.md) | Feat/siddhi | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#43](PR-043-feat-siddhi.md) | Feat/siddhi | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#44](PR-044-feat-gk.md) | Game: first-person 3D view with a helmet AR HUD and lighter dialogue | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | 2 file(s) |
