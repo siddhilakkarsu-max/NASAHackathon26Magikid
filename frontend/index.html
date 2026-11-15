@@ -12,6 +12,7 @@
 <script src="/temperature_view.js"></script>
 <script src="/mars_lighting.js"></script>
 <script src="/route_playback.js"></script>
+<script src="/planner_layout.js"></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap" rel="stylesheet" />
@@ -239,32 +240,95 @@
   <label>Region <select id="region"></select></label>
   <div class="small" id="areaStatus"></div>
 
-  <h2>Mission</h2>
+  <p class="small">Plan a mission, or open Mars global maps to explore. Click the map to inspect a point.</p>
+  <div class="row">
+    <button id="wholeMars" class="secondary" type="button">Whole Mars</button>
+    <button id="zoomRegion" class="secondary" type="button">Zoom to region</button>
+  </div>
+
+  <details id="missionSetup" name="workspace" open>
+    <summary>Plan a mission</summary>
+    <p class="small">Describe what you want to visit. Choose a vehicle and priority, then plan.</p>
   <label for="goal">Goal</label>
   <input id="goal" type="text" placeholder="e.g. sample clay where water once flowed" autocomplete="off" />
   <div class="row">
     <label>Vehicle <select id="mVehicle"></select></label>
     <label>Priority <select id="mPriority"></select></label>
   </div>
-  <label for="ls">Season: <b id="lsVal"></b></label>
-  <input type="range" id="ls" min="0" max="360" step="0.1" value="90" />
   <label class="check"><input type="checkbox" id="greenOnly" /> Stick to green rover-verified tracks</label>
   <button id="runMission">Plan mission</button>
-  <div id="mStatus" class="small"></div>
-  <div id="mResult"></div>
-  <label class="check"><input type="checkbox" id="showTracks" /> Show rover tracks</label>
-  <div id="trackInfo" class="small"></div>
+  </details>
+  <div id="mStatus" class="small" role="status"></div>
+  <details id="missionResults" name="workspace" hidden>
+    <summary>Mission results</summary>
+    <div id="mResult"></div>
+  </details>
 
-  <h2>Map layer</h2>
-  <div class="row">
-    <button id="wholeMars" class="secondary" type="button">Whole Mars</button>
-    <button id="zoomRegion" class="secondary" type="button">Zoom to region</button>
-  </div>
+  <details id="conditionsPanel">
+    <summary>Time, season &amp; lighting</summary>
+    <p class="small">Shared by mission planning, weather layers and globe lighting.</p>
+  <label for="ls">Season: <b id="lsVal"></b></label>
+  <input type="range" id="ls" min="0" max="360" step="0.1" value="90" />
   <label>Local solar time: <b id="hourVal"></b></label>
   <input type="range" id="hour" min="0" max="24" step="0.25" value="11" />
   <label class="check"><input type="checkbox" id="globeLighting" checked aria-describedby="lightingNote" /> Sunlight and atmosphere</label>
   <div class="small" id="lightingNote">Move your mouse over the night side to reveal the map. Globe lighting follows the selected region’s solar time.</div>
-  <select id="layer">
+  </details>
+
+  <details id="globalMaps" name="workspace">
+    <summary>Mars global maps</summary>
+    <p class="small">Explore planet-wide imagery, weather and radiation. A data layer can be shown over a background map.</p>
+    <label for="globalLayer">Weather &amp; radiation</label>
+    <select id="globalLayer"><option value="">No global data layer</option></select>
+  <div id="radiationControls" hidden>
+    <label for="radiationSolar">Solar activity scenario</label>
+    <select id="radiationSolar">
+      <option value="400">Solar minimum (higher GCR)</option>
+      <option value="700" selected>Intermediate solar activity</option>
+      <option value="1000">Solar maximum (lower GCR)</option>
+    </select>
+    <label for="radiationScale">Color scale</label>
+    <select id="radiationScale">
+      <option value="spatial" selected>Show spatial differences</option>
+      <option value="shared">Compare solar scenarios</option>
+    </select>
+    <div class="small">Fixed solar scenarios; season and hour change modeled atmospheric pressure.</div>
+  </div>
+  <button id="pauseWind" class="secondary" type="button" hidden>Pause wind motion</button>
+  <details id="timeline" hidden aria-label="Weather timeline">
+    <summary>Weather timeline</summary>
+    <div class="small" id="timelineNote"></div>
+    <div class="row">
+      <label>Start sol <input id="startSol" type="number" step="1" required></label>
+      <label>End sol <input id="endSol" type="number" step="1" required></label>
+    </div>
+    <button id="playTimeline" class="secondary" type="button">Play timeline</button>
+    <!-- the season slider in the Mission section is the only one; weather_timeline.js still drives these -->
+    <label id="timelineReadout" for="timelinePosition" style="display:none">Timeline position</label>
+    <input id="timelinePosition" type="range" step="1" style="display:none">
+    <div class="small" id="timelineMessage" role="status"></div>
+  </details>
+    <div id="murrayLayers"></div>
+    <div class="small" id="murrayInfo" role="status"></div>
+  </details>
+
+  <details id="regionalMaps" name="workspace">
+    <summary>Regional map tools</summary>
+    <p class="small">Inspect the selected area's terrain, minerals and route conditions.</p>
+    <label for="regionalLayer">Regional data layer</label>
+    <select id="regionalLayer"><option value="">No regional data layer</option></select>
+  <h2>Sharp imagery (5 m)</h2>
+  <div class="row">
+    <button id="boxBtn" class="secondary" type="button">Box a sharp area</button>
+    <button id="clearBox" class="secondary" type="button">Clear</button>
+  </div>
+  <div class="small" id="boxInfo">Click "Box a sharp area", then click two corners on the map.</div>
+
+  <label class="check"><input type="checkbox" id="showTracks" /> Show rover tracks</label>
+  <div id="trackInfo" class="small"></div>
+
+  </details>
+  <select id="layer" hidden aria-label="Active analysis layer">
     <option value="">(none)</option>
     <option value="suitability">★ Mission suitability (safety + science + shielding)</option>
     <option value="imagery">CTX image (6 m, sharp)</option>
@@ -292,20 +356,9 @@
     <option value="albedo">Albedo (brightness)</option>
     <optgroup id="mineralLayers" label="Minerals (CRISM)"></optgroup>
   </select>
-  <div id="radiationControls" hidden>
-    <label for="radiationSolar">Solar activity scenario</label>
-    <select id="radiationSolar">
-      <option value="400">Solar minimum (higher GCR)</option>
-      <option value="700" selected>Intermediate solar activity</option>
-      <option value="1000">Solar maximum (lower GCR)</option>
-    </select>
-    <label for="radiationScale">Color scale</label>
-    <select id="radiationScale">
-      <option value="spatial" selected>Show spatial differences</option>
-      <option value="shared">Compare solar scenarios</option>
-    </select>
-    <div class="small">Fixed solar scenarios; season and hour change modeled atmospheric pressure.</div>
-  </div>
+
+  <details id="mapKey" hidden open>
+    <summary>Map key &amp; opacity</summary>
   <div id="legend" hidden></div><div class="small" id="legendText"></div>
   <div id="mapDetail" class="small" role="status"></div>
   <label for="mapOpacity">Overlay opacity <output id="opacityValue" for="mapOpacity">100%</output></label>
@@ -313,34 +366,9 @@
   <div class="small" id="layerStatus" role="status"></div>
   <button id="retryLayer" class="secondary" type="button" hidden>Retry layer</button>
 
-  <h2>Sharp imagery (5 m)</h2>
-  <div class="row">
-    <button id="boxBtn" class="secondary" type="button">Box a sharp area</button>
-    <button id="clearBox" class="secondary" type="button">Clear</button>
-  </div>
-  <div class="small" id="boxInfo">Click "Box a sharp area", then click two corners on the map.</div>
+  </details>
 
-  <h2>Murray Lab maps</h2>
-  <div id="murrayLayers"></div>
-  <div class="small" id="murrayInfo">All maps from the
-    <a href="https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html" target="_blank" rel="noopener">Murray Lab CTX viewer</a>.</div>
-  <button id="pauseWind" class="secondary" type="button" hidden>Pause wind motion</button>
-  <section id="timeline" hidden aria-label="Weather timeline">
-    <h2>Weather timeline</h2>
-    <div class="small" id="timelineNote"></div>
-    <div class="row">
-      <label>Start sol <input id="startSol" type="number" step="1" required></label>
-      <label>End sol <input id="endSol" type="number" step="1" required></label>
-    </div>
-    <button id="playTimeline" class="secondary" type="button">Play timeline</button>
-    <!-- the season slider in the Mission section is the only one; weather_timeline.js still drives these -->
-    <label id="timelineReadout" for="timelinePosition" style="display:none">Timeline position</label>
-    <input id="timelinePosition" type="range" step="1" style="display:none">
-    <div class="small" id="timelineMessage" role="status"></div>
-  </section>
-  <p class="small"><a href="/api/weather/sources" target="_blank" rel="noopener">Weather data and source inventory</a></p>
-
-  <details id="manual"><summary>Manual planning (one route)</summary>
+  <details id="manual" name="workspace"><summary>Manual planning (one route)</summary>
   <h2>Conditions</h2>
   <label>Who is travelling <select id="vehicle"></select></label>
   <label>EVA budget (hours): <b id="budgetVal"></b></label>
@@ -369,10 +397,26 @@
   <div id="explain"></div>
   </details>
 
-  <h2>Clicked point</h2>
-  <div id="info" class="small">Click the map to see what's there.</div>
-  <div id="infoLinks" class="small"></div>
+  <details id="pointDetails" name="workspace">
+    <summary>Inspect a map point</summary>
+    <div id="info" class="small">Click the map to see what's there.</div>
+  </details>
   <div id="advHint" class="small">Press A for technical details.</div>
+
+  <button id="sourcesButton" class="secondary" type="button" aria-expanded="false" aria-controls="sourcesPanel">Sources &amp; model information</button>
+  <div id="sourcesPanel" class="small" hidden>
+    <h2>Data sources</h2>
+    <p><a href="/api/weather/sources" target="_blank" rel="noopener">Weather data and source inventory</a></p>
+    <p><a href="/api/radiation/method" target="_blank" rel="noopener">Radiation method, assumptions and sources</a></p>
+    <p><a href="https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html" target="_blank" rel="noopener">Murray Lab CTX viewer and global map catalogue</a></p>
+    <div id="layerSources"></div>
+    <h2>Global map credits</h2>
+    <ul id="mapSources"></ul>
+    <div id="missionSources"></div>
+    <h2>Imagery at the clicked point</h2>
+    <div id="pointSourceLocation">Click the map with photo tile grids or close-up photo footprints enabled to find image downloads.</div>
+    <div id="infoLinks"></div>
+  </div>
 </div>
 
 <script>
@@ -390,6 +434,7 @@ if (!window.Cesium) {
 const MARS = Cesium.Ellipsoid.MARS;
 Cesium.Ellipsoid.default = MARS;
 const $ = (id) => document.getElementById(id);
+const plannerLayout = createPlannerLayout();
 
 const marsTiles = new Cesium.UrlTemplateImageryProvider({
   url: TREK + "/{z}/{y}/{x}.jpg",
@@ -511,7 +556,7 @@ const temperatureView = createTemperatureView({
     }[state];
     if (state !== "loading") {
       const response = state === "detail" ? { ...shownResponse, temperature_range: range, viewport: true } : shownResponse;
-      weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText"), name: displayedLayer, response });
+      weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText"), sources: $("layerSources"), name: displayedLayer, response });
       refreshHover();
     }
   },
@@ -612,7 +657,7 @@ async function showAnalysisOverlay({ image, rect, name, label, requestAtStart, i
   hideHover();
   $("layerStatus").textContent = "";
   $("retryLayer").hidden = true;
-  weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText") });
+  weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText"), sources: $("layerSources") });
   if (!await showImage(image, rect, request, isCurrent)) return false;
   displayedLayer = name;
   $("legendText").textContent = label;
@@ -620,6 +665,7 @@ async function showAnalysisOverlay({ image, rect, name, label, requestAtStart, i
 }
 
 function updateRadiationControl() {
+  plannerLayout.syncLayers();
   $("radiationControls").hidden = $("layer").value !== "radiation_dose";
 }
 
@@ -630,7 +676,7 @@ async function refreshLayer() {
   layerLoad?.abort();
   $("layerStatus").textContent = "";
   $("retryLayer").hidden = true;
-  const guide = { bar: $("legend"), text: $("legendText"), name };
+  const guide = { bar: $("legend"), text: $("legendText"), sources: $("layerSources"), name };
   if (name !== displayedLayer || !name) {
     clearOverlay();
     windMotion.stop();
@@ -831,6 +877,11 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
     setSharpBox(b);
     $("boxInfo").textContent = `Sharp area: ${(b.east - b.west).toFixed(2)}° x ${(b.north - b.south).toFixed(2)}°. Zoom in to see 5 m detail.`;
     return;
+  }
+  if (!mode) {
+    $("pointDetails").open = true;
+    $("infoLinks").replaceChildren();
+    $("pointSourceLocation").textContent = pointLabel(p);
   }
   if (!mode && shownConditions && hoverLayers.has(displayedLayer)) {
     const layer = displayedLayer, snapshot = shownConditions;
@@ -1061,7 +1112,7 @@ function invalidatePlan() {
   routePlayback.clear("manual");
   if (displayedLayer === "walkback") {
     clearOverlay();
-    weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText") });
+    weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText"), sources: $("layerSources") });
   }
   $("warn").textContent = "";
   $("explain").textContent = replanHint;
@@ -1170,6 +1221,7 @@ function renderLiveGoal(g) {                 // the AI reading the goal, before 
     box.append(el("summary", { id: "mGoalSum" }), el("pre", { className: "thinking", id: "mGoalThink" }),
                el("pre", { className: "thinking answer", id: "mGoalAns" }));
     $("mResult").append(box);
+    plannerLayout.revealResults();
   }
   $("mGoalSum").textContent = g.content ? "The AI is reading your goal: answering"
     : g.reasoning ? "The AI is reading your goal: thinking" : "The AI is reading your goal: waiting";
@@ -1319,6 +1371,7 @@ function showMissionPlayback() {
 function selectRoute(i) { selected = i; renderMission(); drawMission(true); showMissionPlayback(); }
 
 function renderMission() {
+  const disclosureState = plannerLayout.captureMissionSections();
   const r = mission, s = r.settings, out = $("mResult"), h3 = (t) => out.append(el("h3", { textContent: t }));
   out.innerHTML = "";
   h3("Your mission");
@@ -1338,7 +1391,7 @@ function renderMission() {
   liAdv(set, `Priority: ${s.priority.label.toLowerCase()}` + (s.green_only ? ", staying on rover tracks" : ""),
         `route cost weighs time ${s.priority.cost.time}, energy ${s.priority.cost.energy}, risk ${s.priority.cost.risk}`);
   out.append(set);
-  for (const n of r.notes) { const d = el("div", { className: "small" }); setMsg(d, n); out.append(d); }
+  for (const n of r.notes) { const d = el("div", { className: "small" }); d.dataset.missionNotice = "true"; setMsg(d, n); out.append(d); }
   const g = r.goal_ai;
   if (g && (g.reasoning || g.content)) {                       // how the AI read the goal (collapsed)
     const d = el("details", { className: "ai" });
@@ -1408,6 +1461,7 @@ function renderMission() {
   h3(r.candidates.length ? "Options (best first, click to open)" : "Options");
   r.candidates.forEach((c, i) => out.append(candidateCard(c, i)));
   for (const d of r.dropped) out.append(el("div", { className: "small bad adv", textContent: `Dropped B${d.id} (${deg(d.B)}): ${d.reason}` }));
+  plannerLayout.organizeMission(r, selected, disclosureState);
 }
 
 // Mission-planner vehicle (config.MISSION_VEHICLES) -> closest gear-page traveller (config.VEHICLES).
@@ -1449,7 +1503,7 @@ function candidateCard(c, i) {
       `max slope ${rt.max_slope}°, loose ground ${rt.loose_pct}%, green track ${rt.green_pct}% (${rt.green_km} km), yellow ${rt.yellow_pct}%`);
   for (const it of R.items) {
     add(`${it.name}: ${it.used} of ${it.capacity} ${it.unit} used, ${it.left_pct}% left (reserve ${R.reserve_pct}%)`, it.ok ? "ok" : "bad");
-    if (it.source) ul.lastChild.title = it.source;                // hover: where the number comes from
+    // Resource provenance is collected in the single Sources panel.
   }
   add(`Turn back no later than ${ta.h} h after leaving A` + (ta.at_B ? " (B is reached before then)" : ` (at ${deg(ta)})`));
   d.append(easy, ul, el("button", { className: "secondary", textContent: i === selected ? "Showing this route" : "Show this route",
@@ -1664,7 +1718,7 @@ async function murrayToggle(def, on) {
       if (!st.ds) st.ds = new Cesium.CustomDataSource(def.id);
       if (on) { viewer.dataSources.add(st.ds); await refreshHirise(); } else viewer.dataSources.remove(st.ds, false);
     }
-    if (on && def.kind !== "bbox") $("murrayInfo").textContent = `${def.title}: ${def.credit}`;
+    if (on && def.kind !== "bbox") $("murrayInfo").textContent = `${MURRAY_PLAIN[def.id] || def.title} is on.`;
   } catch (e) {
     st.on = false; $(`murray_${def.id}`).checked = false;
     if (def.kind === "tiles") $("murray_none").checked = true;      // a map failed: back to the planner's own map
@@ -1676,6 +1730,7 @@ async function murrayToggle(def, on) {
 async function murrayPointLinks(p, request) {
   const box = $("infoLinks");
   box.innerHTML = "";
+  $("pointSourceLocation").textContent = pointLabel(p);
   const add = (text, href) => box.append(href ? el("a", { href, textContent: text, target: "_blank", rel: "noopener" })
                                               : el("div", { textContent: text }));
   try {
@@ -1705,10 +1760,11 @@ async function pickMurrayMap(def) {
 }
 api("/api/murray/layers").then((d) => {
   murray.defs = d.layers;
+  plannerLayout.mapCredits(d.layers);
   const box = $("murrayLayers");
-  const label = (def, input) => el("label", { className: "check", title: def.credit || "" }, input,
+  const label = (def, input) => el("label", { className: "check" }, input,
     MURRAY_PLAIN[def.id] || def.title, el("span", { className: "adv", textContent: def.title }));
-  box.append(el("div", { className: "small murrayHead", textContent: "Map (one at a time)" }));
+  box.append(el("div", { className: "small murrayHead", textContent: "Background map (choose one)" }));
   const none = el("input", { type: "radio", name: "murrayMap", id: "murray_none", checked: true });
   none.onchange = () => pickMurrayMap(null);
   box.append(el("label", { className: "check" }, none, "The planner's own map"));
@@ -1717,13 +1773,13 @@ api("/api/murray/layers").then((d) => {
     r.onchange = () => { if (r.checked) pickMurrayMap(def); };
     box.append(label(def, r));
   }
-  box.append(el("div", { className: "small murrayHead", textContent: "Show on top" }));
+  box.append(el("div", { className: "small murrayHead", textContent: "Labels & tracks (combine as needed)" }));
   for (const def of d.layers.filter((x) => x.kind !== "tiles")) {
     const c = el("input", { type: "checkbox", id: `murray_${def.id}` });
     c.onchange = () => murrayToggle(def, c.checked);
     box.append(label(def, c));
   }
-}).catch((e) => { $("murrayInfo").textContent = "Murray Lab maps unavailable: " + e.message; });
+}).catch((e) => { $("murrayInfo").textContent = "Global maps unavailable: " + e.message; });
 
 
 // ------------------------------------------------------ route hover + rover ----
@@ -2036,6 +2092,8 @@ const initialLayer = new URLSearchParams(location.search).get("layer");
 if (initialLayer && [...$("layer").options].some(option => option.value === initialLayer && !option.disabled)) {
   $("layer").value = initialLayer;
 }
+plannerLayout.syncLayers();
+if (initialLayer && $("layer").value) $(globalLayerSelected() ? "globalMaps" : "regionalMaps").open = true;
 let wasGlobal = globalLayerSelected();
 showWholeMars();
 $("wholeMars").onclick = () => showWholeMars();   // just the view: weather layers only when picked in the menu
@@ -2070,6 +2128,7 @@ $("region").onchange = () => {
   $("mStatus").textContent = ""; $("runMission").disabled = false;
   clearMatches(); $("findInfo").textContent = "";
   mission = prevMission = null; tracksData = null; missionLayer.entities.removeAll(); $("mResult").innerHTML = "";
+  plannerLayout.clearMission();
   if ($("showTracks").checked) showTracks(true);
   showRegionInfo();
   if (!globalLayerSelected()) flyTo(current.rect);
