@@ -158,3 +158,13 @@ body.touring.gm #map { margin-left: 0; }
                       background: #120c0acc !important; color: #e8b48c !important; border: 1px solid #c98a5e88 !important;
                       text-transform: none; letter-spacing: .04em; min-height: 0; }
 @media (prefers-reduced-motion: reduce) { #tourCard.show { animation: none; } }
+/* flythrough: keep the bar and panel visible so every section flashes by */
+body.touring.flashing #gmRail, body.touring.flashing #panel, body.touring.flashing #routePlayback,
+body.touring.flashing #gmChips, body.touring.flashing #marsSearch { visibility: visible !important; }
+body.touring.flashing.gm #map { margin-left: 72px; }
+body.flashing #tourCard { bottom: auto; top: 50%; transform: translate(-50%, -50%); min-width: 0; padding: 10px 22px;
+                          background: #120c0add; pointer-events: none; }
+body.flashing #tourCard .tourTitle { font-size: 30px; white-space: nowrap; }
+body.flashing #tourCard .tourLine { font-size: 13px; color: #c9a58c; font-variant-numeric: tabular-nums; }
+body.flashing #tourCard .tourDots, body.flashing #tourCard .tourStop { display: none; }
+body.flashing #tourCard.show { animation: none; }
