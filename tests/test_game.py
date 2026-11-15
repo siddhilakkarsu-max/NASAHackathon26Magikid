@@ -137,7 +137,8 @@ class GameTest(unittest.TestCase):
         self.assertIn("src=planner", self.html.replace("'planner'", "=planner"))
 
     def test_kit_page_loads_launcher(self):
-        self.assertIn('<script src="game-launch.js" defer></script>', self.client.get("/kit.html").text)
+        self.assertRegex(self.client.get("/kit.html").text,
+                         r'<script src="game-launch\.js(?:\?v=[a-f0-9]{16})?" defer></script>')
         for key in ("astronaut", "unpressurized_rover", "pressurized_rover"):
             self.assertIn(key, VEHICLES)
             self.assertIn(key, self.launch)

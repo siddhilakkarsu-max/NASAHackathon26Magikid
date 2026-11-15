@@ -4,6 +4,22 @@
 // camera's half-solar-turn path is deliberately not a spacecraft trajectory.
 function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
   selectPlanner, restorePlanningLight, eligible = true }) {
+  // A previously cached module must never throw inside Cesium's render loop.
+  // Versioned script URLs prevent this on upgrade; this guard also handles a
+  // partial deployment or an independently cached embedded-browser resource.
+  if (typeof moons?.systemFrame !== 'function' || typeof lighting?.updateFromPosition !== 'function' ||
+      typeof lighting?.clearEphemeris !== 'function') {
+    controls.button.textContent = 'Refresh animation';
+    controls.button.setAttribute('aria-pressed', 'false');
+    controls.readout.textContent = 'Animation needs a refresh. The map is still available.';
+    controls.button.onclick = () => {
+      const url = new URL(location.href); url.searchParams.set('refresh', String(Date.now()));
+      location.replace(url.href);
+    };
+    return { enter() {}, start() {}, pause() {}, leave() {}, controlsLighting: () => false,
+      state: () => ({ mode: 'unavailable', reason: 'incompatible-modules' }),
+      destroy() { controls.button.onclick = null; } };
+  }
   const C = Cesium, { camera, scene } = viewer;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const RATE = 3600; // One simulated hour per real second; clearly labeled.

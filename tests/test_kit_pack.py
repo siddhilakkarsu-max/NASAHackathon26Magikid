@@ -37,9 +37,10 @@ class KitPack(unittest.TestCase):
 
     def test_page_loads_the_pack_files(self):
         html = self.c.get("/kit.html").text
-        self.assertIn('src="kit-pack.js"', html)
-        self.assertIn('href="kit-pack.css"', html)
-        self.assertLess(html.index('src="kit.js"'), html.index('src="kit-pack.js"'))
+        self.assertRegex(html, r'src="kit-pack\.js(?:\?v=[a-f0-9]{16})?"')
+        self.assertRegex(html, r'href="kit-pack\.css(?:\?v=[a-f0-9]{16})?"')
+        self.assertRegex(html, r'src="kit\.js(?:\?v=[a-f0-9]{16})?"')
+        self.assertLess(html.index('src="kit.js'), html.index('src="kit-pack.js'))
         self.assertEqual(self.c.get("/kit-pack.js").status_code, 200)
         self.assertEqual(self.c.get("/kit-pack.css").status_code, 200)
 

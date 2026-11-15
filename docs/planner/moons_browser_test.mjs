@@ -132,6 +132,7 @@ try {
   assert((await state()).moons.every(m => m.valid));
   pass('Unavailable data hides moons without fabricated positions; toggle restores cached data');
   assert.deepEqual(errors, []); assert.deepEqual(await page.evaluate(() => moonRenderErrors), []);
+  assert(await page.evaluate(() => viewer.useDefaultRenderLoop), 'Cesium render loop must still be running');
   pass('No uncaught JavaScript or renderer errors');
 } catch (error) {
   failure = String(error.stack || error);

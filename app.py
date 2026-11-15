@@ -42,6 +42,7 @@ from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS
                     PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, SITE_SIZE_DEG, BASE_SEASONS, season_for_ls, SITES, VEHICLES,
                     region_box, region_label, site_id)
 from gear.api import router as gear_router
+from frontend_delivery import VersionedFrontend
 from leaderboard import router as game_router
 from mars_moons import router as moons_router
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
@@ -1500,4 +1501,4 @@ app.include_router(global_terrain.router)  # published CTX/HRSC surveys across M
 app.mount("/cubes", StaticFiles(directory=ROOT / "cubes"), name="cubes")   # hi-res photo overlays
 
 # Serve the front end from the same server (one command = whole app)
-app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")
+app.mount("/", VersionedFrontend(directory=ROOT / "frontend", html=True), name="frontend")

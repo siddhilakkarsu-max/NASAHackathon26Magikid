@@ -120,6 +120,7 @@ python -m pytest tests/test_mars_moons.py -q
 node docs/planner/mars_visibility_test.cjs
 node docs/planner/moons_browser_test.mjs
 node docs/planner/overview_browser_test.mjs
+node docs/planner/cached_reload_test.mjs
 ```
 
 The browser audit checks actual NASA model rendering, physical scale, following
@@ -132,3 +133,23 @@ pause/resume, delayed metadata, midnight, source failure/retry, hidden tabs,
 reduced motion, portrait layout and preserved terrain links. Sun interpolation
 is checked against direct SPICE direction; microsecond-rounded API timestamps
 do not imply metre-level solar ranging accuracy.
+
+## Cached-update regression
+
+The `lighting.updateFromPosition is not a function` crash occurred when the
+new overview loaded alongside an older lighting script from the browser cache.
+Changing only the page's query string did not change that script's URL.
+The backend now serves HTML with content-fingerprinted local script/style URLs,
+and revalidates HTML, JavaScript and CSS. The HTML ETag includes its dependency
+hashes, so a script-only update also invalidates the old document. Imagery and
+models retain normal caching and byte-range support.
+
+The overview checks its module capabilities before registering a render callback.
+An incompatible lighting/moon module leaves the map usable and offers
+**Refresh animation**. The cache audit first primes the actual pre-overview
+lighting fixture (`ae5c0d1`) in the browser's HTTP cache, without Playwright
+routing. It then loads the updated app and repeats three warm reloads. Separate
+partial-deployment fixtures test recovery with each missing capability. The
+audit also verifies the gear and game pages after the shared delivery change.
+Render checks include Cesium's `useDefaultRenderLoop`, because an exception in
+`preUpdate` can stop the widget without reaching `scene.renderError`.

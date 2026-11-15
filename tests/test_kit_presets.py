@@ -29,8 +29,8 @@ class KitPresetsTest(unittest.TestCase):
     def test_page_loads_presets(self):
         r = self.client.get("/kit.html")
         self.assertEqual(r.status_code, 200)
-        self.assertIn('src="kit-presets.js"', r.text)
-        self.assertIn('href="kit-presets.css"', r.text)
+        self.assertRegex(r.text, r'src="kit-presets\.js(?:\?v=[a-f0-9]{16})?"')
+        self.assertRegex(r.text, r'href="kit-presets\.css(?:\?v=[a-f0-9]{16})?"')
 
     def test_files_served(self):
         for path in ("/kit-presets.js", "/kit-presets.css"):

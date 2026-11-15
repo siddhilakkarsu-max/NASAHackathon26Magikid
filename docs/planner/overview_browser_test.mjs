@@ -140,6 +140,7 @@ try {
   await page.waitForFunction(() => plannerLayout.globalChoice() === 'map:terrain');
   pass('Explicit terrain links keep their intended map and do not start an overview');
   assert.deepEqual(await page.evaluate(() => overviewRenderErrors), []);
+  assert(await page.evaluate(() => viewer.useDefaultRenderLoop), 'Cesium render loop must still be running');
   assert.deepEqual(errors, []); pass('No uncaught JavaScript or Cesium render errors');
 } catch (error) {
   failure = String(error.stack || error);
