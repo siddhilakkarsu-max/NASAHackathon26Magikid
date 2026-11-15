@@ -664,18 +664,7 @@ def light_rover_suspension(asset, width, length, radius, hub, striped=False):
             rotor = wheel(asset, wx, wz, radius, tire_width, hub, "metal")
             motor = (wx - side * tire_width * .45, wy + radius * .28, wz)
             rover_strut(asset, "Suspension arm", joint if i == 0 else rocker, motor,
-                        radius * .29, "metal")
-            asset.part("Steering motor", "cylinder", "dark", motor,
-                       (radius * .43, radius * .35, radius * .43))
-            asset.part("Drive gearbox", "cylinder", "metal", (motor[0] - side * .035, motor[1], motor[2]),
-                       (radius * .34, radius * .08, radius * .34), angle=math.pi / 2, axis=(0, 0, 1))
-            for tooth in range(8):
-                tooth_angle = math.tau * tooth / 8
-                asset.part("Drive gear tooth", "box", "gold",
-                           (motor[0] - side * .055,
-                            motor[1] + radius * .19 * math.cos(tooth_angle),
-                            motor[2] + radius * .19 * math.sin(tooth_angle)),
-                           (radius * .12, radius * .045, radius * .07), angle=tooth_angle)
+                        radius * .20, "metal")
             if striped:
                 for step in range(6):
                     angle = step * math.tau / 6
@@ -683,9 +672,7 @@ def light_rover_suspension(asset, width, length, radius, hub, striped=False):
                                (side * tire_width * .56, .59 * radius * math.cos(angle),
                                 .59 * radius * math.sin(angle)),
                                (radius * .16, radius * .53, radius * .13), rotor, angle)
-        rover_strut(asset, "Rocker bogie beam", joint, rocker, radius * .34, "metal")
-        rover_flange(asset, "Bogie hinge cap", joint, radius * .57, radius * .31, hub)
-
+        rover_strut(asset, "Rocker bogie beam", joint, rocker, radius * .24, "metal")
 
 def sojourner_body(asset, width, length, r, hub):
     p = asset.part
@@ -711,8 +698,6 @@ def sojourner_body(asset, width, length, r, hub):
     # added long rails and loose spherical clamps that read as floating parts.
     for px, pz in ((-.18, -.28), (.18, -.28), (-.18, .28), (.18, .28)):
         p("Solar canopy fastener", "cylinder", "metal", (px, .224, pz), (.038, .018, .038), angle=math.pi / 2)
-    for side, pz in ((-1, -.15), (1, -.15), (-1, .18), (1, .18)):
-        p("Sojourner chassis nut", "box", "metal", (side * .34, .171, pz), (.042, .030, .042))
 
 
 def zhurong_body(asset, width, length, r, hub):
@@ -774,9 +759,11 @@ def rosalind_body(asset, width, length, r, hub):
     p("Drill housing cover", "box", "dark", (.231, .466, 1.00), (.264, .446, .026))
     p("Stowed drill collar", "cylinder", "metal", (.21, .13, .85), (.148, .147, .148))
     p("Close-up imager", "sphere", "black", (.055, .327, .983), (.096, .092, .079))
-    detail_panel_grid(asset, (0, .768, -.28), .72, 1.02, 5, 4, "dark", name="Central deck seam")
+    # The photovoltaic glass sits around y=.59; keeping the seam grid on that
+    # surface prevents the crossbars from hovering above the deck.
+    detail_panel_grid(asset, (0, .59, -.28), .72, 1.02, 5, 4, "dark", name="Central deck seam")
     for side in (-1, 1):
-        detail_panel_grid(asset, (side * .79, .768, -.30), .56, .98, 5, 4, "dark", name="Wing panel seam")
+        detail_panel_grid(asset, (side * .79, .59, -.30), .56, .98, 5, 4, "dark", name="Wing panel seam")
         for z in (-.65, -.30, .05):
             rover_strut(asset, "Wing harness", (side * .52, .62, z), (side * .79, .63, z), .016, "gold")
     detail_bolt_ring(asset, (.231, .49, .985), .105, count=10, bolt=.024, color="gold",
