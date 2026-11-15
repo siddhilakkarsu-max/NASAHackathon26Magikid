@@ -313,7 +313,11 @@ def astronaut():
         body("Glove grip", "sphere", "dark", (0, -.374, .053), (.112, .096, .117), elbow)
         for finger in (-.070, 0, .070):
             body("Glove finger segment", "box", "white", (finger, -.395, .035), (.045, .050, .070), elbow)
-        detail_bolt_ring(asset, (side * .068, 1.558, 0), .085, count=8, bolt=.018,
+        # The shoulder node already carries the world-space bearing height;
+        # keep this ring in the shoulder's local frame so the fasteners sit on
+        # the joint instead of duplicating the torso translation and floating
+        # above the helmet.
+        detail_bolt_ring(asset, (side * .068, 0, 0), .085, count=8, bolt=.018,
                          color="metal", parent=shoulder, name="Shoulder fastener")
         hips = (-.10, -.33, .08, .29, -.10)
         knees = (.10, .42, .16, .06, .10)
