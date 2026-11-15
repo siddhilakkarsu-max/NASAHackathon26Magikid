@@ -1,0 +1,2 @@
+# Retain published scientific data bytes so the provenance SHA-256 is portable.
+radiation_data/PAPER1/figure11_eff_depth.txt -text -whitespace

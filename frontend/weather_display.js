@@ -10,6 +10,7 @@ const weatherDisplay = (() => {
     wind_speed: "Near-surface wind speed. Historical estimate for the selected hour and season.",
     wind_direction: "Arrowheads point toward modeled wind flow. Motion is sped up for display. The background shows wind speed.",
     dust_opacity: "Higher values mean more atmospheric dust opacity. Seasonal average at 9.3 µm, normalized to 610 Pa. This layer varies with season.",
+    radiation_dose: "Pressure-based galactic cosmic ray (GCR) estimates. Not surface measurements or a current radiation forecast.",
     illumination: "0 means no direct light. 1 means sunlight hits the surface head-on.",
     slope: "Steeper slopes have higher values.",
     firmness: "Relative ground firmness inferred from nighttime infrared imagery. Higher values indicate firmer ground.",
@@ -54,7 +55,42 @@ const weatherDisplay = (() => {
         display(range[0]) + " to " + display(range[1]) : "No values for this selection.";
       text.append(values);
     }
-    if (response.weather || "temperature_range" in response) {
+    if (response.radiation) {
+      const radiation = response.radiation;
+      if (radiation.note) detail.textContent = radiation.note;
+      const addNote = (parent, value) => {
+        if (!value) return;
+        const node = document.createElement("div");
+        node.className = "legend-note";
+        node.textContent = value;
+        parent.append(node);
+      };
+      addNote(text, "Purple = lower dose · green = higher dose. µSv/h = microsieverts per hour (effective dose rate).");
+      addNote(text, "GCR = galactic cosmic rays. Solar particle events and spacesuit shielding are not included.");
+      if (Number.isFinite(radiation.coverage_percent)) {
+        addNote(text, `${format.format(radiation.coverage_percent)}% of grid cells have estimates. Uncolored cells are N/A, not zero dose.`);
+      }
+      const assumptions = document.createElement("details");
+      const summary = document.createElement("summary");
+      summary.textContent = "Model assumptions and sources";
+      assumptions.append(summary);
+      addNote(assumptions, radiation.model_label);
+      const bounds = radiation.valid_pressure_pa;
+      if (bounds?.length === 2 && bounds.every(Number.isFinite)) {
+        addNote(assumptions, `Modeled pressure range: ${format.format(bounds[0])}–${format.format(bounds[1])} Pa. Outside this range: N/A.`);
+      }
+      addNote(assumptions, radiation.dust_note);
+      for (const limitation of radiation.limitations ?? []) addNote(assumptions, limitation);
+      for (const { title, url } of radiation.sources ?? []) {
+        const source = document.createElement("a");
+        source.href = url;
+        source.target = "_blank";
+        source.rel = "noopener";
+        source.textContent = title;
+        assumptions.append(source);
+      }
+      text.append(assumptions);
+    } else if (response.weather || "temperature_range" in response) {
       const source = document.createElement("a");
       const thermal = "temperature_range" in response;
       source.href = thermal ? "https://pds-geosciences.wustl.edu/missions/mgs/tes-timap.html"

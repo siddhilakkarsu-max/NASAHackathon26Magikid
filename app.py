@@ -16,6 +16,7 @@ import time
 import uuid
 from functools import lru_cache
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 from fastapi import FastAPI, HTTPException
@@ -36,6 +37,7 @@ from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS
                     region_box, region_label, site_id)
 from gear.api import router as gear_router
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
+import mars_radiation
 from surface_temperature import temperature_overlay
 from thermal_detail import DETAIL_STEP, detail_overlay, detail_sample
 
@@ -50,9 +52,14 @@ THERMAL_PALETTE = LinearSegmentedColormap.from_list("mars_thermal", [
     (0.78, "#c26d52"), (1.00, "#641a34"),
 ])
 THERMAL_SCALE = (145, 315, "mars_thermal")
+RADIATION_PALETTE = LinearSegmentedColormap.from_list("mars_radiation", [
+    "#762a83", "#af8dc3", "#f7f7f7", "#a6dba0", "#1b7837",
+])
 
 
 def layer_palette(name):
+    if name == "mars_radiation":
+        return RADIATION_PALETTE
     return THERMAL_PALETTE if name == "mars_thermal" else colormaps[name]
 
 # ------------------------------------------------------------- cube I/O ----
@@ -189,6 +196,8 @@ class Conditions(BaseModel):
     vehicle: str = "astronaut"
     local_hour: float = Field(11.0, ge=0, le=24, description="Mars local solar time")
     ls: float = Field(90.0, ge=0, le=360, description="Season, solar longitude")
+    radiation_solar_mv: Literal[400, 700, 1000] = 700
+    radiation_spatial_contrast: bool = True
     budget_hours: float = Field(4.0, gt=0, description="Requested trip time budget in hours before reserve")
     reserve: float = Field(0.25, ge=0, lt=1, description="Fraction of budget held back for emergencies")
     min_sun_elev: float = 10.0
@@ -567,6 +576,11 @@ def weather_sources():
                         filename="mars_weather_sources.csv")
 
 
+@app.get("/api/radiation/method", response_class=FileResponse)
+def radiation_method():
+    return FileResponse(ROOT / "radiation_data" / "README.md", media_type="text/plain; charset=utf-8")
+
+
 @lru_cache(maxsize=8)
 def temperature_image(west, south, east, north, local_hour, ls):
     arr, rect = detail_overlay(west, south, east, north, local_hour, ls)
@@ -592,6 +606,8 @@ def temperature_detail(view: ThermalView):
 def sample_layer(name: str, cond: LayerSample):
     """Read the native model cell under the mouse, independently of PNG colors."""
     lat, lon = cond.lat, cond.lon
+    if name == "radiation_dose":
+        return mars_radiation.sample_radiation(lat, lon, cond.local_hour, cond.ls, cond.radiation_solar_mv)
     extra = {}
     if name in ("temperature", "global_temperature"):
         if name == "temperature":
@@ -631,6 +647,16 @@ def sample_layer(name: str, cond: LayerSample):
 @app.post("/api/layer/{name}")
 def layer(name: str, cond: Conditions):
     """Coloured overlay of one band or one computed layer, for the current conditions."""
+    if name == "radiation_dose":
+        arr, _ = mars_radiation.radiation_fields(cond.local_hour, cond.ls, cond.radiation_solar_mv)
+        lo, hi, cmap = mars_radiation.color_scale(cond.radiation_solar_mv, cond.radiation_spatial_contrast)
+        finite = arr[np.isfinite(arr)]
+        display = interpolate_display(arr, factor=4, wrap_longitude=True)
+        return {"image": to_png(display, cmap, lo, hi, alpha=0.85), "rect": GLOBAL_RECT,
+                "legend": legend(mars_radiation.LABEL, mars_radiation.UNIT, lo, hi, cmap),
+                "weather": True, "grid_step_deg": 5,
+                "data_range": [round(float(finite.min()), 2), round(float(finite.max()), 2)] if finite.size else None,
+                "radiation": mars_radiation.radiation_metadata(arr, cond.radiation_solar_mv, cond.radiation_spatial_contrast)}
     if name in WEATHER_LAYERS:
         title, unit, lo, hi, cmap = WEATHER_LAYERS[name]
         wind = None
