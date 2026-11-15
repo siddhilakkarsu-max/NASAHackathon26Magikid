@@ -49,7 +49,7 @@
   let openSection = null;
   // Each rail button shows ONLY its own section (plus what that section needs, e.g. the region picker for Plan);
   // Menu shows the whole panel.
-  const COMPANIONS = { missionSetup: ["panelPlace", "mStatus"], globalMaps: ["mapKey"], regionalMaps: ["mapKey"] };
+  const COMPANIONS = { missionResults: ["gameSection"], missionSetup: ["panelPlace", "mStatus"], globalMaps: ["mapKey"], regionalMaps: ["mapKey"] };
   function solo(sectionId) {
     for (const n of panel.querySelectorAll(".soloKeep")) n.classList.remove("soloKeep");
     if (!sectionId || sectionId === "all") { delete panel.dataset.solo; return; }

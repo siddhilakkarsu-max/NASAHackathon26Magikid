@@ -55,3 +55,6 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#49](PR-049-feat-siddhi.md) | Autoplay tour: a looping cinematic flythrough of the planner with cap… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#50](PR-050-feat-gk.md) | Game leaderboard with callsigns, and a 'mission ready' launch button on the planner | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | none |
 | [#51](PR-051-feat-siddhi.md) | Flythrough: every map view, weather layer, area layer, overlay and pa… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#52](PR-052-feat-siddhi.md) | docs: changelog files for PRs #49-#51 | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#53](PR-053-feat-siddhi.md) | UI polish: planning progress, "routes ready" card, point details card… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#54](PR-054-feat-gk.md) | Game: complete vehicle models, the same riding and parked | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | none |

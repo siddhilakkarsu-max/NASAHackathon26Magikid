@@ -93,3 +93,74 @@
     fade();
   }
 })();
+
+// ---- second pass: quieter sharp-photo outline, a shorter left bar, one set of route buttons, a first hint ----
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+
+  // 1. The sharp-photo box outline: thin dashed line, and only when zoomed in enough to matter
+  function quietBox(entity) {
+    if (!entity?.polyline || entity.__quiet) return;
+    entity.__quiet = true;
+    entity.polyline.width = 1.2;
+    entity.polyline.material = new Cesium.PolylineDashMaterialProperty({
+      color: Cesium.Color.ORANGE.withAlpha(0.55), dashLength: 14 });
+    entity.polyline.distanceDisplayCondition = new Cesium.DistanceDisplayCondition(0, 1.2e6);
+  }
+  viewer.entities.collectionChanged.addEventListener((_, added) => {     // boxEntity is assigned after add()
+    if (added.length) setTimeout(() => { if (typeof boxEntity !== "undefined" && boxEntity) quietBox(boxEntity); }, 0);
+  });
+  if (typeof boxEntity !== "undefined" && boxEntity) quietBox(boxEntity);
+
+  // 2. Left bar: Game lives with Results; Sources, Flythrough, Tour and Help go under "More"
+  const rail = $("gmRail");
+  if (rail) {
+    const find = (t) => [...rail.querySelectorAll("button")].find(b => b.title === t || b.dataset.section === t);
+    find("gameSection")?.remove();
+    const moved = [find("sourcesSection"), find("10-second flythrough of every feature"), find("Autoplay tour"), find("Help")]
+      .filter(Boolean);
+    if (moved.length) {
+      const icon = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      icon.setAttribute("viewBox", "0 0 24 24"); icon.setAttribute("aria-hidden", "true");
+      icon.innerHTML = '<circle cx="5.5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="18.5" cy="12" r="1.4"/>';
+      const menu = el("div", { id: "uiMore", hidden: true, role: "menu" });
+      const more = el("button", { type: "button", title: "More", id: "uiMoreBtn" }, icon, el("span", { textContent: "More" }));
+      more.setAttribute("aria-haspopup", "menu");
+      more.setAttribute("aria-expanded", "false");
+      const close = () => { menu.hidden = true; more.setAttribute("aria-expanded", "false"); more.classList.remove("on"); };
+      more.onclick = (e) => {
+        e.stopPropagation();
+        menu.hidden = !menu.hidden;
+        more.setAttribute("aria-expanded", String(!menu.hidden));
+        more.classList.toggle("on", !menu.hidden);
+      };
+      for (const b of moved) {
+        b.setAttribute("role", "menuitem");
+        b.addEventListener("click", close);
+        menu.append(b);
+      }
+      rail.append(more);
+      document.body.append(menu);
+      document.addEventListener("click", (e) => { if (!menu.hidden && !menu.contains(e.target)) close(); });
+      document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !menu.hidden) { close(); more.focus(); } });
+    }
+  }
+
+  // 3. While the "routes ready" card shows, hide the duplicate Play route / Walker's view box
+  const ready = $("uiReady");
+  if (ready) new MutationObserver(() => document.body.classList.toggle("uiReadyOn", !ready.hidden))
+    .observe(ready, { attributes: true, attributeFilter: ["hidden"] });
+
+  // 5. A first hint under the search bar, until the user does something
+  const hint = el("button", { id: "uiHint", type: "button" },
+    el("span", { textContent: "Try: " }), el("b", { textContent: "find clay where water once flowed" }));
+  hint.title = "Ask the planner assistant";
+  hint.onclick = () => { hint.remove(); window.marsAssistant?.send("find clay where water once flowed"); };
+  $("map").append(hint);
+  const done = () => hint.remove();
+  document.querySelector("#marsSearch input")?.addEventListener("input", done, { once: true });
+  $("runMission")?.addEventListener("click", done, { once: true });
+  new MutationObserver(() => { if (document.body.classList.contains("chat") || document.body.classList.contains("touring")) done(); })
+    .observe(document.body, { attributes: true, attributeFilter: ["class"] });
+})();
