@@ -2,13 +2,15 @@
 
 Select **Play route** on a successful manual route or mission candidate. The vehicle follows the outbound path in compressed time, with its display size enlarged when zoomed out. Pause, resume, or replay from the map. The animation and model dimensions are for visualization.
 
-These original low-poly GLB files were rebuilt against the rover reference pack and the mission references below. The supplied NASA renderings served as visual comparisons. The route assets retain their own articulated suit and wheel animations. The two walking profiles share the same suit. The mission scout bike, open rover, and pressurized buggy are illustrative concepts.
+These original procedural GLB files were rebuilt against the rover reference pack and the mission references below. The supplied NASA renderings and NASA-published 3D models served as visual comparisons. The route assets retain their own articulated suit and wheel animations. The two walking profiles share the same suit. The mission scout bike, open rover, and pressurized buggy are illustrative concepts; they are not claimed to be flight hardware.
 
 The pack includes an ISS EVA photograph and a picture of the ExoMy educational rover. The corresponding route assets use NASA's xEMU prototype and ESA's Rosalind Franklin flight-rover imagery as their primary visual references.
 
-The 60-round model gauntlet raises these assets to mid-poly route detail: 24x16 spheres, 24-sided cylinders, 32-segment tires, denser treads, panel seams, fasteners, cable runs, camera bezels, drill teeth, harnesses, and rack crossbars. Metal and foil use restrained metallic response, solar cells receive a very small blue emissive lift, and glass/visors use lower roughness so close views remain readable under Cesium lighting. The review log is generated at `outputs/marswalk-model-gauntlet-60.html`.
+The high-poly pass uses 48x32 spheres, 48-sided cylinders, 64-segment tires, denser treads, panel seams, fasteners, cable runs, camera bezels, drill teeth, harnesses, and rack crossbars. Metal and foil use restrained metallic response, solar cells receive a very small blue emissive lift, and glass/visors use lower roughness so close views remain readable under Cesium lighting. The review log is generated at `outputs/marswalk-model-gauntlet-highpoly-60.html`.
 
 The latest detail review removes the overextended Sojourner side rails and loose canopy pieces, keeps its nuts flush to the chassis, and adds Perseverance avionics modules with mast camera and deck harness wires.
+
+The source-by-source audit, including which NASA pages publish exact downloadable models versus image-only references, is recorded in [HIGH_POLY_REFERENCES.md](HIGH_POLY_REFERENCES.md).
 
 | Model | Visual reference |
 |---|---|
@@ -22,4 +24,4 @@ The latest detail review removes the overextended Sojourner side rails and loose
 | Pressurized crew rover and buggy | [NASA Space Exploration Vehicle concept](https://science.nasa.gov/3d-resources/space-exploration-vehicle/) |
 | Scout bike | [NASA lunar mobility study, Figure 10](https://ntrs.nasa.gov/api/citations/20200002475/downloads/20200002475.pdf) |
 
-Regenerate the assets from the repository root with `python build_route_models.py`. The generator uses NumPy and writes glTF 2.0 binaries with embedded geometry, material colors, and one looping animation per model.
+Regenerate the assets from the repository root with `python build_route_models.py`. The generator uses NumPy and writes glTF 2.0 binaries with embedded geometry, material colors, and one looping animation per model. The generated route assets are animation-ready visualizations; where NASA publishes an exact downloadable model (for example Curiosity, Perseverance, or the SEV), that model remains the authoritative reference rather than being silently represented as an exact clone here.

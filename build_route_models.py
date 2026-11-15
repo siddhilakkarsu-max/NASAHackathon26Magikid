@@ -35,9 +35,11 @@ def box_geometry():
 
 def sphere_geometry():
     positions, normals, indices = [], [], []
-    # Mid-poly route assets: smooth enough for close inspection while still
-    # staying comfortably below the application's streaming budget.
-    slices, rings = 24, 16
+    # High-poly route assets: the smooth parts (camera lenses, bearing caps,
+    # hose fittings and suit hardware) stay round when the camera is close.
+    # This is deliberately still procedural and compact rather than embedding
+    # the much larger source CAD meshes.
+    slices, rings = 48, 32
     for row in range(rings + 1):
         latitude = math.pi * (row / rings - .5)
         for col in range(slices):
@@ -55,7 +57,7 @@ def sphere_geometry():
 
 def cylinder_geometry():
     positions, normals, indices = [], [], []
-    sides = 24
+    sides = 48
     ring = [(math.cos(i * math.tau / sides), math.sin(i * math.tau / sides)) for i in range(sides)]
     for x, z in ring:
         positions.extend(((x / 2, -.5, z / 2), (x / 2, .5, z / 2)))
@@ -111,7 +113,10 @@ def beveled_box_geometry():
 
 def rover_tire_geometry(chevron=False):
     facets = Facets()
-    segments = 32
+    # The NASA rover pages call out curved aluminum wheels and many traction
+    # grousers.  A 64-segment tire keeps the curved sidewall smooth while the
+    # separate grouser meshes preserve the mechanical silhouette.
+    segments = 64
     def ring(radius, y):
         return [(radius * math.cos(a), y, radius * math.sin(a))
                 for a in (i * math.tau / segments for i in range(segments))]
@@ -513,7 +518,7 @@ def msl_rover(name, reference):
     if is_msl:
         p("Raised MAHLI instrument", "cylinder", "metal", (cuff[0] - .16, cuff[1] + .105, cuff[2] + .07),
           (.145, .19, .145), angle=math.pi / 2)
-    # Mid-poly close-up pass: deck seams, fasteners, lens bezels, and a visible
+    # High-poly close-up pass: deck seams, fasteners, lens bezels, and a visible
     # arm cable make the two MSL silhouettes read as engineered vehicles.
     detail_panel_grid(asset, (0, 1.201, -.06), 1.46, 1.93, 5, 4, "dark", name="Deck panel seam")
     for px, pz in ((-.67, -.76), (.67, -.76), (-.67, .64), (.67, .64)):
@@ -722,6 +727,10 @@ def zhurong_body(asset, width, length, r, hub):
                     .038, "metal")
     p("Mast base", "beveled_box", "foil", (-.31, .596, .54), (.21, .15, .23))
     rover_strut(asset, "Exposed copper mast", (-.31, .647, .54), (-.31, 1.624, .54), .059, "foil")
+    # A restrained service lead follows the mast down to the deck; keeping it
+    # as a real strut gives the high-poly audit an explicit wire endpoint to
+    # inspect instead of leaving a decorative line floating in space.
+    rover_strut(asset, "Mast service cable", (-.25, .66, .48), (-.25, 1.47, .48), .014, "dark")
     p("Camera yoke", "box", "metal", (-.31, 1.63, .54), (.18, .11, .11))
     p("Navigation bar", "box", "gold", (-.31, 1.70, .54), (.516, .038, .21))
     for side in (-1, 1):
@@ -1043,7 +1052,7 @@ def crew(name, kind):
             p("Rear airlock face", "cylinder", "white", (0, 1.771, -2.149), (.781, .076, .781), angle=math.pi / 2)
             rail("Roof dish mast", (.613, 2.56, -1.38), (.613, 2.952, -1.38), .053, "metal")
             dish(.613, 2.958, -1.38, .264, "metal")
-    # Mid-poly crew-vehicle detail pass. These are deliberately small exterior
+    # High-poly crew-vehicle detail pass. These are deliberately small exterior
     # parts: harnesses, rack crossbars, panel seams, and service fasteners.
     if kind == "bike":
         detail_panel_grid(asset, (0, .36, -.06), .66, .52, 3, 4, "dark", name="Bike battery seam")
