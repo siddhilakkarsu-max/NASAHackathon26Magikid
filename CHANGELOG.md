@@ -6,6 +6,43 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-15, the game goes first-person 3D
+
+Branch `feat/Gk`.
+
+### Changed
+
+- **First-person 3D view** (`frontend/game.html`, section 12b, raw WebGL, no libraries). The player sees Mars
+  through the visor or over the vehicle's hood: W / S move along the view, A / D strafe, mouse or arrow keys look.
+  The planned route is a chevron line on the ground coloured by the plan's risk; light pillars mark A, B, sampling
+  spots, shelters and the turn-back point; off-limits ground is hatched red; data layers paint the terrain. Storms
+  close the view in, night uses a headlamp. The simulation, tools, hazards and planner hand-off are unchanged.
+- **Lighter dialogue.** Blocking Houston cutscenes are cut to one or two lines around the mission and become radio
+  calls during it; the intro plays from its button only. `?story=1` restores the full scripts.
+
+- **Helmet AR HUD.** The helmet rim frames the view and the HUD panels sit inside it, stacked so they do not
+  overlap. The visor reacts to damage, low oxygen, storms, cold and lost signal.
+- **Easier to pick up.** Missions start facing down the route, the path arrows point the way you travel, a guide
+  light floats ahead on the route, one plain-language hint shows at a time, and Space hops in Mars gravity.
+- **Models.** Lander with legs, ladder, hatch and solar wings; science station at B; rover with wheels, fenders,
+  console, dish and camera; bike handlebars and front wheel; cabin window frame and dash; suit forearms and gloves.
+
+### Added
+
+- URL params `view=2d` (top-down renderer, also the fallback without WebGL), `story=1`, `gq=low`.
+- A heading pill with an arrow to the next point on the route.
+- 2 tests (149 total).
+
+### Verification
+
+- Headless Chrome: autopilot completes all 14 baked routes in 3D from `file://`; all six death causes fire; manual
+  walking and strafing work; 59-60 frames per second on Intel UHD.
+
+### Limits
+
+- Terrain shape is scenery generated over the game's hazard fields, not the real Jezero elevation.
+- Clicking the ground for point values needs `view=2d`. Not checked on a phone; mouse capture not exercised by hand.
+- Live-planning and hand-off checks were not re-run on the 3D build (their code did not change).
 ## [Unreleased] - 2026-11-14, planner controls and game integration
 
 - Use one global Map view selector for imagery, terrain, weather and radiation;
