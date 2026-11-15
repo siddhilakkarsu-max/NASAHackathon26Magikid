@@ -56,7 +56,7 @@ LAYERS = [
     dict(id="viking", kind="tiles", title="Viking MDIM 2.1 mosaic", default=False, max_level=7,
          url=f"{ESRI}/MDIM/MapServer/tile/{{z}}/{{y}}/{{x}}", credit="USGS Astrogeology, NASA, JPL, MSSS, Caltech/Murray Lab, Esri"),
     dict(id="terrain", kind="terrain", title="3D terrain (MOLA/HRSC 200 m)", default=True, max_level=TERRAIN_MAX_LEVEL,
-         url="/murray/elevation/", credit="Topography: NASA GSFC, DLR, USGS Astrogeology, JPL, Esri"),
+         url="/murray/elevation/v2/", credit="Topography: NASA GSFC, DLR, USGS Astrogeology, JPL, Esri"),
     dict(id="m2020", kind="geojson", title="Mars 2020 traverse (through sol 678)", default=True,
          url="/murray/features/m2020.geojson", style="line", color="#3ad6ff", credit="NASA/JPL/M2020"),
     dict(id="msl", kind="geojson", title="MSL traverse (through sol 3420)", default=True,
@@ -469,23 +469,167 @@ def murray_elevation_meta():
     return _elev_meta
 
 
+def _write_atomic(path, data):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(f".{threading.get_ident()}.part")
+    tmp.write_bytes(data)
+    tmp.replace(path)
+
+
+def _raw_elevation_tile(z, y, x, timeout):
+    """The tile exactly as Esri serves it (cached on disk)."""
+    path = CACHE / "elevation" / f"{z}_{y}_{x}.lerc"
+    if not path.exists():
+        _write_atomic(path, _fetch(f"{ESRI}/MDEM200M/ImageServer/tile/{z}/{y}/{x}", timeout=timeout))
+    return path.read_bytes()
+
+
+# About 1 in 6 MDEM200M tiles at levels 4, 5 and 7 hold heights from somewhere else (checked against MOLA:
+# kilometres off, e.g. +1.1 km at 7.5N 5.6W where Mars is at -1.4 km), which made patches of the 3D globe
+# float above their neighbours with hollow gaps. Every tile is checked against NASA's MOLA MEGDR
+# (16 px/degree, 33 MB, downloaded once) and a wrong one is rebuilt from the nearest correct coarser tile.
+MOLA_REF_URL = "https://pds-geosciences.wustl.edu/mgs/mgs-m-mola-5-megdr-l3-v1/mgsl_300x/meg016/megt90n000eb.img"
+MOLA_REF_SHAPE = (2880, 5760)            # 90N..90S, 0..360E, 1/16 degree, big-endian int16 metres (areoid)
+TILE_MAX_MEDIAN_ERROR_M = 250            # correct tiles stay within ~40 m of MOLA; wrong ones are 1-7 km off
+_mola_ref = None
+_mola_lock = threading.Lock()
+
+
+def mola_reference():
+    global _mola_ref
+    with _mola_lock:
+        if _mola_ref is None:
+            path = CACHE / "mola_megdr_16ppd.img"
+            if not path.exists() or path.stat().st_size != 2 * MOLA_REF_SHAPE[0] * MOLA_REF_SHAPE[1]:
+                _write_atomic(path, _fetch(MOLA_REF_URL, timeout=300))
+            _mola_ref = np.memmap(path, dtype=">i2", mode="r", shape=MOLA_REF_SHAPE)
+    return _mola_ref
+
+
+def mola_heights(lat, lon):
+    """Bilinear MOLA heights (m) at arrays of planetocentric lat / lon (degrees, any longitude range)."""
+    from scipy.ndimage import map_coordinates
+    ref = mola_reference()
+    rows = np.clip((90 - np.asarray(lat, float)) * 16 - 0.5, 0, MOLA_REF_SHAPE[0] - 1)
+    cols = (np.asarray(lon, float) % 360) * 16 - 0.5
+    c0 = int(np.floor(np.min(cols))) - 1
+    r0, r1 = int(np.floor(rows.min())), int(np.ceil(rows.max())) + 1
+    cidx = np.arange(c0, int(np.ceil(np.max(cols))) + 2) % MOLA_REF_SHAPE[1]
+    window = np.asarray(ref[r0:r1 + 1][:, cidx], dtype="float32")
+    return map_coordinates(window, [rows - r0, cols - c0], order=1, mode="nearest", prefilter=False)
+
+
+def _tile_grid(z, y, x, n):
+    w = 180 / 2 ** z
+    t = np.linspace(0, 1, n)
+    return np.meshgrid(90 - (y + t) * w, -180 + (x + t) * w, indexing="ij")
+
+
+def _decode_heights(blob):
+    import lerc
+    code, data, valid = lerc.decode(blob)[:3]
+    if code:
+        raise ValueError(f"elevation tile failed to decode ({code})")
+    data = np.asarray(data, dtype="float32")
+    if valid is not None:
+        data = np.where(np.asarray(valid) > 0, data, np.nan).astype("float32")
+    return data
+
+
+def _matches_mola(z, y, x, heights):
+    lat, lon = _tile_grid(z, y, x, 33)
+    idx = np.linspace(0, heights.shape[0] - 1, 33).round().astype(int)
+    diff = np.abs(heights[np.ix_(idx, idx)] - mola_heights(lat, lon))
+    diff = diff[np.isfinite(diff)]
+    return diff.size > 0 and float(np.median(diff)) < TILE_MAX_MEDIAN_ERROR_M
+
+
+def _lerc2_v3(heights):
+    """Uncompressed LERC2 version 3 (the newest layout Cesium's decoder reads; the lerc package writes v6)."""
+    import struct
+    h, w = heights.shape
+    data = np.ascontiguousarray(heights, dtype="<f4")
+    zmin, zmax = float(data.min()), float(data.max())
+    body = struct.pack("<iiiiiiddd", h, w, h * w, 8, 0, 6, 0.0, zmin, zmax) + struct.pack("<I", 0)
+    if zmax > zmin:
+        body += b"\x01" + data.tobytes()
+    blob_size = 6 + 4 + 4 + len(body)
+    body = body[:16] + struct.pack("<i", blob_size) + body[20:]
+    a = b = 0xFFFF                                   # Fletcher-32 exactly as LERC computes it
+    words = len(body) // 2
+    i = 0
+    while words:
+        n = min(words, 359)
+        words -= n
+        for _ in range(n):
+            a += body[i] << 8
+            a += body[i + 1]
+            b += a
+            i += 2
+        a, b = (a & 0xFFFF) + (a >> 16), (b & 0xFFFF) + (b >> 16)
+    if len(body) & 1:
+        a += body[i] << 8
+        b += a
+    a, b = (a & 0xFFFF) + (a >> 16), (b & 0xFFFF) + (b >> 16)
+    return b"Lerc2 " + struct.pack("<iI", 3, ((b << 16) | a) & 0xFFFFFFFF) + body
+
+
+def _rebuilt_tile(z, y, x, timeout):
+    """A wrong or missing tile, rebuilt from the nearest coarser tile that matches MOLA (else MOLA itself)."""
+    from scipy.ndimage import map_coordinates
+    for level in range(z - 1, -1, -1):
+        f = 2 ** (z - level)
+        try:
+            parent = _decode_heights(_raw_elevation_tile(level, y // f, x // f, timeout))
+        except Exception:
+            continue
+        span = (parent.shape[0] - 1) / f
+        rows = (y % f) * span + np.linspace(0, span, 513)
+        cols = (x % f) * span + np.linspace(0, span, 513)
+        sub = map_coordinates(parent, np.meshgrid(rows, cols, indexing="ij"), order=1, mode="nearest", prefilter=False)
+        if np.isfinite(sub).all() and _matches_mola(z, y, x, sub):
+            return sub.astype("float32")
+    lat, lon = _tile_grid(z, y, x, 513)
+    return mola_heights(lat, lon).astype("float32")
+
+
 def elevation_tile_bytes(z, y, x, *, timeout=60):
-    """One LERC tile of the 3D terrain (MDEM200M), cached on disk. Shared by the globe and the cube builder."""
+    """One LERC tile of the 3D terrain (MDEM200M), checked against MOLA and cached on disk.
+    Shared by the globe and the cube builder."""
     if (not all(isinstance(v, (int, np.integer)) for v in (z, y, x))
             or not 0 <= z <= TERRAIN_MAX_LEVEL
             or not (0 <= y < 2 ** z and 0 <= x < 2 ** (z + 1))):
         raise ValueError("elevation tile outside the published level-0..7 geographic grid")
-    path = CACHE / "elevation" / f"{z}_{y}_{x}.lerc"
-    if not path.exists():
-        data = _fetch(f"{ESRI}/MDEM200M/ImageServer/tile/{z}/{y}/{x}", timeout=timeout)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp = path.with_suffix(f".{threading.get_ident()}.part")
-        tmp.write_bytes(data)
-        tmp.replace(path)
-    return path.read_bytes()
+    z, y, x = int(z), int(y), int(x)
+    path = CACHE / "elevation_checked" / f"{z}_{y}_{x}.lerc"
+    if path.exists():
+        return path.read_bytes()
+    try:
+        raw = _raw_elevation_tile(z, y, x, timeout)
+    except Exception:
+        raw = None                                   # Esri sometimes answers 500: rebuild, but don't keep it
+    try:
+        if raw is not None and _matches_mola(z, y, x, _decode_heights(raw)):
+            data = raw
+        else:
+            data = _lerc2_v3(_rebuilt_tile(z, y, x, timeout))
+    except OSError:
+        if raw is None:
+            raise
+        return raw                                   # MOLA reference unreachable: serve the tile unchecked
+    if raw is not None:
+        _write_atomic(path, data)
+    return data
+
+
+@router.get("/murray/elevation/v2")
+@router.get("/murray/elevation/v2/")
+def murray_elevation_meta_v2():
+    return murray_elevation_meta()
 
 
 @router.get("/murray/elevation/tile/{z}/{y}/{x}")
+@router.get("/murray/elevation/v2/tile/{z}/{y}/{x}")
 def murray_elevation_tile(z: int, y: int, x: int):
     try:
         data = elevation_tile_bytes(z, y, x)

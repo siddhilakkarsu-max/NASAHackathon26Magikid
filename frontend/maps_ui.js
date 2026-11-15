@@ -98,6 +98,8 @@
   railBtn("help", "Help", () => window.openMapManual?.());
   const syncResults = () => {
     resultsBtn.disabled = $("missionResults").hidden;
+    // a plan started from the Plan menu: follow it to Results, where its progress and the AI's thinking appear
+    if (!$("missionResults").hidden && openSection === "missionSetup") drawer(true, "missionResults");
     const game = rail.querySelector('button[data-section="gameSection"]');
     if (game) game.disabled = !$("gameSection") || $("gameSection").hidden;
   };
