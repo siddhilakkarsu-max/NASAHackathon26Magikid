@@ -291,7 +291,6 @@
     <button id="boxBtn" class="secondary" type="button">Box a sharp area</button>
     <button id="clearBox" class="secondary" type="button">Clear</button>
   </div>
-  <button id="prefetchBtn" class="secondary" type="button">Pre-load box (for demos)</button>
   <div class="small" id="boxInfo">Click "Box a sharp area", then click two corners on the map.</div>
 
   <h2>Murray Lab maps</h2>
@@ -825,18 +824,6 @@ let boxCorner = null;
 $("boxBtn").onclick = () => { mode = "box1"; $("boxBtn").classList.add("active");
   $("boxInfo").textContent = "Click the first corner of the area."; };
 $("clearBox").onclick = () => { setSharpBox(null); $("boxInfo").textContent = "Sharp imagery off (fast mode)."; };
-$("prefetchBtn").onclick = async () => {
-  if (!sharpBox) { $("boxInfo").textContent = "Box an area first."; return; }
-  try {
-    const r = await api("/api/prefetch", sharpBox);
-    $("boxInfo").textContent = `Pre-loading ${r.tiles} tiles…`;
-    const timer = setInterval(async () => {
-      const s = await api("/api/prefetch");
-      $("boxInfo").textContent = s.running ? `Pre-loading… ${s.done}/${s.total} tiles` : `Pre-loaded ${s.total} tiles ✓ (instant now)`;
-      if (!s.running) clearInterval(timer);
-    }, 1500);
-  } catch (e) { $("boxInfo").textContent = e.message; }
-};
 $("setBase").onclick = () => { mode = "base"; $("setBase").classList.add("active"); };
 $("setTarget").onclick = () => { mode = "target"; $("setTarget").classList.add("active"); };
 $("gearLink").onclick = () => {
