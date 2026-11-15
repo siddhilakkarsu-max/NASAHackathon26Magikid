@@ -9,3 +9,4 @@ uvicorn
 pydantic
 certifi
 lerc            # decodes the 3D terrain tiles (Esri MDEM200M) for planning anywhere on Mars
+anthropic          # Claude as the AI model when ANTHROPIC_API_KEY is set (claude_ai.py)

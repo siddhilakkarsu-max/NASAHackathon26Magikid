@@ -1511,6 +1511,9 @@ function renderMission() {
   r.candidates.forEach((c, i) => out.append(candidateCard(c, i)));
   for (const d of r.dropped) out.append(el("div", { className: "small bad adv", textContent: `Dropped B${d.id} (${deg(d.B)}): ${d.reason}` }));
   plannerLayout.organizeMission(r, selected, disclosureState);
+  // the AI's thinking lives in these sections: keep them open while it is working (afterwards the user decides)
+  if (r.explain_ai?.live && $("missionWhy")) $("missionWhy").open = true;
+  if (r.annot_ai?.live && $("missionNotes")) $("missionNotes").open = true;
 }
 
 // Mission-planner vehicle (config.MISSION_VEHICLES) -> closest gear-page traveller (config.VEHICLES).
