@@ -28,7 +28,10 @@ for planning restores lighting from the planning settings.
 terrain overlay and automatically plays the system at 3,600×. The view fits
 both physical moon orbits; moons are very small at this distance, so locator
 dots identify them. **Pause motion** freezes the UTC clock and camera. Dragging
-or scrolling also pauses it. After seven seconds without interaction the
+also pauses it. On the default planner map, wheel/trackpad scrolling over the
+globe and the +/− zoom buttons keep rotation running and do not reset the idle
+timer. Scrolling inside a panel still counts as interaction.
+After seven seconds without interaction the
 overview resumes at the same camera position, including after time/season edits.
 Holding a drag prevents resumption until release; further input resets the wait.
 Map/region selection, moon tracking and planning tasks cancel automatic resume.

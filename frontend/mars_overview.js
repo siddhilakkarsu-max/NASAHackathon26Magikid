@@ -3,7 +3,7 @@
 // A rotating presentation camera around the real Mars-fixed ephemeris. The
 // camera's half-solar-turn path is deliberately not a spacecraft trajectory.
 function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
-  selectPlanner, restorePlanningLight, eligible = true }) {
+  selectPlanner, restorePlanningLight, isPlanner = () => false, eligible = true }) {
   // A previously cached module must never throw inside Cesium's render loop.
   // Versioned script URLs prevent this on upgrade; this guard also handles a
   // partial deployment or an independently cached embedded-browser resource.
@@ -28,6 +28,11 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
   let resumeTimer = null;
   let resumePlanning = false;
   const heldPointers = new Set();
+  const zoomButtons = '#gmControls button[title="Zoom in"],#gmControls button[title="Zoom out"]';
+  function passiveZoom(event) {
+    return isPlanner() && ((event.type === 'wheel' && event.target === scene.canvas) ||
+      !!event.target.closest?.(zoomButtons));
+  }
   function cancelResume() { clearTimeout(resumeTimer); resumeTimer = null; }
   function scheduleResume() {
     cancelResume();
@@ -43,8 +48,6 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
       report(); scene.requestRender();
     }, 7000);
   }
-  const rotation = new C.Matrix3(), position = new C.Cartesian3();
-  const direction = new C.Cartesian3(), up = new C.Cartesian3();
   const removers = [];
   function listen(node, event, fn, options) {
     node.addEventListener(event, fn, options);
@@ -74,6 +77,7 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
     // the real Sun permanently outside the viewport during northern summer.
     const latitude = -Math.asin(sun.z / C.Cartesian3.magnitude(sun));
     camera.cancelFlight(); moons.stopTracking();
+    camera.lookAtTransform(C.Matrix4.IDENTITY);
     camera.setView({ destination: C.Cartesian3.fromRadians(longitude, latitude, range - ellipsoid.maximumRadius, ellipsoid),
       orientation: { heading: 0, pitch: -Math.PI / 2, roll: 0 } });
     return true;
@@ -95,11 +99,9 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
     }
     if (mode === 'playing' && previousLongitude !== null) {
       const delta = Math.atan2(Math.sin(longitude - previousLongitude), Math.cos(longitude - previousLongitude)) * 0.5;
-      C.Matrix3.fromRotationZ(delta, rotation);
-      C.Matrix3.multiplyByVector(rotation, camera.positionWC, position);
-      C.Matrix3.multiplyByVector(rotation, camera.directionWC, direction);
-      C.Matrix3.multiplyByVector(rotation, camera.upWC, up);
-      camera.setView({ destination: position, orientation: { direction, up } });
+      // setView changes the camera transform, resetting Cesium's zoom gesture
+      // each frame. rotate preserves the ongoing gesture and its zoom inertia.
+      camera.rotate(C.Cartesian3.UNIT_Z, -delta);
     }
     previousLongitude = longitude;
     if (performance.now() - lastReadout > 200) { lastReadout = performance.now(); report(); }
@@ -138,12 +140,17 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
   }
   controls.button.onclick = () => mode === 'playing' ? pause() : start();
   listen(scene.canvas, 'pointerdown', pause, true);
-  listen(scene.canvas, 'wheel', pause, { capture: true, passive: true });
-  listen(document, 'pointerdown', event => { heldPointers.add(event.pointerId); cancelResume(); }, true);
+  listen(scene.canvas, 'wheel', event => { if (!passiveZoom(event)) pause(); }, { capture: true, passive: true });
+  listen(document, 'pointerdown', event => {
+    if (passiveZoom(event)) return;
+    heldPointers.add(event.pointerId); cancelResume();
+  }, true);
   for (const type of ['pointerup', 'pointercancel']) {
-    listen(document, type, event => { heldPointers.delete(event.pointerId); scheduleResume(); }, true);
+    listen(document, type, event => { if (heldPointers.delete(event.pointerId)) scheduleResume(); }, true);
   }
-  for (const type of ['pointermove', 'wheel', 'keydown', 'input']) listen(document, type, scheduleResume, { capture: true, passive: true });
+  for (const type of ['pointermove', 'wheel', 'keydown', 'input']) listen(document, type, event => {
+    if (!passiveZoom(event)) scheduleResume();
+  }, { capture: true, passive: true });
   listen(window, 'blur', () => { heldPointers.clear(); cancelResume(); });
   listen(window, 'focus', scheduleResume);
   // Stop before other handlers fly, plan, change lighting, or follow a moon.
@@ -152,6 +159,7 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
   listen(document, 'input', planningChange, true);
   listen(document, 'change', planningChange, true);
   listen(document, 'click', event => {
+    if (passiveZoom(event)) return;
     if (event.target.closest(buttons)) leave();
     else if (event.target.closest('#gmControls button,#gmRail button')) pause();
   }, true);

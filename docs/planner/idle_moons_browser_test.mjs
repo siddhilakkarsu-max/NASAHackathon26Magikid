@@ -27,13 +27,38 @@ try {
   await page.goto(base, {waitUntil:'domcontentloaded'});
   await page.evaluate(() => { viewer.resolutionScale=.5; marsMoons.setTime('2026-11-15T12:00:00Z'); });
   await page.locator('#startExploring').click();
+  await page.locator('#landing').waitFor({state:'hidden'});
   await page.waitForFunction(() => current && marsMoons.systemFrame().available && !marsOverview.state().framePending);
+  const center = await page.evaluate(() => {
+    const p = Cesium.SceneTransforms.worldToWindowCoordinates(viewer.scene, Cesium.Cartesian3.ZERO);
+    const r = viewer.scene.canvas.getBoundingClientRect(); return {x:p.x+r.left,y:p.y+r.top};
+  });
+  await page.mouse.move(center.x,center.y);
+  const beforeZoom = await state();
+  await page.mouse.wheel(0,-400);
+  await sleep(1000);
+  const wheelZoom = await state();
+  assert.equal(wheelZoom.mode,'playing');
+  assert(wheelZoom.range < beforeZoom.range - 1000, JSON.stringify({before:beforeZoom.range,after:wheelZoom.range,center}));
+  assert(Date.parse(wheelZoom.moons.utc) > Date.parse(beforeZoom.moons.utc));
+  await page.locator('#gmControls button[title="Zoom in"]').click();
+  await sleep(300);
+  const buttonZoom = await state();
+  assert.equal(buttonZoom.mode,'playing'); assert(buttonZoom.range < wheelZoom.range);
+  await page.locator('#gmControls button[title="Zoom out"]').click();
+  assert.equal((await state()).mode,'playing');
+  pass('Wheel and both zoom buttons change zoom while default-map rotation and moon time continue');
   await page.locator('#overviewToggle').click();
   const paused = await state();
   await sleep(6200); assert.equal((await state()).mode,'paused');
-  await page.waitForFunction(() => marsOverview.state().mode === 'playing', {timeout:4000});
+  await page.waitForFunction(() => marsOverview.state().mode === 'playing', null, {timeout:4000});
   assert(Math.abs((await state()).range - paused.range) < 1);
   pass('Pause stays paused before seven seconds, then resumes without changing zoom');
+  await page.mouse.move(900,500);
+  await page.evaluate(() => marsOverview.pause());
+  await sleep(4200); await page.mouse.wheel(0,100);
+  await page.waitForFunction(() => marsOverview.state().mode === 'playing', null, {timeout:4000});
+  pass('Zooming during a pause does not extend the seven-second inactivity deadline');
   await page.mouse.move(1000,650); await page.mouse.down();
   await sleep(7500); assert.equal((await state()).mode,'paused');
   await page.mouse.up(); await sleep(4200); await page.mouse.move(1010,650);
@@ -94,7 +119,10 @@ try {
   assert.deepEqual(errors,[]);
   await page.screenshot({path:path.join(out,'idle-moons.png')});
   pass('Reduced-motion preference is respected and the renderer has no uncaught errors');
-} catch(e) { failure=String(e.stack||e); }
+} catch(e) {
+  failure=String(e.stack||e);
+  await page.screenshot({path:path.join(out,'idle-moons-failure.png')});
+}
 finally {
   await fs.writeFile(path.join(out,'idle-moons-results.json'),JSON.stringify({checks,errors,failure},null,2));
   await browser.close();

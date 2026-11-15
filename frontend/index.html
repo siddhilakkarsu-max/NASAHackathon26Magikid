@@ -2894,6 +2894,7 @@ labels();
 marsOverview = createMarsOverview({ viewer, ellipsoid: MARS, moons: marsMoons, lighting: globeLighting,
   controls: { button: $("overviewToggle"), readout: $("overviewReadout") },
   eligible: !initialLayer && !["terrain", "jezero3d"].includes(new URLSearchParams(location.search).get("view")),
+  isPlanner: () => plannerLayout.globalChoice() === '',
   selectPlanner: () => {
     $("globalLayer").value = "";
     $("globalLayer").dispatchEvent(new Event("change", { bubbles: true }));
