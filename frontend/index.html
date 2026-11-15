@@ -773,7 +773,9 @@ $("plan").onclick = async () => {
     if (planId !== planRequest) return;
     await showAnalysisOverlay({
       image: res.walkback_image, rect: res.rect, name: "walkback",
-      label: "Shaded terrain marks the round-trip walk-back zone.",
+      label: "Shaded terrain marks the round-trip walk-back zone, limited by " +
+        ({ oxygen: "suit oxygen", energy: "battery energy" }[res.walkback_basis] || "the time budget") +
+        ". Green = little used, yellow = near the tightest limit (time, O2 or battery, after reserves).",
       requestAtStart, isCurrent: () => planId === planRequest
     });
     if (planId !== planRequest) return;

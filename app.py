@@ -538,6 +538,87 @@ def layer(name: str, cond: Conditions):
             "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)}}
 
 
+def _walkback_round_trip(c, v, veh_key, cost, start, ls, horizon_s):
+    """Time from base and the round-trip O2 / energy to each pixel, costed along the same
+    travel-time-optimal paths the planner uses, with the model of consumables_block().
+
+    Each pixel's path is the shortest-time tree from base; per step the walker's oxygen is
+    rate x flat-pace seconds x Minetti (out and back over that step's grade, so the round trip
+    climbs every slope once and descends it once). Vehicles use idle power x time + driving energy
+    per km + the energy to lift the vehicle up every climb (out) and descent (back). The sums are
+    accumulated down the tree by pointer jumping, so no per-pixel Python loop. Only pixels whose
+    round trip takes at most horizon_s are costed; the rest are NaN.
+    Returns (t_from_base, {name: round-trip amount grid}, {name: usable amount}, reserve)."""
+    from config import CONSUMABLE_RESERVE, VEHICLE_POWER
+
+    mcp = physics._mcp_costs(cost, c.pixel_m)
+    t, tb = mcp.find_costs([start])
+    reserve = CONSUMABLE_RESERVE["dust_season" if _in_dust_season(ls, CONSUMABLE_RESERVE["dust_season_ls"])
+                                 else "normal"]
+    cons, power = v.get("consumables") or {}, VEHICLE_POWER.get(veh_key, {})
+    walking = veh_key == "astronaut" and "o2_rate_kg_per_h" in cons
+    with np.errstate(invalid="ignore"):
+        rt_h = np.where(2 * t <= horizon_s, 2 * t / 3600, np.nan)
+    amounts, usable = {}, {}
+    if "o2_rate_kg_per_h" in cons and not walking:     # crew on suit O2 while riding: flat rate
+        amounts["oxygen"] = cons["o2_rate_kg_per_h"] * rt_h
+        usable["oxygen"] = float(cons["o2_capacity_kg"]) * (1 - reserve)
+    if walking or "energy_capacity_kwh" in cons:
+        # The pixels in the horizon, as a sub-tree: every predecessor is closer, so it is in too
+        H, W = t.shape
+        sel = np.flatnonzero(np.isfinite(rt_h))
+        pos = np.full(H * W, -1, dtype=np.int64)
+        pos[sel] = np.arange(sel.size)
+        step = tb.ravel()[sel]                          # index into mcp.offsets; -1 at the base
+        reached = step >= 0
+        off = np.asarray(mcp.offsets, dtype=np.int64)
+        k = np.where(reached, step, len(off))           # extra last entry = "no step"
+        step_flat = np.append(off[:, 0] * W + off[:, 1], 0)
+        step_run = np.append(np.hypot(off[:, 0] * c.pixel_m[0], off[:, 1] * c.pixel_m[1]), 0.0)
+        pred_flat = sel - step_flat[k]                  # the predecessor is one offset back
+        pred = pos[pred_flat]
+        run = step_run[k]
+        tf = t.ravel()
+        seg_s = np.where(reached, tf[sel] - tf[pred_flat], 0.0)
+        z = np.asarray(c.bands["elevation"], dtype="float64").ravel()
+        dz = np.where(reached, z[sel] - z[pred_flat], 0.0)
+        dz = np.where(np.isfinite(dz), dz, 0.0)
+        edges = []
+        if walking:
+            s = np.asarray(c.bands["slope"], dtype="float64").ravel()
+            slow = physics.walker_slope_slowdown(0.5 * (s[sel] + s[pred_flat]))
+            # (minetti_cw(g) + minetti_cw(-g)) / 2 is its even part; written out because evaluating the
+            # quintic on every pixel twice took longer than the whole path search
+            g2 = np.minimum((dz / np.maximum(run, 1e-6)) ** 2, 0.45 ** 2)
+            both = (-58.7 * g2 * g2 + 51.9 * g2 + 2.5) / physics.minetti_cw(0.0)
+            edges.append(cons["o2_rate_kg_per_h"] * 2 * seg_s * slow * both / 3600)
+        if "energy_capacity_kwh" in cons:
+            edges.append(np.where(reached, run, 0.0))
+            edges.append(np.abs(dz))
+        # Pointer jumping: sum each pixel's path back to base. The base points to itself with zero
+        # cost, so adding it again changes nothing.
+        acc, ptr = np.vstack(edges), pred
+        while sel.size:
+            acc += np.take(acc, ptr, axis=1)
+            nxt = np.take(ptr, ptr)
+            if np.array_equal(nxt, ptr):
+                break
+            ptr = nxt
+        full = np.full((len(edges), H * W), np.nan)
+        full[:, sel] = acc
+        acc = full.reshape(len(edges), H, W)
+        if walking:
+            amounts["oxygen"] = acc[0]
+            usable["oxygen"] = float(cons["o2_capacity_kg"]) * (1 - reserve)
+        if "energy_capacity_kwh" in cons:
+            kwh = cons["energy_idle_kw"] * rt_h + cons["energy_per_km_kwh"] * 2 * acc[-2] / 1000
+            if power.get("mass_kg"):                    # climbs out = descents back: lift over gain + loss
+                kwh = kwh + physics.climb_energy_kwh(power["mass_kg"], 1.0) * acc[-1]
+            amounts["energy"] = kwh
+            usable["energy"] = float(cons["energy_capacity_kwh"]) * (1 - reserve)
+    return t, amounts, usable, reserve
+
+
 @app.post("/api/plan")
 def plan(req: PlanRequest):
     c = get_cube(req.region)
@@ -552,20 +633,34 @@ def plan(req: PlanRequest):
             warnings.append(f"{name} is on terrain too steep for {v['label']} "
                             f"({c.bands['slope'][r, col]:.0f} deg > {v['max_slope']} deg).")
 
-    # Walk-back zone: places you can reach AND return from within the budget minus reserve
-    t_from_base = physics.travel_time_from(cost, [start], c.pixel_m)
+    # Walk-back zone: places you can reach AND return from within the time budget minus reserve AND
+    # the suit O2 / battery minus the consumables reserve (15 %, 20 % in dust season); tightest wins
     rated_hours = v.get("rated_hours") or math.inf
     budget_hours = min(req.budget_hours, rated_hours)
+    # O2 / energy are costed out to the time budget without its reserve, which bounds every zone
+    t_from_base, amounts, usable, cons_reserve = _walkback_round_trip(
+        c, v, req.vehicle, cost, start, req.ls, budget_hours * 3600)
     if req.budget_hours > rated_hours:
         warnings.append(f"Time budget capped at the {v['label']} rating of {rated_hours:g} h.")
     usable_s = budget_hours * 3600 * (1 - req.reserve)
-    walkback = np.where(2 * t_from_base <= usable_s, 1.0, np.nan)
-    walkback_t = np.where(np.isfinite(walkback), t_from_base / 60, np.nan)
+    with np.errstate(invalid="ignore"):
+        shares = {"time": 2 * t_from_base / usable_s, **{k: amounts[k] / usable[k] for k in amounts}}
+        fits = {k: np.isfinite(s) & (s <= 1.0) for k, s in shares.items()}
+    walkback = np.logical_and.reduce(list(fits.values()))
+    px_km2 = c.pixel_m[0] * c.pixel_m[1] / 1e6
+    areas = {k: round(float(f.sum()) * px_km2, 2) for k, f in fits.items()}
+    tightest = min(areas, key=lambda k: (areas[k], k != "time"))     # a tie goes to the time budget
+    used_pct = np.where(walkback, 100 * np.fmax.reduce(list(shares.values())), np.nan)
 
     path, seconds = physics.best_route(cost, start, goal, c.pixel_m)
     result = {"warnings": warnings, "sun": {"elevation": round(sun_e, 1), "azimuth": round(sun_az, 1)},
               "rect": c.rect,
-              "walkback_image": to_png(walkback_t, "YlGn_r", 0, usable_s / 120, alpha=0.45)}
+              "walkback_image": to_png(used_pct, "YlGn_r", 0, 100, alpha=0.45),
+              "walkback_basis": tightest,
+              "walkback_area_km2": {"zone": round(float(walkback.sum()) * px_km2, 2), **areas},
+              "walkback_reserve_pct": int(round(100 * cons_reserve)),
+              "walkback_o2_usable_kg": round(usable["oxygen"], 3) if "oxygen" in usable else None,
+              "walkback_energy_usable_kwh": round(usable["energy"], 2) if "energy" in usable else None}
     if path is None:
         result["route"] = None
         result["explanation"] = "No safe route exists under these limits. Try another vehicle, time, or target."
