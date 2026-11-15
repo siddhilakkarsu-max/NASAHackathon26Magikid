@@ -2,7 +2,9 @@
 
 Select **Play route** on a successful manual route or mission candidate. The vehicle follows the outbound path in compressed time, with its display size enlarged when zoomed out. Pause, resume, or replay from the map. The animation and model dimensions are for visualization.
 
-These original low-poly GLB files were modeled from the references below. The two walking profiles share the same suit. The mission scout bike, open rover, and pressurized buggy are illustrative concepts.
+These original low-poly GLB files were rebuilt against the rover reference pack and the mission references below. The supplied NASA renderings served as visual comparisons. The route assets retain their own articulated suit and wheel animations. The two walking profiles share the same suit. The mission scout bike, open rover, and pressurized buggy are illustrative concepts.
+
+The pack includes an ISS EVA photograph and a picture of the ExoMy educational rover. The corresponding route assets use NASA's xEMU prototype and ESA's Rosalind Franklin flight-rover imagery as their primary visual references.
 
 | Model | Visual reference |
 |---|---|
