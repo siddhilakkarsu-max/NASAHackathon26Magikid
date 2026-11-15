@@ -36,10 +36,19 @@ function routePlaybackPoint(path, distance, ellipsoid, result) {
   return ellipsoid.scaleToGeodeticSurface(result, result);
 }
 
+// Walker's view: the camera stands at an astronaut's eye height on the 3D terrain at five stops along the route
+// (start, quarter, half, three quarters, target), looking the way the route goes.
+const WALKER_STOPS = [0, 0.25, 0.5, 0.75, 1];
+const WALKER_STOP_NAMES = ["Start", "A quarter of the way", "Halfway", "Three quarters of the way", "Target"];
+const WALKER_EYE_M = 1.7;
+const WALKER_SKY = "#c9a27f";                    // butterscotch daytime sky, seen above the horizon
+
 function createRoutePlayback({ viewer, ellipsoid, controls }) {
   const { scene, camera } = viewer;
-  const { panel, button, status } = controls;
+  const { panel, button, status, walk, walkNav, walkPrev, walkNext, walkExit, walkStatus,
+          beforeWalk, afterWalk } = controls;
   let current = null;
+  let walker = null;                              // { route, stop, terrain, background }
   let frame = 0;
   const at = new Cesium.Cartesian3(), behind = new Cesium.Cartesian3(), ahead = new Cesium.Cartesian3();
   const up = new Cesium.Cartesian3(), forward = new Cesium.Cartesian3(), left = new Cesium.Cartesian3();
@@ -71,6 +80,16 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
 
   function updateControls() {
     panel.hidden = !current;
+    if (walk) {
+      walk.hidden = !current || !!walker;
+      walk.disabled = !current?.path;
+      walkNav.hidden = !walker;
+      if (walker) {
+        walkPrev.disabled = walker.stop === 0;
+        walkNext.disabled = walker.stop === WALKER_STOPS.length - 1;
+      }
+      if (!walker) walkStatus.textContent = "";
+    }
     if (!current) return;
     button.disabled = !current.ready && !current.failed;
     button.textContent = current.failed ? "Retry animation" : !current.ready ? "Loading animation…"
@@ -87,6 +106,7 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
 
   function clear(kind) {
     if (!current || (kind && kind !== current.kind)) return;
+    exitWalker(false);
     stop(current);
     if (current.model) scene.primitives.remove(current.model);
     current = null;
@@ -156,9 +176,93 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
     }
   }
 
+  async function groundHeight(carto) {
+    const terrain = walker?.terrain;
+    if (terrain?.provider) {
+      try {
+        const [sample] = await Cesium.sampleTerrain(terrain.provider, terrain.level, [Cesium.Cartographic.clone(carto)]);
+        if (Number.isFinite(sample?.height)) return sample.height;
+      } catch { /* fall back to what the globe has loaded */ }
+    }
+    const height = scene.globe.getHeight(carto);
+    return Number.isFinite(height) ? height : 0;
+  }
+
+  async function walkerTo(stop) {
+    const route = current;
+    if (!walker || !route?.path) return;
+    walker.stop = stop;
+    updateControls();
+    const { path } = route;
+    const distance = WALKER_STOPS[stop] * path.length;
+    const look = Math.max(5, Math.min(150, path.length * 0.1));
+    const at = routePlaybackPoint(path, distance, ellipsoid, new Cesium.Cartesian3());
+    let ahead = routePlaybackPoint(path, distance + look, ellipsoid, new Cesium.Cartesian3());
+    if (distance + look > path.length) {         // at the target: keep facing the way we arrived
+      const behind = routePlaybackPoint(path, distance - look, ellipsoid, new Cesium.Cartesian3());
+      ahead = Cesium.Cartesian3.add(at, Cesium.Cartesian3.subtract(at, behind, new Cesium.Cartesian3()), ahead);
+    }
+    const toLocal = Cesium.Matrix4.inverseTransformation(
+      Cesium.Transforms.eastNorthUpToFixedFrame(at, ellipsoid), new Cesium.Matrix4());
+    const local = Cesium.Matrix4.multiplyByPoint(toLocal, ahead, new Cesium.Cartesian3());
+    const heading = Math.atan2(local.x, local.y);
+    const carto = ellipsoid.cartesianToCartographic(at);
+    const ground = await groundHeight(carto);
+    if (!walker || current !== route || walker.stop !== stop) return;
+    const exaggeration = scene.verticalExaggeration || 1;
+    camera.flyTo({
+      destination: Cesium.Cartesian3.fromRadians(carto.longitude, carto.latitude,
+        ground * exaggeration + WALKER_EYE_M, ellipsoid),
+      orientation: { heading, pitch: Cesium.Math.toRadians(-4), roll: 0 },
+      duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.6,
+    });
+    walkStatus.textContent = `Walker's view ${stop + 1}/${WALKER_STOPS.length}: ${WALKER_STOP_NAMES[stop]} ` +
+      `(${(distance / 1000).toFixed(2)} km along), eye height ${WALKER_EYE_M} m. Ground from 200 m NASA ` +
+      "elevation data, so boulders are not shown. Shift-drag to look around.";
+  }
+
+  async function enterWalker() {
+    const route = current;
+    if (!route?.path || walker) return;
+    stop(route);
+    walker = { route, stop: 0, terrain: null, background: scene.backgroundColor.clone() };
+    if (route.model) route.model.show = false;    // don't stand inside the animated model
+    scene.backgroundColor = Cesium.Color.fromCssColorString(WALKER_SKY);
+    walkStatus.textContent = "Loading the 3D ground…";
+    updateControls();
+    try { walker.terrain = await beforeWalk?.(); } catch { walker && (walker.terrain = null); }
+    if (walker?.route === route) walkerTo(0);
+  }
+
+  function exitWalker(flyBack = true) {
+    if (!walker) return;
+    const { route, background } = walker;
+    walker = null;
+    scene.backgroundColor = background;
+    if (route.model) route.model.show = true;
+    afterWalk?.();
+    if (flyBack && route === current) {
+      const range = Cesium.Math.clamp(route.path.bounds.radius * 3.2, 320, 80000);
+      camera.flyToBoundingSphere(route.path.bounds, {
+        offset: new Cesium.HeadingPitchRange(Cesium.Math.toRadians(-20), Cesium.Math.toRadians(-55), range),
+        duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.2,
+      });
+    }
+    updateControls();
+    scene.requestRender();
+  }
+
+  if (walk) {
+    walk.addEventListener("click", enterWalker);
+    walkPrev.addEventListener("click", () => walker && walkerTo(Math.max(0, walker.stop - 1)));
+    walkNext.addEventListener("click", () => walker && walkerTo(Math.min(WALKER_STOPS.length - 1, walker.stop + 1)));
+    walkExit.addEventListener("click", () => exitWalker(true));
+  }
+
   button.addEventListener("click", () => {
     const route = current;
     if (!route) return;
+    if (walker) exitWalker(false);
     if (route.failed) { load(route); return; }
     if (!route.ready) return;
     if (route.playing) {
@@ -191,5 +295,6 @@ function createRoutePlayback({ viewer, ellipsoid, controls }) {
       load(current);
     },
     clear,
+    walking: () => !!walker,
   };
 }
