@@ -29,6 +29,15 @@ import urllib.request
 import numpy as np
 from scipy.ndimage import distance_transform_edt, uniform_filter
 
+try:                                     # Claude via the Anthropic API, used when ANTHROPIC_API_KEY is set
+    import claude_ai
+except ImportError:                      # the anthropic package isn't installed: OpenRouter / local model only
+    claude_ai = None
+
+
+def _use_claude():
+    return claude_ai is not None and claude_ai.enabled()
+
 from config import MARS_RADIUS_M, MINERALS
 
 DEG_M = math.pi / 180 * MARS_RADIUS_M      # meters per degree of latitude
@@ -576,7 +585,7 @@ AI_REASONING = os.environ.get("AI_REASONING", "low")   # thinking effort when th
 AI_THINK_SECONDS = float(os.environ.get("AI_THINK_SECONDS", "15"))
 # A local model server (Ollama) answers one request at a time; queueing here lets each page say how many requests
 # are ahead of it instead of looking stuck. AI_PARALLEL raises the limit for a cloud provider.
-AI_PARALLEL = int(os.environ.get("AI_PARALLEL", "1"))
+AI_PARALLEL = int(os.environ.get("AI_PARALLEL", "8" if _use_claude() else "1"))
 _ai_slots = threading.Semaphore(AI_PARALLEL)
 _ai_queue = [0]                                      # requests waiting for a slot
 _ai_queue_lock = threading.Lock()
@@ -656,6 +665,19 @@ def ai_parse(query):
     key = query.strip().lower()
     if key in _llm_cache:
         return _llm_cache[key], None
+    if _use_claude():
+        try:
+            if not _ai_slots.acquire(timeout=120):
+                return None, "the AI model is busy with other requests"
+            try:
+                text, model = claude_ai.write(_parse_messages(query), _llm_schema())
+            finally:
+                _ai_slots.release()
+            spec = _spec_from_text(text, model)
+        except (claude_ai.anthropic.APIError, ValueError) as e:
+            return None, str(e)
+        _llm_cache[key] = spec
+        return spec, None
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         return None, _no_key()
@@ -686,7 +708,17 @@ def ai_parse(query):
 
 
 def ai_write(system, user, max_tokens=600):
-    """Free text from the same AI model as ai_parse (OpenRouter or a local server); None if unavailable."""
+    """Free text from the same AI model as ai_parse (Claude, OpenRouter or a local server); None if unavailable."""
+    if _use_claude():
+        if not _ai_slots.acquire(timeout=120):
+            return None
+        try:
+            return claude_ai.write([{"role": "system", "content": system}, {"role": "user", "content": user}],
+                                   max_tokens=max_tokens)[0] or None
+        except (claude_ai.anthropic.APIError, ValueError):
+            return None
+        finally:
+            _ai_slots.release()
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         return None
@@ -707,8 +739,9 @@ def ai_stream(messages, response_format=None, max_tokens=4000, reasoning=None, t
     ("error", reason) if it fails. Thinking is cut off after think_seconds (default AI_THINK_SECONDS) without an
     answer; the answer is then asked for without thinking. Closing the generator (the page went away) closes the
     connection, which stops the model."""
+    use_claude = _use_claude()
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
+    if not api_key and not use_claude:
         yield ("error", _no_key())
         return
     if not _slot:
@@ -718,6 +751,12 @@ def ai_stream(messages, response_format=None, max_tokens=4000, reasoning=None, t
             yield from ai_stream(messages, response_format, max_tokens, reasoning, think_seconds, _slot=True)
         finally:
             _ai_slots.release()
+        return
+    if use_claude:                          # Claude: summarized thinking streamed, JSON schema via output_config
+        schema = ((response_format or {}).get("json_schema") or {}).get("schema")
+        think = (reasoning or AI_REASONING) != "none"
+        yield from claude_ai.stream(messages, schema, max_tokens, think,
+                                    AI_THINK_SECONDS if think_seconds is None else think_seconds)
         return
     models = free_models()
     effort = reasoning or AI_REASONING
