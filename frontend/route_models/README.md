@@ -8,6 +8,8 @@ The pack includes an ISS EVA photograph and a picture of the ExoMy educational r
 
 The 60-round model gauntlet raises these assets to mid-poly route detail: 24x16 spheres, 24-sided cylinders, 32-segment tires, denser treads, panel seams, fasteners, cable runs, camera bezels, drill teeth, harnesses, and rack crossbars. Metal and foil use restrained metallic response, solar cells receive a very small blue emissive lift, and glass/visors use lower roughness so close views remain readable under Cesium lighting. The review log is generated at `outputs/marswalk-model-gauntlet-60.html`.
 
+The latest detail review removes the overextended Sojourner side rails and loose canopy pieces, keeps its nuts flush to the chassis, and adds Perseverance avionics modules with mast camera and deck harness wires.
+
 | Model | Visual reference |
 |---|---|
 | Suited astronaut | [NASA xEMU prototype](https://www.nasa.gov/image-article/new-spacesuit-artemis-generation-astronauts/) |

@@ -525,6 +525,22 @@ def msl_rover(name, reference):
     rover_strut(asset, "Arm service cable", (start[0] + .06, start[1] + .10, start[2] + .08),
                 (elbow[0] + .04, elbow[1] + .08, elbow[2] + .04), .024, "gold")
     p("Front sensor bezel", "cylinder", "dark", (-.38, .93, 1.335), (.235, .035, .235), angle=math.pi / 2)
+    if not is_msl:
+        # Perseverance's reference silhouette carries visible avionics boxes and
+        # bundled camera wiring around the mast and deck.
+        p("Front avionics module", "beveled_box", "white", (-.60, 1.30, .68), (.38, .24, .44))
+        p("Rear avionics module", "beveled_box", "foil", (.58, 1.31, -.64), (.42, .25, .48))
+        p("Navigation electronics canister", "cylinder", "metal", (.37, 1.38, .72), (.16, .24, .16))
+        detail_bolt_ring(asset, (-.60, 1.42, .68), .10, count=8, bolt=.024, color="metal",
+                         name="Front module fastener")
+        detail_bolt_ring(asset, (.58, 1.43, -.64), .11, count=8, bolt=.024, color="gold",
+                         name="Rear module fastener")
+        for side in (-1, 1):
+            rover_strut(asset, "Mast camera data wire", (x + side * .15, 2.16, z + .13),
+                        (x + side * .15, 1.37, z + .13), .018, "gold")
+            rover_strut(asset, "Mast service wire", (x + side * .23, 2.19, z + .04),
+                        (x + side * .31, 1.72, z + .04), .014, "dark")
+        rover_strut(asset, "Deck harness bundle", (.54, 1.35, -.50), (.55, 1.30, .62), .025, "gold")
     return asset
 
 
@@ -642,6 +658,15 @@ def light_rover_suspension(asset, width, length, radius, hub, striped=False):
                         radius * .29, "metal")
             asset.part("Steering motor", "cylinder", "dark", motor,
                        (radius * .43, radius * .35, radius * .43))
+            asset.part("Drive gearbox", "cylinder", "metal", (motor[0] - side * .035, motor[1], motor[2]),
+                       (radius * .34, radius * .08, radius * .34), angle=math.pi / 2, axis=(0, 0, 1))
+            for tooth in range(8):
+                tooth_angle = math.tau * tooth / 8
+                asset.part("Drive gear tooth", "box", "gold",
+                           (motor[0] - side * .055,
+                            motor[1] + radius * .19 * math.cos(tooth_angle),
+                            motor[2] + radius * .19 * math.sin(tooth_angle)),
+                           (radius * .12, radius * .045, radius * .07), angle=tooth_angle)
             if striped:
                 for step in range(6):
                     angle = step * math.tau / 6
@@ -668,22 +693,17 @@ def sojourner_body(asset, width, length, r, hub):
         p("Camera lens", "sphere", "black", (side * .104, .173, .312), (.019, .019, .010))
     rover_strut(asset, "Front crossbar", (-.177, .085, .309), (.177, .085, .309), .016, "white")
     antenna = (-.16, .214, -.26)
-    elbow = (-.16, .349, -.26)
-    stem = (-.166, .390, -.277)
+    elbow = (-.16, .307, -.26)
+    stem = (-.166, .342, -.277)
     rover_strut(asset, "Antenna stalk", antenna, elbow, .015, "metal")
     rover_strut(asset, "Antenna bend", elbow, stem, .014, "metal")
-    rover_strut(asset, "Antenna whip", stem, (-.166, .535, -.277), .010, "metal")
-    # The real Sojourner reads as a solar-panel box on a very open rocker
-    # suspension. Add the panel perimeter, harness clamps, and visible fasteners
-    # without changing its compact route footprint.
-    for side in (-1, 1):
-        rover_strut(asset, "Canopy edge rail", (side * width * .57, .222, -.55),
-                    (side * width * .57, .222, .53), .018, "metal")
-        p("Canopy harness clamp", "sphere", "gold", (side * .17, .235, -.27), (.026, .026, .026))
-    for px, pz in ((-.19, -.48), (.19, -.48), (-.19, .46), (.19, .46)):
-        p("Solar canopy fastener", "sphere", "metal", (px, .238, pz), (.028, .024, .028))
-    detail_bolt_ring(asset, (0, .14, 0), .22, count=8, bolt=.022, color="metal",
-                     name="Sojourner chassis fastener")
+    rover_strut(asset, "Antenna whip", stem, (-.166, .428, -.277), .010, "metal")
+    # Keep the compact panel perimeter from the reference. The earlier pass
+    # added long rails and loose spherical clamps that read as floating parts.
+    for px, pz in ((-.18, -.28), (.18, -.28), (-.18, .28), (.18, .28)):
+        p("Solar canopy fastener", "cylinder", "metal", (px, .224, pz), (.038, .018, .038), angle=math.pi / 2)
+    for side, pz in ((-1, -.15), (1, -.15), (-1, .18), (1, .18)):
+        p("Sojourner chassis nut", "box", "metal", (side * .34, .171, pz), (.042, .030, .042))
 
 
 def zhurong_body(asset, width, length, r, hub):
