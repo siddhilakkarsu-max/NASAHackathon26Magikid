@@ -85,9 +85,9 @@ Datasets in the Jezero cube (all fetched automatically by `build_cube.py`; downl
   >600 bedrock (log scale, 150 → 0 ... 600 → 1), plus local THEMIS night-IR detail; night IR alone where TI is missing.
 - **Mission suitability** layer = 0.45 × safety (slope + firmness) + 0.35 × science (CRISM detections)
   + 0.20 × radiation shielding (`suitability()` in `app.py`).
-- **Sharp imagery (5 m)**: the global CTX mosaic (Murray Lab, Caltech), coloured with the Viking colour mosaic
-  by `/ctxtiles`, loads inside the selected region or any box you draw ("Box a sharp area"); "Pre-load box"
-  caches the tiles before a demo. Clicking outside every cube does a live global lookup (`/api/point`).
+- **Sharp imagery (5 m)**: the Murray Lab black-and-white CTX mosaic (Caltech; Esri OnMars tiles) loads inside the
+  selected region or any box you draw ("Box a sharp area"), above every background map. Clicking outside every
+  cube does a live global lookup (`/api/point`).
 - **Murray Lab maps** (panel section, all off by default): every map from the
   [Murray Lab CTX viewer](https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html) -
   CTX 5 m mosaic, MOLA colour topography and Viking MDIM tiles (straight from Esri's OnMars services),
