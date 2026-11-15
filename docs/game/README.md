@@ -24,8 +24,9 @@ Pick a mission (or plan one), read the briefing, choose route #1, #2 or #3 and a
 
 | Key | Action |
 |---|---|
-| W / S | Walk or drive forward / back along your view. Follow the glowing chevron line |
-| A / D | Strafe |
+| W / S | On foot: walk forward / back along your view. In a vehicle: accelerate / brake and reverse. Follow the chevron line |
+| A / D | Strafe on foot. In a vehicle: steer (arrow keys steer too) |
+| V | Step off the bike or open rover, or mount it again from within 7 m (E beside it also mounts) |
 | Mouse (click the view first) or left / right arrows | Look around. Touch: drag the view |
 | Shift | Careful pace: slower, no scree strikes, spots soft sand nearby |
 | E / Enter | Interact (start site work at a sampling spot, rock free of sand, mini-game action) |
@@ -43,6 +44,16 @@ What you see: the planned route is a chevron line on the ground, coloured by the
 with faint dashed lines at the corridor edges. Light pillars mark A (blue), B (orange), sampling spots (cyan),
 shelters (white) and the turn-back point (red). Off-limits ground is hatched red. The pill under the clock shows
 your heading and an arrow to the next point on the route.
+
+Vehicles handle like vehicles. They build up speed and coast, steering only bites while rolling and flips in
+reverse, loose ground gives less grip, and the cockpit stays fixed to the vehicle while you look around with the
+mouse. On the bike and the open rover, V steps you off: the vehicle stays parked where you left it as a model in
+the world (blue ring and label), you walk at on-foot speed and oxygen rate, and the vehicle draws only its hotel
+load. Sampling is done on foot, so starting site work steps you off automatically. The pressurised rover is
+sampled from inside. The autopilot never dismounts.
+
+The planner's sampling spots can all lie 100 to 600 m from B. The game places the nearest one on B itself, so
+there is always a sample to take where the route ends.
 
 The HUD is drawn as augmented reality inside the helmet: the rim of the helmet frames the view, and the panels
 (vitals left, clock and heading top, map right, radio lower left, tool belt bottom) are stacked so they do not
@@ -220,5 +231,8 @@ mission's science raster bounds. Images without valid geographic bounds use the 
   for that. Rover tracks and backup routes are drawn as ground lines only.
 - The 3D view was checked in headless Chrome only: not on a phone, and mouse capture was not exercised by hand.
 - The hop is visual only: it does not clear obstacles or change the simulation.
+- Vehicle handling is a feel model (momentum, speed-dependent steering, grip from firmness), not vehicle dynamics.
+  Top speed, energy and oxygen still come from the planner's numbers. Returning to A on foot without the
+  vehicle still counts as a success.
 - Models (lander, science station, rover, bike, cabin, gloves) are built from flat-shaded boxes, beams and
   cylinders in code; they are recognisable, not detailed.

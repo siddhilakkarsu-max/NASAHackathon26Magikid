@@ -6,6 +6,34 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-15, game: vehicle handling, dismounting and a sample at B
+
+Branch `feat/Gk`.
+
+### Changed
+
+- **Vehicles drive like vehicles** (`frontend/game.html`). W accelerates, S brakes and reverses, A / D steer; the
+  vehicle carries momentum, steering needs speed, loose ground gives less grip, and the cockpit stays fixed to the
+  vehicle while the mouse looks around.
+- **Dismount and mount** with V on the bike and the open rover. The parked vehicle is a model in the world; on
+  foot the crew moves and breathes at walking rates and the vehicle draws only its hotel load. Site work steps the
+  crew off automatically.
+
+### Fixed
+
+- **Nothing to sample at B.** On several plans every sampling spot lay 110 to 640 m from B, so pressing E at the
+  B marker did nothing. The nearest spot is now placed on B.
+
+### Verification
+
+- Headless Chrome: drive, steer, reverse, dismount, "too far to mount", remount and sampling at B on the open
+  rover; bike and pressurised rover load without errors; autopilot completes all 14 baked routes.
+- 1 test (166 total).
+
+### Limits
+
+- Handling is a feel model, not vehicle dynamics. Not driven by hand with a real mouse and keyboard.
+
 ## [Unreleased] - 2026-11-15, the game goes first-person 3D
 
 Branch `feat/Gk`.
