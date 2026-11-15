@@ -175,11 +175,11 @@ SEARCH_ZONES = {"jezero": _JEZERO_ZONES, "jezero_hirise": _JEZERO_ZONES}
 # always be traced back. Anything tagged "estimate" is NOT a published NASA figure.
 # ---------------------------------------------------------------------------
 CONSUMABLE_SOURCES = {
-    "suit_o2": "O2 rate 0.085 kg/h: NASA ALS Baseline Values & Assumptions (JSC-47804) gives "
-               "0.076 kg/h for a closed-loop PLSS; the X-Hab PLSS model uses a 350 W baseline "
-               "metabolic rate at ~20 kJ per litre of O2, i.e. ~0.084 kg/h. Capacity 0.68 kg is "
-               "the xEMU's 8 h design endurance at that rate, less than the 1 h contingency "
-               "reserve the planner holds back.",
+    "suit_o2": "NASA's Mars suit design basis (SBIR topic EVA.2.S26B, 2026): oxygen supply sized for "
+               "1.9 g/min averaged over 8 h, i.e. 0.114 kg/h and 0.912 kg carried. That is a sizing "
+               "average for a whole EVA. On a planned route the rate is adjusted for slope (Minetti "
+               "et al. 2002) and for carried load. For comparison NASA's baseline document gives "
+               "0.076 kg/h for current EVAs and Apollo walk-back ran at 0.181 kg/h.",
     "mmrtg_energy": "Capacity 2.5 kWh: MSL's MMRTG delivers ~110 W electrical, 2.5-2.7 kWh per "
                     "sol (NASA/JPL). Loads: at least 150 W whenever the rover is awake, up to "
                     "500 W while driving (JPL), which at the 0.15 km/h this profile assumes is "
@@ -204,7 +204,34 @@ CONSUMABLE_SOURCES = {
 }
 
 # The astronaut's suit oxygen. Shared by every traveller whose crew breathes from suits.
-_SUIT_O2_SUPPLY = dict(o2_rate_kg_per_h=0.085, o2_capacity_kg=0.68)
+_SUIT_O2_SUPPLY = dict(o2_rate_kg_per_h=0.114, o2_capacity_kg=0.912)
+
+# Who is walking: used to charge carried load in proportion to the mass moved.
+# suit_kg: NASA's 230 lbm starting maximum for a Mars suit (ICES-2026-127). body_kg: an assumption.
+WALKER = dict(body_kg=80.0, suit_kg=104.0)
+
+# Contingency held back from O2 and battery on every route: 15 %, raised to 20 % in the dust-storm
+# season (Ls 180-330). From the team's resource research (Gia): "15-20 % dust-storm/obstacle contingency".
+CONSUMABLE_RESERVE = dict(normal=0.15, dust_season=0.20, dust_season_ls=(180.0, 330.0))
+
+# Power source and mass per planner vehicle, for climbing energy and dust on solar panels.
+#   source: nuclear (dust does not matter), solar, battery (recharged), primary (non-rechargeable)
+#   sol_kwh: published array output per sol in clear conditions, where one exists
+#   recharge_ratio: hours of charging per hour of driving (team research, Gia), used only where
+#                   no published array figure exists
+VEHICLE_POWER = {
+    "pressurized_rover": dict(source="battery", mass_kg=4000.0, recharge_ratio=2.0,
+                              note="SEV concept: cabin 3,000 kg + chassis 1,000 kg. Recharge ratio 2:1 is the "
+                                   "team's resource research figure, not a NASA one."),
+    "unpressurized_rover": dict(source="primary", mass_kg=210.0,
+                                note="Apollo LRV mass; its silver-zinc batteries were not rechargeable."),
+    "small_rover": dict(source="nuclear", mass_kg=899.0, note="Curiosity, MMRTG."),
+    "perseverance": dict(source="nuclear", mass_kg=1025.0, note="Perseverance, MMRTG."),
+    "sojourner": dict(source="solar", mass_kg=11.5, note="13-15 W array; output per sol not published."),
+    "mer": dict(source="solar", mass_kg=185.0, sol_kwh=0.9, note="About 900 Wh per sol early in the mission."),
+    "zhurong": dict(source="solar", mass_kg=240.0, note="Array output not published."),
+    "rosalind_franklin": dict(source="solar", mass_kg=310.0, sol_kwh=1.2, note="About 1,200 Wh per sol (ESA)."),
+}
 
 # Vehicle / walker profiles. Weights are tunable during the demo.
 VEHICLES = {

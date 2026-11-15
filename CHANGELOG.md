@@ -3,6 +3,49 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-14, terrain, load and battery realism
+
+From the team's resource research (Gia's section of the planning doc).
+
+### Changed
+
+- **Suit oxygen now uses NASA's Mars design basis:** 0.114 kg/h and 0.912 kg carried (1.9 g/min over 8 h,
+  SBIR topic EVA.2.S26B), replacing 0.085 kg/h and 0.68 kg. Rate and capacity rose together, so the suit still
+  lasts 8 h and the mission planner's percentages, turnaround times and rankings are unchanged.
+- `physics.endurance()` is removed; `consumables_block()` in `app.py` costs the planned route directly.
+- `max_range_km` now uses what is usable after the reserve, at the route's terrain.
+
+### Added
+
+- **Oxygen follows the terrain.** The return leg walks the route in reverse, and effort per metre follows
+  Minetti et al. 2002, so a climb out costs more than the descent back saves. New stats: `slope_o2_factor`,
+  `terrain_o2_factor`, `o2_flat_kg`, `o2_flat_pace_h`, `elevation_gain_m`, `elevation_loss_m`.
+- **Weight counts.** `physics.load_factor()` charges carried mass in proportion to body + suit + load. The gear
+  budget applies the kit's hand-carried load to the route's oxygen and warns if it eats into the reserve.
+- **Vehicles pay for climbing:** `climb_kwh`, the energy to lift the vehicle (m g h), a lower bound.
+- **Reserve:** 15 % of every supply held back, 20 % in the dust-storm season (Ls 180-330), with warnings when a
+  route cuts into it. `o2_usable_kg`, `energy_usable_kwh`, `reserve_pct`.
+- **Dust and sunlight:** dust opacity from the team's weather data at the route, turned into the share of a
+  sol's direct sunlight on a panel, as in the temperature model. `sunlight_pct`, `dust_opacity`,
+  `solar_kwh_per_sol`, `recharge_sols` for solar rovers, `recharge_h` for the crew rover (2:1 charge-to-drive),
+  and a warning when dust blocks most of the light. Nuclear rovers are unaffected. `power_source` says which.
+- `VEHICLE_POWER`, `WALKER` and `CONSUMABLE_RESERVE` in `config.py`.
+- 9 tests (50 total).
+
+### Measured, landing site to the western delta (4.8 km, climbs 141 m)
+
+| | Ls 90 | Ls 250 (dust season) |
+|---|---|---|
+| Astronaut O2 | 0.76 of 0.91 kg, fits after the 15 % reserve | same 0.76 kg, but only 0.73 usable after 20 % |
+| Crew rover | 5.35 kWh incl. 0.62 kWh climbing; 7 h to recharge | same energy; 38 h to recharge at 13 % sunlight |
+| Perseverance | unaffected by dust (nuclear) | unaffected |
+
+### Limits
+
+- Minetti measured unsuited people in Earth gravity; only the ratio to flat ground is used.
+- Body mass (80 kg) is an assumption; the reserve and 2:1 recharge ratio are team research figures, not NASA ones.
+- Sunlight counts direct light only, so dust effects are the pessimistic end.
+
 ## [Unreleased] - 2026-11-14, more vehicles
 
 ### Added

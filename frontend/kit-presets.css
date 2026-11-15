@@ -1,0 +1,10 @@
+/* Scenario strip at the top of the gear page rail (kit-presets.js). */
+.presets { padding-bottom: 16px; margin-bottom: 18px; border-bottom: 1px solid var(--line); }
+.preset-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.preset-list button { background: none; border: 1px solid var(--line-2); border-radius: 2px; padding: 3px 9px; color: var(--text-2);
+  cursor: pointer; font-size: 12.5px; line-height: 1.5; text-align: left; }
+.preset-list button:hover { color: var(--text); border-color: var(--text-3); }
+.preset-list button[aria-pressed="true"] { border-color: var(--rust); background: var(--rust-soft); color: var(--text); }
+.preset-caption { margin: 10px 0 0; padding: 1px 0 1px 9px; border-left: 2px solid var(--rust); font-size: 12px; line-height: 1.45; color: var(--text-2); }
+.rail.readonly .presets { opacity: 0.4; pointer-events: none; }
+@media print { .presets { display: none; } }

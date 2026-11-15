@@ -107,43 +107,121 @@ def best_route(cost, start, goal, pixel_m):
 
 
 # ------------------------------------------------------- consumables ----
-def endurance(v, seconds, distance_m):
-    """What ONE leg costs in O2 / energy, and how far a full load would take this traveller.
+# Round-trip O2 / energy for a planned route is costed in app.consumables_block() with the helpers below.
 
-    Both consumables scale with time as well as distance, which is what makes a rocky detour
-    automatically expensive: cost_seconds_per_meter() already made that ground slower, so the
-    same detour costs more breathing time and more idle power without a second terrain term.
+# ------------------------------------------------- terrain, load, sun ----
+MARS_G = 3.711           # m/s2
 
-    seconds/distance_m describe the leg actually planned. Returns the leg's amounts (the round
-    trip is twice), the per-consumable time limits at this pace, and max_range_km = the furthest
-    one-way distance that can still be walked out AND back on a full load at this route's speed.
-    """
-    c = v.get("consumables") or {}
-    hours = max(float(seconds), 0.0) / 3600.0
-    km = max(float(distance_m), 0.0) / 1000.0
-    avg_kmh = km / hours if hours > 1e-9 else 0.0     # pace of this route, not the vehicle's top speed
 
-    o2_kg = o2_cap = None
-    energy_kwh = energy_cap = None
-    limits = {}
-    if "o2_rate_kg_per_h" in c:
-        o2_kg = c["o2_rate_kg_per_h"] * hours
-        o2_cap = float(c["o2_capacity_kg"])
-        limits["oxygen"] = o2_cap / c["o2_rate_kg_per_h"]
-    if "energy_capacity_kwh" in c:
-        kw = c["energy_idle_kw"] + c["energy_per_km_kwh"] * avg_kmh   # load at this pace
-        energy_kwh = kw * hours
-        energy_cap = float(c["energy_capacity_kwh"])
-        limits["energy"] = energy_cap / kw if kw > 1e-9 else math.inf
-    if v.get("rated_hours"):
-        limits["rated"] = float(v["rated_hours"])
+def minetti_cw(grade):
+    """Metabolic cost of walking (J per kg per m) on a signed grade (rise/run), Minetti et al. 2002,
+    J Appl Physiol 93:1039. Fitted for -0.45..+0.45, so the grade is clipped to that range."""
+    i = np.clip(np.asarray(grade, dtype="float64"), -0.45, 0.45)
+    return 280.5 * i**5 - 58.7 * i**4 - 76.8 * i**3 + 51.9 * i**2 + 19.6 * i + 2.5
 
-    limiting = min(limits, key=limits.get) if limits else None
-    endurance_h = limits[limiting] if limiting else 0.0
-    return {"o2_kg": o2_kg, "o2_capacity_kg": o2_cap,
-            "energy_kwh": energy_kwh, "energy_capacity_kwh": energy_cap,
-            "limits_hours": limits, "limiting": limiting, "endurance_h": endurance_h,
-            "avg_speed_kmh": avg_kmh, "max_range_km": 0.5 * endurance_h * avg_kmh}
+
+def walker_slope_slowdown(slope_deg):
+    """The share of flat-ground speed speed_kmh() gives a walker on this slope (Tobler, as used there)."""
+    s = np.nan_to_num(np.asarray(slope_deg, dtype="float64"), nan=0.0)
+    return np.exp(-3.5 * np.abs(np.tan(np.radians(s)) + 0.05)) / math.exp(-3.5 * 0.05)
+
+
+def route_profile(elevation, path, cost, pixel_m, slope=None):
+    """Along-route grades and the time spent on each segment, for terrain-aware consumables.
+
+    elevation: cube band (m). path: list of (row, col) from best_route. cost: s/m grid used to plan it.
+    slope: the cube's slope band, so the planner's slope slowdown can be separated from sand and rock.
+    Returns per-segment arrays and the climb and descent of the outbound leg."""
+    rc = np.asarray(path)
+    if len(rc) < 2:
+        return None
+    rr, cc = rc[:, 0], rc[:, 1]
+    dy = np.diff(rr) * pixel_m[0]
+    dx = np.diff(cc) * pixel_m[1]
+    run = np.maximum(np.hypot(dx, dy), 1e-6)
+    z = np.asarray(elevation, dtype="float64")[rr, cc]
+    z = np.where(np.isfinite(z), z, np.nanmean(z))
+    dz = np.diff(z)
+    k = np.asarray(cost, dtype="float64")[rr, cc]
+    k = np.where(np.isfinite(k), k, np.nanmax(np.where(np.isfinite(k), k, 0)))
+    seg_s = 0.5 * (k[:-1] + k[1:]) * run
+    out = {"grade": dz / run, "seg_s": seg_s, "seg_m": run,
+           "gain_m": float(dz[dz > 0].sum()), "loss_m": float(-dz[dz < 0].sum())}
+    if slope is not None:
+        s = np.asarray(slope, dtype="float64")[rr, cc]
+        out["slope_deg"] = 0.5 * (s[:-1] + s[1:])
+    return out
+
+
+def round_trip_walk(profile):
+    """Oxygen effort of walking the route out and back, against walking the same ground if it were flat.
+
+    The planner's time on each segment already includes a slowdown for slope. That slowdown is taken
+    back out, keeping the slowdown for sand and rock, which gives the time the segment would take at
+    flat-ground pace. Minetti's cost per metre then charges the climb on the way out and the descent on
+    the way back. Minetti measured unsuited people in Earth gravity, so only the ratio to flat ground is
+    used, not the absolute energy.
+
+    Returns slope_factor (1.0 = as costly as flat ground) and flat_pace_share (flat-pace time / planner
+    time, so oxygen = rate x planner hours x flat_pace_share x slope_factor)."""
+    if not profile:
+        return {"slope_factor": 1.0, "flat_pace_share": 1.0}
+    seg_s = profile["seg_s"]
+    slow = walker_slope_slowdown(profile["slope_deg"]) if "slope_deg" in profile else 1.0
+    w = seg_s * slow                                   # seconds at flat-ground pace, sand and rock kept
+    g = profile["grade"]
+    both = (minetti_cw(g) + minetti_cw(-g)) / (2 * minetti_cw(0.0))
+    total_w = max(float(np.sum(w)), 1e-9)
+    return {"slope_factor": float(np.sum(w * both) / total_w),
+            "flat_pace_share": float(total_w / max(float(np.sum(seg_s)), 1e-9))}
+
+
+def load_factor(carried_kg, body_kg, suit_kg):
+    """Walking cost scales with the mass moved: Minetti's cost is per kilogram, so carried tools and
+    samples are charged in proportion to body + suit + load."""
+    base = max(float(body_kg) + float(suit_kg), 1e-6)
+    return (base + max(float(carried_kg), 0.0)) / base
+
+
+def climb_energy_kwh(mass_kg, climb_m):
+    """Energy to lift a vehicle up a climb (m g h). A lower bound: drivetrain losses would add to it."""
+    return float(mass_kg) * MARS_G * max(float(climb_m), 0.0) / 3.6e6
+
+
+def dust_opacity(lat, lon, ls):
+    """Daily mean visible dust opacity at the surface from Jason's weather grids (mars_weather),
+    looked up the same way surface_temperature.solve_temperature does. None if the data is missing."""
+    try:
+        from mars_weather import visible_dust_grid
+        dust = visible_dust_grid(ls)
+    except Exception:
+        return None
+    ny, nx = dust.shape
+    y = float(np.clip((87.5 - lat) / 5, 0, ny - 1))
+    x = ((lon + 180) % 360) / 5
+    y0, x0 = int(y), int(x) % nx
+    y1, x1 = min(y0 + 1, ny - 1), (x0 + 1) % nx
+    fy, fx = y - int(y), x - int(x)
+    north = dust[y0, x0] * (1 - fx) + dust[y0, x1] * fx
+    south = dust[y1, x0] * (1 - fx) + dust[y1, x1] * fx
+    return float(north * (1 - fy) + south * fy)
+
+
+def daily_sunlight_fraction(lat, ls, opacity):
+    """Share of a sol's sunlight on a flat panel that gets through the dust.
+
+    Uses the same direct-beam attenuation as the team's temperature model, exp(-tau / cos z),
+    integrated over the sol. Diffuse skylight is ignored, so this is the pessimistic end."""
+    if opacity is None:
+        return None
+    hours = np.arange(0.0, 24.0, 0.25)
+    mu = np.array([math.sin(math.radians(sun_position(lat, h, ls)[0])) for h in hours])
+    up = mu > 0
+    if not up.any():
+        return 0.0
+    clear = mu[up].sum()
+    dusty = (mu[up] * np.exp(-opacity / np.maximum(mu[up], 0.05))).sum()
+    return float(dusty / clear)
 
 
 def shelter_seeds(slope, passable, steep_deg=22.0, extra=()):
