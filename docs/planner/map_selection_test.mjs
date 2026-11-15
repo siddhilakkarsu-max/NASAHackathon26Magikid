@@ -144,7 +144,9 @@ try {
   await page.close();
   const lateTerrainPage = page = await open();
   let releaseTerrain, terrainSeen = false;
-  await lateTerrainPage.route(url => /^\/murray\/elevation\/?$/.test(url.pathname), async route => {
+  const terrainMetadataPath = await lateTerrainPage.evaluate(() =>
+    new URL(murray.defs.find(def => def.id === 'terrain').url, location.href).pathname.replace(/\/$/, ''));
+  await lateTerrainPage.route(url => url.pathname.replace(/\/$/, '') === terrainMetadataPath, async route => {
     terrainSeen = true;
     await new Promise(resolve => releaseTerrain = resolve);
     await route.continue().catch(() => {});

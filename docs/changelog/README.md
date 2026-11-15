@@ -61,3 +61,4 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#55](PR-055-feat-siddhi.md) | Feat/siddhi | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#56](PR-056-aisearch.md) | Fix floating 3D terrain patches; AWS Lightsail deploy; Plan opens Results | `siddhilakkarsu-max/aisearch` | 2026-11-15 | 2 file(s) |
 | [#57](PR-057-feat-gk.md) | Helmut: a pixel astronaut mascot that reacts beside the planner assistant | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | none |
+| [#58](PR-058-aisearch.md) | Electrolize font for all planner text, including the map labels | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
