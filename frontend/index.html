@@ -11,6 +11,7 @@
 <script src="/wind_motion.js"></script>
 <script src="/temperature_view.js"></script>
 <script src="/mars_lighting.js"></script>
+<script src="/route_playback.js"></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
 <style>
   /* Designers: restyle freely. Everything visual lives in this file. */
@@ -59,6 +60,11 @@
   #weatherHover { position: absolute; z-index: 5; pointer-events: none; max-width: 210px;
                   padding: 7px 9px; background: #131520ed; color: #fff; font-size: 12px;
                   line-height: 1.45; border: 1px solid #ffffff48; border-radius: 5px; }
+  #routePlayback { position: absolute; z-index: 6; bottom: 34px; left: 14px; max-width: calc(100% - 28px);
+                   background: var(--bg); color: var(--fg); border: 1px solid #6b5449; border-radius: 8px;
+                   padding: 8px 10px; box-sizing: border-box; }
+  #routePlayback button { margin: 0 0 4px; min-height: 32px; }
+  #routePlayback button:disabled { opacity: .65; cursor: default; }
   .small { color: var(--muted); font-size: 11px; }
   @media (max-width: 600px) {
     body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 55% minmax(0, 1fr); }
@@ -117,6 +123,10 @@
 <div id="map">
   <div id="marsSun" aria-hidden="true" hidden></div>
   <div id="weatherHover" aria-hidden="true" hidden></div>
+  <div id="routePlayback" hidden>
+    <button id="playRoute" type="button">Play route</button>
+    <div class="small" id="routePlaybackStatus" role="status"></div>
+  </div>
 </div>
 <div id="panel">
   <h1>Marswalk Planner</h1>
@@ -266,6 +276,9 @@ if (viewer.scene.sun) viewer.scene.sun.show = false;
 if (viewer.scene.moon) viewer.scene.moon.show = false;
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
 const globeLighting = createMarsLighting(viewer, MARS, $("marsSun"));
+const routePlayback = createRoutePlayback({ viewer, ellipsoid: MARS, controls: {
+  panel: $("routePlayback"), button: $("playRoute"), status: $("routePlaybackStatus"),
+} });
 $("globeLighting").onchange = () => globeLighting.setEnabled($("globeLighting").checked);
 globeLighting.setEnabled($("globeLighting").checked);
 
@@ -752,6 +765,7 @@ function invalidatePlan() {
   lastPlan = null;
   replanHint = "Conditions changed - plan again.";
   marks.removeById("route");
+  routePlayback.clear("manual");
   if (displayedLayer === "walkback") {
     clearOverlay();
     weatherDisplay.renderLegend({ bar: $("legend"), text: $("legendText") });
@@ -783,6 +797,8 @@ $("plan").onclick = async () => {
         positions: Cesium.Cartesian3.fromDegreesArray(res.route.flatMap((p) => [p.lon, p.lat]), MARS),
         width: 4, material: Cesium.Color.YELLOW, clampToGround: true } });
     }
+    const vehicle = $("vehicle");
+    routePlayback.setRoute("manual", res.route, vehicle.value, vehicle.selectedOptions[0]?.textContent || vehicle.value);
     $("warn").textContent = res.warnings.join("\n");
     $("explain").textContent = res.explanation +
       (res.stats ? `\n\nMax slope ${res.stats.max_slope_deg}°, mean ${res.stats.mean_slope_deg}°` : "") +
@@ -893,6 +909,7 @@ async function runMission() {
         });
         if (!isCurrent()) return;
         drawMission(scienceShown);
+        showMissionPlayback();
         if ($("showTracks").checked) await showTracks(true);
       } else if (e.type === "ai" && e.phase === "explain" && res) { res.explain_ai[e.kind] += e.text; updateExplain(); }
       else if (e.type === "note" && res) res.explain_ai.note = e.text;
@@ -927,7 +944,12 @@ function updateExplain() {                   // fill the "Why" section from the 
     : (ai.note ? ai.note + " " : "") + "Summary from the numbers above.";
 }
 
-function selectRoute(i) { selected = i; renderMission(); drawMission(true); }
+function showMissionPlayback() {
+  const vehicle = mission.settings.vehicle;
+  routePlayback.setRoute("mission", mission.candidates[selected]?.route.points, vehicle.key, vehicle.label);
+}
+
+function selectRoute(i) { selected = i; renderMission(); drawMission(true); showMissionPlayback(); }
 
 function renderMission() {
   const r = mission, s = r.settings, out = $("mResult"), h3 = (t) => out.append(el("h3", { textContent: t }));
@@ -1152,6 +1174,7 @@ $("layer").onchange = () => {
 $("region").onchange = () => {
   current = regions.find((r) => r.region === $("region").value);
   syncGlobeLighting();
+  routePlayback.clear();
   findRequest++; missionRequest++; if (missionCtl) missionCtl.abort();
   $("mStatus").textContent = ""; $("runMission").disabled = false;
   clearMatches(); $("findInfo").textContent = "";

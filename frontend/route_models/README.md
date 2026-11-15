@@ -1,0 +1,19 @@
+# Route playback models
+
+Select **Play route** on a successful manual route or mission candidate. The vehicle follows the outbound path in compressed time, with its display size enlarged when zoomed out. Pause, resume, or replay from the map. The animation and model dimensions are for visualization.
+
+These original low-poly GLB files were modeled from the references below. The two walking profiles share the same suit. The mission scout bike, open rover, and pressurized buggy are illustrative concepts.
+
+| Model | Visual reference |
+|---|---|
+| Suited astronaut | [NASA xEMU prototype](https://www.nasa.gov/image-article/new-spacesuit-artemis-generation-astronauts/) |
+| Perseverance | [NASA Mars 2020 rover components](https://science.nasa.gov/mission/mars-2020-perseverance/rover-components/) |
+| Curiosity-class rover | [NASA Curiosity 3D model](https://science.nasa.gov/resource/curiosity-rover-3d-model/) |
+| Sojourner and Spirit/Opportunity | [NASA Mars rover comparison photo](https://science.nasa.gov/photojournal/rovers-and-sojourner/) |
+| Zhurong | [CNSA rover and lander photo](https://www.cnsa.gov.cn/english/n6465652/n6465653/c6840321/content.html) |
+| Rosalind Franklin | [ESA ExoMars rover 360° view](https://www.esa.int/ESA_Multimedia/Videos/2020/03/ExoMars_Rosalind_Franklin_rover_3601/%28lang%29/en) |
+| Open crew rover and four-wheel concept | [NASA Apollo 17 Lunar Roving Vehicle](https://science.nasa.gov/resource/apollo-17-gene-cernan-in-lunar-roving-vehicle/) |
+| Pressurized crew rover and buggy | [NASA Space Exploration Vehicle concept](https://science.nasa.gov/3d-resources/space-exploration-vehicle/) |
+| Scout bike | [NASA lunar mobility study, Figure 10](https://ntrs.nasa.gov/api/citations/20200002475/downloads/20200002475.pdf) |
+
+Regenerate the assets from the repository root with `python build_route_models.py`. The generator uses NumPy and writes glTF 2.0 binaries with embedded geometry, material colors, and one looping animation per model.
