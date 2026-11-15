@@ -130,6 +130,14 @@ class GameTest(unittest.TestCase):
         for word in ('"playFab"', "playFabPulse", "MISSION READY"):
             self.assertIn(word, self.launch, word)
 
+    def test_one_model_per_vehicle(self):
+        """Riding and parked use the same full vehicle model, built once per vehicle (no view-only half models)."""
+        for word in ("function g3VehModel(", "G3.vmod[key] = MB.a.slice(0, MB.n)", "const src = G3.vmod[W.veh.key]",
+                     "SEAT: { two_wheel:", "look(yawDeg, pitchDeg)"):
+            self.assertIn(word, self.script, word)
+        for old in ("mk('four_wheel'", "mk('two_wheel'", "mk('buggy'"):
+            self.assertNotIn(old, self.script, old)
+
     def test_handoff_contract(self):
         self.assertIn(HANDOFF_KEY, self.html)
         self.assertIn(HANDOFF_KEY, self.launch)
