@@ -469,7 +469,7 @@ def murray_elevation_meta():
     return _elev_meta
 
 
-def elevation_tile_bytes(z, y, x):
+def elevation_tile_bytes(z, y, x, *, timeout=60):
     """One LERC tile of the 3D terrain (MDEM200M), cached on disk. Shared by the globe and the cube builder."""
     if (not all(isinstance(v, (int, np.integer)) for v in (z, y, x))
             or not 0 <= z <= TERRAIN_MAX_LEVEL
@@ -477,7 +477,7 @@ def elevation_tile_bytes(z, y, x):
         raise ValueError("elevation tile outside the published level-0..7 geographic grid")
     path = CACHE / "elevation" / f"{z}_{y}_{x}.lerc"
     if not path.exists():
-        data = _fetch(f"{ESRI}/MDEM200M/ImageServer/tile/{z}/{y}/{x}", timeout=60)
+        data = _fetch(f"{ESRI}/MDEM200M/ImageServer/tile/{z}/{y}/{x}", timeout=timeout)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(f".{threading.get_ident()}.part")
         tmp.write_bytes(data)

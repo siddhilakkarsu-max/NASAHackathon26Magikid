@@ -11,6 +11,7 @@
 <script src="/wind_motion.js"></script>
 <script src="/temperature_view.js"></script>
 <script src="/mars_lighting.js"></script>
+<script src="/mars_sky.js"></script>
 <script src="/route_playback.js"></script>
 <script src="/regional_terrain.js"></script>
 <script src="/planner_layout.js"></script>
@@ -326,6 +327,10 @@
   <input type="range" id="hour" min="0" max="24" step="0.25" value="11" />
   <label class="check"><input type="checkbox" id="globeLighting" checked aria-describedby="lightingNote" /> Sunlight and atmosphere</label>
   <div class="small" id="lightingNote">Move your mouse over the night side to reveal the map. Globe lighting follows the selected region’s solar time.</div>
+  <label class="check"><input type="checkbox" id="showStars" checked /> Star background</label>
+  <label class="check"><input type="checkbox" id="showDustHaze" aria-describedby="dustHazeNote" /> Seasonal dust haze</label>
+  <div class="small" id="dustHazeNote">Illustrative haze from seasonal dust data at the view center. It does not locate individual clouds or show live storms.</div>
+  <div class="small" id="dustHazeStatus" role="status" hidden></div>
   </details>
 
   <details id="globalMaps" class="panel-section" name="workspace">
@@ -340,7 +345,10 @@
       <div class="row"><button id="terrainAngledView" class="secondary" type="button">Angled terrain view</button>
         <button id="terrainTrueScale" class="secondary" type="button">True scale (1×)</button></div>
       <button id="terrainJezero" class="secondary" type="button">Explore Jezero in 3D</button>
+      <button id="terrainReload" class="secondary" type="button">Reload terrain detail</button>
       <div class="small" id="terrainResolutionNote"></div>
+      <div class="small" id="terrainLocationNote"></div>
+      <div class="small" id="terrainStreamingStatus" role="status" hidden></div>
     </div>
   <div id="radiationControls" hidden>
     <label for="radiationSolar">Solar activity scenario</label>
@@ -395,6 +403,8 @@
     <div class="row"><button id="sharpTerrainAngledView" class="secondary" type="button">Angled terrain view</button>
       <button id="sharpTerrainTrueScale" class="secondary" type="button">True scale (1×)</button></div>
     <div class="small" id="sharpTerrainResolutionNote"></div>
+    <button id="sharpTerrainReload" class="secondary" type="button">Reload terrain detail</button>
+    <div class="small" id="sharpTerrainStreamingStatus" role="status" hidden></div>
   </div>
 
   <label class="check"><input type="checkbox" id="showTracks" /> Show rover tracks</label>
@@ -453,6 +463,8 @@
     <p><a href="/api/radiation/method" target="_blank" rel="noopener">Radiation method, assumptions and sources</a></p>
     <p><a href="https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html" target="_blank" rel="noopener">Murray Lab CTX viewer and global map catalogue</a></p>
     <p><a href="https://astrogeology.usgs.gov/search/map/mars_2020_science_investigation_ctx_dem_mosaic" target="_blank" rel="noopener">USGS / NASA-JPL Mars 2020 Jezero elevation survey (20 m)</a> · <a href="/api/terrain/jezero" target="_blank" rel="noopener">Local coverage and processing details</a></p>
+    <p><a href="https://stac.astrogeology.usgs.gov/docs/data/mars/ctxdtms/" target="_blank" rel="noopener">USGS Mars CTX stereo elevation catalog</a> · <a href="https://hrscteam.dlr.de/public/data/regionaldtms.php" target="_blank" rel="noopener">ESA/DLR HRSC quadrangle elevation mosaics</a> · <a href="/api/terrain/detail" target="_blank" rel="noopener">Available terrain coverage and limitations</a></p>
+    <p><a href="https://svs.gsfc.nasa.gov/3572/" target="_blank" rel="noopener">NASA Tycho/Hipparcos star atlas</a>, bundled with Cesium. Decorative orientation; not a sky-navigation chart. <a href="https://www-mars.lmd.jussieu.fr/mars/dust_scenarios/index.html" target="_blank" rel="noopener">LMD seasonal dust climatology</a> supplies optional illustrative haze, not observed clouds.</p>
     <div id="layerSources"></div>
     <h2>Global map credits</h2>
     <ul id="mapSources"></ul>
@@ -522,10 +534,14 @@ if (viewer.scene.moon) viewer.scene.moon.show = false;
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
 viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#171b21");
 const globeLighting = createMarsLighting(viewer, MARS, $("marsSun"));
+let marsSky = null;
 const routePlayback = createRoutePlayback({ viewer, ellipsoid: MARS, controls: {
   panel: $("routePlayback"), button: $("playRoute"), status: $("routePlaybackStatus"),
 } });
-$("globeLighting").onchange = () => globeLighting.setEnabled($("globeLighting").checked);
+$("globeLighting").onchange = () => {
+  globeLighting.setEnabled($("globeLighting").checked);
+  marsSky?.refresh();
+};
 globeLighting.setEnabled($("globeLighting").checked);
 
 // Black-and-white CTX photos inside a region. Explicitly drawn areas stay pinned
@@ -622,6 +638,15 @@ let timeline = null, shownConditions = null, shownResponse = null;
 let hoverPoint = null, hoverTimer, hoverLoad, hoverVersion = 0;
 let windPaused = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let pointRequest = 0;
+marsSky = createMarsSky({ viewer, ellipsoid: MARS, api: API,
+  getConditions: conditions, getLocation: viewCenter,
+  onStatus: text => {
+    $("dustHazeStatus").textContent = text;
+    $("dustHazeStatus").hidden = !text;
+  },
+});
+$("showStars").onchange = () => marsSky.setStarsEnabled($("showStars").checked);
+$("showDustHaze").onchange = () => marsSky.setDustEnabled($("showDustHaze").checked);
 const marks = viewer.entities;
 const imageLayers = () => tileset ? tileset.imageryLayers : viewer.imageryLayers;
 const mapOpacity = () => +$("mapOpacity").value / 100;
@@ -688,6 +713,7 @@ function syncGlobeLighting() {
     Cesium.Rectangle.fromDegrees(rectangle.west, rectangle.south, rectangle.east, rectangle.north)
   ).longitude) : 0;
   globeLighting.update(+$("hour").value, +$("ls").value, longitude);
+  marsSky?.refresh();
 }
 
 async function api(path, body, signal) {
@@ -1702,12 +1728,45 @@ const murray = { defs: [], state: {}, selectedMap: null };
 const flatTerrain = new Cesium.EllipsoidTerrainProvider({ ellipsoid: MARS });
 const murrayOn = (id) => !!(murray.state[id] && murray.state[id].on);
 let terrainViewRequest = 0, terrainFlight = false, terrainClearanceRemove = null;
+let pendingTerrainTiles = 0;
+function updateTerrainStreaming() {
+  for (const prefix of ["terrain", "sharpTerrain"]) {
+    const node = $(prefix + "StreamingStatus");
+    node.hidden = !(murrayOn("terrain") && pendingTerrainTiles > 0);
+    node.textContent = node.hidden ? "" : "Loading terrain and photo tiles… Detail sharpens as the measured data arrives.";
+  }
+}
+viewer.scene.globe.tileLoadProgressEvent.addEventListener(count => {
+  pendingTerrainTiles = count;
+  updateTerrainStreaming();
+});
 function terrainResolutionText() {
   const provider = murray.state.terrain?.provider;
+  let minimum = Infinity, maximum = -Infinity;
+  for (const region of provider?.detailRegions || []) {
+    minimum = Math.min(minimum, region.resolution_m);
+    maximum = Math.max(maximum, region.resolution_m);
+  }
+  const spacing = Number.isFinite(minimum) ? minimum === maximum ? `${minimum.toFixed(0)} m`
+    : `${minimum.toFixed(0)}–${maximum.toFixed(0)} m` : "finer surveyed";
   return provider?.regionalMetadata?.available
-    ? "Elevation: 20 m within the Jezero survey; 200 m elsewhere. Survey edges blend into the global terrain. Photos: up to 5 m."
-    : "Elevation: global 200 m grid. Photos: up to 5 m. The finer Jezero survey is not loaded.";
+    ? `Elevation grids: ${spacing} where available; 200 m global fallback. Gaps and survey edges blend into the coarser measured terrain. Grid spacing is not a guarantee of feature accuracy.`
+    : "Elevation: global 200 m grid. Finer surveys could not load. Photos: up to 5 m.";
 }
+function updateTerrainLocation() {
+  const provider = murray.state.terrain?.provider;
+  const p = viewCenter();
+  if (!p || !provider?.regionalMetadata?.available) {
+    $("terrainLocationNote").textContent = !p ? "Point the view at Mars to check survey coverage."
+      : "Detailed survey inventory is unavailable; using global terrain.";
+    return;
+  }
+  const detail = p && provider?.getDetailForPosition?.(Cesium.Cartographic.fromDegrees(p.lon, p.lat));
+  $("terrainLocationNote").textContent = detail
+    ? `Survey coverage at the view center: ${detail.resolution_m.toFixed(1).replace(/\.0$/, "")} m grid. Data gaps or unavailable sources use the global terrain.`
+    : "View center: global 200 m terrain; no finer survey is cataloged here.";
+}
+viewer.camera.moveEnd.addEventListener(updateTerrainLocation);
 function syncTerrainControls() {
   const on = murrayOn("terrain") || sharpBoxPinned;
   $("terrainDisplayControls").hidden = !on;
@@ -1717,6 +1776,8 @@ function syncTerrainControls() {
     $(prefix + "ScaleValue").textContent = terrainScale === 1 ? "1× (true scale)" : `${terrainScale.toFixed(1)}× (enhanced)`;
     $(prefix + "ResolutionNote").textContent = terrainResolutionText();
   }
+  updateTerrainLocation();
+  updateTerrainStreaming();
 }
 function setTerrainScale(value) {
   const next = Math.round(Math.min(8, Math.max(1, Number(value))) * 10) / 10;
@@ -1764,13 +1825,11 @@ async function angledTerrainView(rect = null, headingDegrees = 0) {
   try { if (selected.loading) await selected.loading; } catch (_) { return; }
   if (request !== terrainViewRequest || !murrayOn("terrain")) return;
   let displayHeight;
-  const meta = selected.provider?.regionalMetadata;
-  const within = meta?.available && Cesium.Rectangle.contains(Cesium.Rectangle.fromDegrees(
-    meta.rectangle.west, meta.rectangle.south, meta.rectangle.east, meta.rectangle.north), center);
+  const detail = selected.provider?.getDetailForPosition?.(center);
   try {
     // A just-switched globe can still report its previous flat mesh's height.
     // Sample the selected source before aiming a close view into a deep crater.
-    const [sample] = await Cesium.sampleTerrain(selected.provider, within ? meta.maximum_level : 7,
+    const [sample] = await Cesium.sampleTerrain(selected.provider, detail?.maximum_level || 7,
       [Cesium.Cartographic.clone(center)]);
     displayHeight = sample.height * terrainScale;
   } catch (_) { /* Retain a usable camera view if the source cannot be sampled. */ }
@@ -1796,7 +1855,7 @@ async function showJezeroTerrain() {
   if (request !== terrainViewRequest || !murrayOn("terrain")) return;
   // Frame the full survey, including the high terrain east of the crater,
   // instead of cropping those mountains out of a small landing-site box.
-  const rect = selected?.provider?.regionalMetadata?.rectangle ||
+  const rect = selected?.provider?.detailRegions?.find(region => region.id === "jezero")?.rectangle ||
     { west: 77.0, south: 17.58, east: 78.58, north: 19.29 };
   await angledTerrainView(rect, 270);
 }
@@ -2084,7 +2143,9 @@ async function murrayToggle(def, on) {
     if (!latest()) return;
     if (focus) focus.disabled = false;
     if (on && def.kind !== "bbox" && def.id !== "names") murrayStatus(def.id,
-      def.kind === "terrain" ? "3D terrain is on. Use Angled terrain view to see the relief, or right-drag to tilt. The height control changes display proportions only."
+      def.kind === "terrain" ? (st.provider?.regionalError
+        ? "Detailed terrain surveys could not load; global terrain remains active. Use Retry 3D terrain to reload the survey catalog."
+        : "3D terrain is on. Use Angled terrain view to see the relief, or right-drag to tilt. The height control changes display proportions only.")
       : def.id === "ctx" ? "Black-and-white photos: up to 5 m/pixel over measured elevation. Damaged image tiles use valid coarser photos. Use the height control to make relief easier to see."
       : st.routePoints ? `${def.title}. Archived route, not a live rover position.`
       : `${MURRAY_PLAIN[def.id] || def.title} is on.`);
@@ -2110,6 +2171,8 @@ function retryTerrain() {
   applyGlobalMap();
 }
 $("sharpTerrainRetry").onclick = retryTerrain;
+$("terrainReload").onclick = retryTerrain;
+$("sharpTerrainReload").onclick = retryTerrain;
 
 async function murrayPointLinks(p, request) {
   const box = $("infoLinks");
@@ -2612,9 +2675,16 @@ api("/api/weather/calendar").then(calendar => {
     } else $("status").textContent = "Move the globe anywhere on Mars and plan: the area loads from the 3D terrain.";
     refreshLayer();
     $("region").onchange();
-    if (new URLSearchParams(location.search).get("view") === "jezero3d") {
+    const initialView = new URLSearchParams(location.search).get("view");
+    if (initialView === "jezero3d") {
       await murrayCatalogueReady;
       if (murray.defs.length) await showJezeroTerrain();
+    } else if (initialView === "terrain") {
+      await murrayCatalogueReady;
+      $("globalMaps").open = true;
+      $("globalLayer").value = "map:ctx";
+      $("globalLayer").dispatchEvent(new Event("change", { bubbles: true }));
+      showWholeMars();
     }
   } catch (e) {
     $("status").textContent = "Regional layers could not load: " + e.message;

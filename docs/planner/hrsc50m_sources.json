@@ -1,0 +1,690 @@
+{
+  "verified_date": "2026-11-15",
+  "catalog_source": "https://hrscteam.dlr.de/public/data/regionaldtms.php",
+  "credit": "ESA/DLR/FU Berlin HRSC Science Team",
+  "datum_selection": "Only DA5 areoid heights. DT5 sphere heights are not interchangeable.",
+  "coordinate_note": "Decode projected coordinates to the source native spherical Mars geographic CRS, preserving latitude/longitude angles. Do not translate datums to Earth EPSG:4326 or rescale angles using the globe radius of 3,396,190 m; the source projection radius is 3,396,000 m.",
+  "streaming_note": "All headers checked via HTTP 206. GeoTIFFs use one-row strips and no overviews: window reads work but consume more bandwidth than tiled COGs.",
+  "sources": [
+    {
+      "id": "HMC_11E10_da5",
+      "quadrangle": "MC11E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC11E/HMC_11E10_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc11e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": -22.500319185257496,
+        "south": 15.000072193932182,
+        "east": -11.250370486987975,
+        "north": 30.000566176582797
+      },
+      "shape": [
+        17782,
+        13336
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13336
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/368004595",
+      "bytes": 368004595
+    },
+    {
+      "id": "HMC_11E20_da5",
+      "quadrangle": "MC11E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC11E/HMC_11E20_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc11e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": -11.250370486987975,
+        "south": 15.000072193932182,
+        "east": 0.00042178871845521826,
+        "north": 30.000566176582797
+      },
+      "shape": [
+        17782,
+        13337
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13337
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/352165511",
+      "bytes": 352165511
+    },
+    {
+      "id": "HMC_11E30_da5",
+      "quadrangle": "MC11E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC11E/HMC_11E30_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc11e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": -22.500319185257496,
+        "south": -0.0004217887184414188,
+        "east": -11.250370486987975,
+        "north": 15.000072193932175
+      },
+      "shape": [
+        17782,
+        13336
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13336
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/373496689",
+      "bytes": 373496689
+    },
+    {
+      "id": "HMC_11E40_da5",
+      "quadrangle": "MC11E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC11E/HMC_11E40_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc11e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": -11.250370486987975,
+        "south": -0.0004217887184414188,
+        "east": 0.00042178871845521826,
+        "north": 15.000072193932175
+      },
+      "shape": [
+        17782,
+        13337
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13337
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/343811033",
+      "bytes": 343811033
+    },
+    {
+      "id": "HMC_11W10_da5",
+      "quadrangle": "MC11W",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC11W/HMC_11W10_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc11w",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": -45.000216581796536,
+        "south": 15.000072193932182,
+        "east": -33.750267883527016,
+        "north": 30.000566176582797
+      },
+      "shape": [
+        17782,
+        13336
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13336
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/253240385",
+      "bytes": 253240385
+    },
+    {
+      "id": "HMC_11W20_da5",
+      "quadrangle": "MC11W",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC11W/HMC_11W20_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc11w",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": -33.750267883527016,
+        "south": 15.000072193932182,
+        "east": -22.499475607820614,
+        "north": 30.000566176582797
+      },
+      "shape": [
+        17782,
+        13337
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13337
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/297102167",
+      "bytes": 297102167
+    },
+    {
+      "id": "HMC_11W30_da5",
+      "quadrangle": "MC11W",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC11W/HMC_11W30_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc11w",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": -45.000216581796536,
+        "south": -0.0004217887184414188,
+        "east": -33.750267883527016,
+        "north": 15.000072193932175
+      },
+      "shape": [
+        17782,
+        13336
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13336
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/375923115",
+      "bytes": 375923115
+    },
+    {
+      "id": "HMC_11W40_da5",
+      "quadrangle": "MC11W",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC11W/HMC_11W40_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc11w",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": -33.750267883527016,
+        "south": -0.0004217887184414188,
+        "east": -22.499475607820614,
+        "north": 15.000072193932175
+      },
+      "shape": [
+        17782,
+        13337
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13337
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/399784409",
+      "bytes": 399784409
+    },
+    {
+      "id": "HMC_13E10_da5",
+      "quadrangle": "MC13E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC13E/HMC_13E10_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc13e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": 67.4992704008987,
+        "south": 15.000072193932182,
+        "east": 78.74921909916822,
+        "north": 30.000566176582797
+      },
+      "shape": [
+        17782,
+        13336
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13336
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/638313147",
+      "bytes": 638313147
+    },
+    {
+      "id": "HMC_13E20_da5",
+      "quadrangle": "MC13E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC13E/HMC_13E20_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc13e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": 78.74921909916822,
+        "south": 15.000072193932182,
+        "east": 90.00001137487459,
+        "north": 30.000566176582797
+      },
+      "shape": [
+        17782,
+        13337
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13337
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/638348713",
+      "bytes": 638348713
+    },
+    {
+      "id": "HMC_13E30_da5",
+      "quadrangle": "MC13E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC13E/HMC_13E30_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc13e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": 67.4992704008987,
+        "south": -0.0004217887184414188,
+        "east": 78.74921909916822,
+        "north": 15.000072193932175
+      },
+      "shape": [
+        17782,
+        13336
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13336
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/638313149",
+      "bytes": 638313149
+    },
+    {
+      "id": "HMC_13E40_da5",
+      "quadrangle": "MC13E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC13E/HMC_13E40_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc13e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": 78.74921909916822,
+        "south": -0.0004217887184414188,
+        "east": 90.00001137487459,
+        "north": 15.000072193932175
+      },
+      "shape": [
+        17782,
+        13337
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13337
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/638348713",
+      "bytes": 638348713
+    },
+    {
+      "id": "HMC_20E10_da5",
+      "quadrangle": "MC20E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC20E/HMC_20E10_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc20e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": 22.499475607820614,
+        "south": -15.000072193932175,
+        "east": 33.749424306090134,
+        "north": 0.0004217887184414188
+      },
+      "shape": [
+        17782,
+        13336
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13336
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/474389415",
+      "bytes": 474389415
+    },
+    {
+      "id": "HMC_20E20_da5",
+      "quadrangle": "MC20E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC20E/HMC_20E20_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc20e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": 33.749424306090134,
+        "south": -15.000072193932175,
+        "east": 45.000216581796536,
+        "north": 0.0004217887184414188
+      },
+      "shape": [
+        17782,
+        13337
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13337
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/474424979",
+      "bytes": 474424979
+    },
+    {
+      "id": "HMC_20E30_da5",
+      "quadrangle": "MC20E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC20E/HMC_20E30_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc20e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": 22.499475607820614,
+        "south": -30.000566176582797,
+        "east": 33.749424306090134,
+        "north": -15.000072193932175
+      },
+      "shape": [
+        17782,
+        13336
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13336
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/474389415",
+      "bytes": 474389415
+    },
+    {
+      "id": "HMC_20E40_da5",
+      "quadrangle": "MC20E",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC20E/HMC_20E40_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc20e",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": 33.749424306090134,
+        "south": -30.000566176582797,
+        "east": 45.000216581796536,
+        "north": -15.000072193932175
+      },
+      "shape": [
+        17782,
+        13337
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13337
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/474424979",
+      "bytes": 474424979
+    },
+    {
+      "id": "HMC_20W10_da5",
+      "quadrangle": "MC20W",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC20W/HMC_20W10_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc20w",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": -0.00042178871845521826,
+        "south": -15.000072193932175,
+        "east": 11.249526909551093,
+        "north": 0.0004217887184414188
+      },
+      "shape": [
+        17782,
+        13336
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13336
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/474424979",
+      "bytes": 474424979
+    },
+    {
+      "id": "HMC_20W20_da5",
+      "quadrangle": "MC20W",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC20W/HMC_20W20_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc20w",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": 11.249526909551093,
+        "south": -15.000072193932175,
+        "east": 22.500319185257496,
+        "north": 0.0004217887184414188
+      },
+      "shape": [
+        17782,
+        13337
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13337
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/474460543",
+      "bytes": 474460543
+    },
+    {
+      "id": "HMC_20W30_da5",
+      "quadrangle": "MC20W",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC20W/HMC_20W30_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc20w",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": -0.00042178871845521826,
+        "south": -30.000566176582797,
+        "east": 11.249526909551093,
+        "north": -15.000072193932175
+      },
+      "shape": [
+        17782,
+        13336
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13336
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/474424979",
+      "bytes": 474424979
+    },
+    {
+      "id": "HMC_20W40_da5",
+      "quadrangle": "MC20W",
+      "url": "https://hrscteam.dlr.de/public/data/HMC30/MC20W/HMC_20W40_da5.tif",
+      "source_page": "https://hrscteam.dlr.de/public/data/HMC30/quads.php?quad=mc20w",
+      "resolution_m": 50.0,
+      "minimum_level": 8,
+      "maximum_level": 10,
+      "vertical_datum": "Mars areoid (DA5)",
+      "rectangle": {
+        "west": 11.249526909551093,
+        "south": -30.000566176582797,
+        "east": 22.500319185257496,
+        "north": -15.000072193932175
+      },
+      "shape": [
+        17782,
+        13337
+      ],
+      "dtype": "int16",
+      "nodata": -32768.0,
+      "block_shape": [
+        1,
+        13337
+      ],
+      "tiled": false,
+      "overviews": [],
+      "crs_wkt": "PROJCS[\"EQUIDISTANT MARS\",GEOGCS[\"GCS_MARS\",DATUM[\"D_MARS\",SPHEROID[\"MARS\",3396000,0]],PRIMEM[\"Reference_Meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]]],PROJECTION[\"Equirectangular\"],PARAMETER[\"standard_parallel_1\",0],PARAMETER[\"central_meridian\",0],PARAMETER[\"false_easting\",0],PARAMETER[\"false_northing\",0],UNIT[\"metre\",1,AUTHORITY[\"EPSG\",\"9001\"]],AXIS[\"Easting\",EAST],AXIS[\"Northing\",NORTH]]",
+      "native_geographic_wkt": "GEOGCS[\"unknown\",DATUM[\"unknown\",SPHEROID[\"unknown\",3396000,0]],PRIMEM[\"Reference meridian\",0],UNIT[\"degree\",0.0174532925199433,AUTHORITY[\"EPSG\",\"9122\"]],AXIS[\"Longitude\",EAST],AXIS[\"Latitude\",NORTH]]",
+      "native_radius_m": 3396000.0,
+      "range_status": 206,
+      "range_header": "bytes 0-1023/474460543",
+      "bytes": 474460543
+    }
+  ]
+}

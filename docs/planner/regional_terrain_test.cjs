@@ -78,10 +78,45 @@ const xy = level => scheme.positionToTileXY(C.Cartographic.fromDegrees(77.45, 18
   const recovered = await provider.requestTileGeometry(p8.x, p8.y, 8);
   assert(recovered instanceof C.HeightmapTerrainData);
   assert.equal(requests.length, 3, "Corrupt responses are not cached; retry fetches new bytes");
+  const originalNow = Date.now, fetchedBeforeExpiry = requests.length;
+  try {
+    const later = originalNow() + 31000;
+    Date.now = () => later;
+    await provider.requestTileGeometry(p11.x, p11.y, 11);
+    assert.equal(requests.length, fetchedBeforeExpiry + 1,
+      "Expired bytes can recover from a previous real coarse fallback");
+  } finally { Date.now = originalNow; }
 
   const unavailable = await createRegionalTerrainProvider(Cesium, base, { metadata: { available: false, error: "Not installed" } });
   assert.equal(unavailable, base);
   assert.equal(unavailable.regionalMetadata, null);
   assert.equal(unavailable.regionalError, "Not installed");
+  const region = (id, west, south, east, north, resolution_m, maximum_level) =>
+    ({ id, rectangle: { west, south, east, north }, resolution_m, maximum_level });
+  const worldwide = { ...metadata, tile_url: "/terrain/detail/{z}/{y}/{x}.bin", regions: [
+    region("jezero", 77, 18, 78, 19, 20, 11),
+    region("hrsc", -80, 0, -78, 2, 50, 10),
+    region("ctx", -79.5, 0.5, -79, 1, 20, 11),
+    region("seam-west", -180, -5, -179.5, -4, 20, 11),
+    region("seam-east", 179.5, -5, 180, -4, 20, 11),
+  ] };
+  const all = await createRegionalTerrainProvider(Cesium, base, { metadata: worldwide });
+  const has = (lon, lat, level) => {
+    const xy = scheme.positionToTileXY(C.Cartographic.fromDegrees(lon, lat), level);
+    return all.getTileDataAvailable(xy.x, xy.y, level);
+  };
+  assert(has(-79.8, 1.8, 10)); assert.equal(has(-79.8, 1.8, 11), false);
+  assert(has(-79.25, 0.75, 11)); assert.equal(has(-79.25, 0.75, 12), false);
+  assert(has(179.8, -4.5, 11)); assert(has(-179.8, -4.5, 11));
+  assert.equal(has(0, -4.5, 11), false, "Dateline coverage does not wrap across the whole planet");
+  assert.equal(all.getDetailForPosition(C.Cartographic.fromDegrees(-79.25, 0.75)).id, "ctx");
+  assert.equal(all.getDetailForPosition(C.Cartographic.fromDegrees(-79.8, 1.8)).id, "hrsc");
+  assert.equal(all.getDetailForPosition(C.Cartographic.fromDegrees(0, 0)), null);
+  const bad = await createRegionalTerrainProvider(Cesium, base, { metadata: { ...worldwide,
+    regions: [region("bad", -181, 0, 0, 1, 20, 11)] } });
+  assert.equal(bad, base, "Invalid source footprints retain verified global fallback");
+  const missing = await createRegionalTerrainProvider(Cesium, base, { metadata: { available: false, message: "Catalog could not load" } });
+  assert.equal(missing.regionalError, "Catalog could not load");
   console.log("PASS regional source routing, native caps, child masks, row order, raw heights, throttling, deduplication, cache and missing-source fallback");
+  console.log("PASS multiple regions, mixed native resolutions, overlap priority, dateline footprints and metadata validation");
 })().catch(error => { console.error(error); process.exitCode = 1; });

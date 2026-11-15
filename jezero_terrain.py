@@ -147,7 +147,7 @@ def _sample_raster(path, bounds, *, nodata=np.nan):
 
 @lru_cache(maxsize=16)
 def _global_tile(y, x):
-    code, data, valid = lerc.decode(murray.elevation_tile_bytes(GLOBAL_LEVEL, y, x))[:3]
+    code, data, valid = lerc.decode(murray.elevation_tile_bytes(GLOBAL_LEVEL, y, x, timeout=10))[:3]
     if code:
         raise ValueError(f"The global elevation tile failed to decode ({code})")
     data = np.asarray(data, dtype="float32")

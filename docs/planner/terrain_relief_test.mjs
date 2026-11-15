@@ -105,11 +105,11 @@ try {
   await page.emulateMedia({ reducedMotion: 'reduce' });
   page.on('pageerror', error => pageErrors.push(String(error)));
   page.on('request', request => {
-    const match = new URL(request.url()).pathname.match(/^\/terrain\/jezero\/(\d+)\/(\d+)\/(\d+)\.bin$/);
+    const match = new URL(request.url()).pathname.match(/^\/terrain\/(?:jezero|detail)\/(\d+)\/(\d+)\/(\d+)\.bin$/);
     if (match) regionalRequests.push({ level: +match[1], y: +match[2], x: +match[3] });
   });
   page.on('response', response => {
-    if (response.status() >= 400 && /\/terrain\/jezero\//.test(response.url())) {
+    if (response.status() >= 400 && /\/terrain\/(?:jezero|detail)\//.test(response.url())) {
       sourceFailures.push({ url: response.url(), status: response.status() });
     }
   });

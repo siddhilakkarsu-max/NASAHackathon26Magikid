@@ -1,6 +1,6 @@
 "use strict";
 
-// Combine the global MOLA/HRSC terrain with the actual Jezero CTX DEM. The
+// Combine the global MOLA/HRSC terrain with published higher-resolution DEMs. The
 // server samples both measured sources on shared tile-edge coordinates and
 // feathers only the documented coverage boundary. No photo-derived relief.
 async function createRegionalTerrainProvider(Cesium, base, options = {}) {
@@ -9,23 +9,28 @@ async function createRegionalTerrainProvider(Cesium, base, options = {}) {
   try {
     if (options.metadata) metadata = options.metadata;
     else {
-      const response = await fetch(api + "/api/terrain/jezero", { signal: AbortSignal.timeout(15000) });
+      const response = await fetch(api + "/api/terrain/detail", { cache: "no-cache", signal: AbortSignal.timeout(20000) });
       if (!response.ok) throw new Error(`Regional elevation metadata returned ${response.status}`);
       metadata = await response.json();
     }
-    if (!metadata.available) throw new Error(metadata.error || metadata.reason || "Jezero's 20 m elevation file is not installed");
-    const r = metadata.rectangle;
-    if (!r || ![r.west, r.south, r.east, r.north].every(Number.isFinite) ||
-        r.west >= r.east || r.south >= r.north || r.west < -180 || r.east > 180 || r.south < -90 || r.north > 90 ||
-        !Number.isInteger(metadata.grid_size) || metadata.grid_size < 2 || metadata.grid_size > 513 ||
+    if (!metadata.available) throw new Error(metadata.message || metadata.error || metadata.reason || "Detailed elevation sources are unavailable");
+    const regions = metadata.regions || [metadata];
+    if (!Array.isArray(regions) || !regions.length || regions.length > 100000 ||
+        regions.some(region => {
+          const r = region.rectangle;
+          return !r || ![r.west, r.south, r.east, r.north].every(Number.isFinite) ||
+            r.west >= r.east || r.south >= r.north || r.west < -180 || r.east > 180 || r.south < -90 || r.north > 90 ||
+            !Number.isFinite(region.resolution_m) || region.resolution_m <= 0 ||
+            !Number.isInteger(region.maximum_level) || region.maximum_level < metadata.minimum_level || region.maximum_level > metadata.maximum_level;
+        }) || !Number.isInteger(metadata.grid_size) || metadata.grid_size < 2 || metadata.grid_size > 513 ||
         !Number.isInteger(metadata.minimum_level) || metadata.minimum_level !== (options.baseMaximumLevel ?? 7) + 1 ||
         !Number.isInteger(metadata.maximum_level) || metadata.maximum_level < metadata.minimum_level || metadata.maximum_level > 16 ||
-        typeof metadata.tile_url !== "string" || !metadata.tile_url.startsWith("/terrain/jezero/")) {
+        typeof metadata.tile_url !== "string" || !/^\/terrain\/(detail|jezero)\//.test(metadata.tile_url)) {
       throw new Error("Regional elevation metadata is invalid");
     }
   } catch (error) {
-    // Keep the verified global service available if the optional regional DEM
-    // is missing. Surface this limitation instead of claiming 20 m coverage.
+    // Keep the verified global service available if the optional catalog is
+    // missing. Surface this limitation instead of claiming finer coverage.
     base.regionalMetadata = null;
     base.regionalError = error.message || String(error);
     options.onStatus?.(base.regionalError);
@@ -33,21 +38,44 @@ async function createRegionalTerrainProvider(Cesium, base, options = {}) {
   }
 
   const scheme = base.tilingScheme;
-  const region = Cesium.Rectangle.fromDegrees(metadata.rectangle.west, metadata.rectangle.south,
-    metadata.rectangle.east, metadata.rectangle.north);
   const baseMaximumLevel = options.baseMaximumLevel ?? 7;
   const minimumLevel = metadata.minimum_level, maximumLevel = metadata.maximum_level, size = metadata.grid_size;
   const cache = new Map(), inflight = new Map();
   const cacheLimit = Math.max(1, Math.min(128, options.cacheTiles || 64));
+  // Responses may contain real coarse fallback after an upstream outage. Do
+  // not retain those bytes forever after the backend's short retry lifetime.
+  const cacheLifetimeMs = 30000;
   const escape = text => String(text).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const credit = new Cesium.Credit((base.credit?.html || "NASA, ESA, USGS, Esri global Mars elevation") +
-    " · " + escape(metadata.credit || "Jezero CTX elevation: USGS/JPL"));
+    " · " + escape(metadata.credit || "Surveyed Mars elevation: NASA/JPL/USGS, ESA/DLR/FU Berlin"));
+  const regions = (metadata.regions || [metadata]).map(source => ({ ...source,
+    bounds: Cesium.Rectangle.fromDegrees(source.rectangle.west, source.rectangle.south,
+      source.rectangle.east, source.rectangle.north) }));
+  // Index by native global parent tile: thousands of survey footprints should
+  // not require thousands of rectangle tests for every frame's child lookup.
+  const regionIndex = new Map();
+  const columns = scheme.getNumberOfXTilesAtLevel(baseMaximumLevel);
+  const rows = scheme.getNumberOfYTilesAtLevel(baseMaximumLevel);
+  for (const region of regions) {
+    const r = region.rectangle;
+    const x0 = Math.max(0, Math.floor((r.west + 180) / 360 * columns));
+    const x1 = Math.min(columns - 1, Math.ceil((r.east + 180) / 360 * columns) - 1);
+    const y0 = Math.max(0, Math.floor((90 - r.north) / 180 * rows));
+    const y1 = Math.min(rows - 1, Math.ceil((90 - r.south) / 180 * rows) - 1);
+    for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) {
+      const key = y * columns + x;
+      if (!regionIndex.has(key)) regionIndex.set(key, []);
+      regionIndex.get(key).push(region);
+    }
+  }
   const rectangleScratch = new Cesium.Rectangle();
   function inRegion(x, y, level) {
     const r = scheme.tileXYToRectangle(x, y, level, rectangleScratch);
-    // Strict overlap avoids requesting the neighboring tile when it merely
-    // touches a DEM boundary. Jezero does not cross the longitude seam.
-    return r.west < region.east && r.east > region.west && r.south < region.north && r.north > region.south;
+    const factor = 2 ** (level - baseMaximumLevel);
+    const candidates = regionIndex.get(Math.floor(y / factor) * columns + Math.floor(x / factor)) || [];
+    return candidates.some(region => level <= region.maximum_level &&
+      r.west < region.bounds.east && r.east > region.bounds.west &&
+      r.south < region.bounds.north && r.north > region.bounds.south);
   }
   function available(x, y, level) {
     if (level <= baseMaximumLevel) return base.getTileDataAvailable(x, y, level);
@@ -64,12 +92,12 @@ async function createRegionalTerrainProvider(Cesium, base, options = {}) {
   }
   function terrainData(buffer, x, y, level) {
     if (!(buffer instanceof ArrayBuffer) || buffer.byteLength !== size * size * 4) {
-      throw new Error("The Jezero elevation tile has an invalid byte count");
+      throw new Error("The detailed elevation tile has an invalid byte count");
     }
     const source = new DataView(buffer), heights = new Float32Array(size * size);
     for (let i = 0; i < heights.length; i++) {
       const value = source.getFloat32(i * 4, true);
-      if (!Number.isFinite(value)) throw new Error("The Jezero elevation tile has missing heights");
+      if (!Number.isFinite(value)) throw new Error("The detailed elevation tile has missing heights");
       heights[i] = value;
     }
     // A fresh TerrainData object is necessary: Cesium transfers its height
@@ -83,6 +111,18 @@ async function createRegionalTerrainProvider(Cesium, base, options = {}) {
     baseProvider: base,
     regionalMetadata: metadata,
     regionalError: null,
+    detailRegions: regions,
+    getDetailForPosition(position) {
+      const xy = scheme.positionToTileXY(position, baseMaximumLevel);
+      if (!xy) return null;
+      const candidates = regionIndex.get(xy.y * columns + xy.x) || [];
+      let finest = null;
+      for (const region of candidates) {
+        if ((!finest || region.resolution_m < finest.resolution_m) &&
+            Cesium.Rectangle.contains(region.bounds, position)) finest = region;
+      }
+      return finest;
+    },
     tilingScheme: scheme,
     errorEvent: base.errorEvent,
     credit,
@@ -120,8 +160,11 @@ async function createRegionalTerrainProvider(Cesium, base, options = {}) {
       }
       const key = `${level}/${y}/${x}`;
       if (cache.has(key)) {
-        const buffer = cache.get(key); cache.delete(key); cache.set(key, buffer);
-        return Promise.resolve().then(() => terrainData(buffer, x, y, level));
+        const entry = cache.get(key); cache.delete(key);
+        if (entry.expires > Date.now()) {
+          cache.set(key, entry);
+          return Promise.resolve().then(() => terrainData(entry.buffer, x, y, level));
+        }
       }
       let pending = inflight.get(key);
       if (!pending) {
@@ -132,7 +175,7 @@ async function createRegionalTerrainProvider(Cesium, base, options = {}) {
           // Validate before caching, so retrying a corrupt/partial response can
           // fetch new bytes instead of repeatedly reusing the bad tile.
           terrainData(buffer, x, y, level);
-          cache.set(key, buffer);
+          cache.set(key, { buffer, expires: Date.now() + cacheLifetimeMs });
           while (cache.size > cacheLimit) cache.delete(cache.keys().next().value);
           return buffer;
         }).finally(() => inflight.delete(key));

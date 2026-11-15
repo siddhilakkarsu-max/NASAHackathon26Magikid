@@ -191,6 +191,30 @@ try {
   assert.equal(result.localRetryHidden, true);
   await record('clearing while metadata loads rejects late terrain activation');
   await closePage();
+
+  // A detailed-source catalog failure should retain the genuine global terrain,
+  // disclose the reduced detail, and provide a working retry without a reload.
+  page = await open();
+  const detailCatalog = url => url.pathname === '/api/terrain/detail';
+  await page.route(detailCatalog, route => route.fulfill({ status: 503,
+    contentType: 'application/json', body: JSON.stringify({ detail: 'Intentional catalog failure' }) }));
+  await page.evaluate(() => { document.querySelector('#globalMaps').open = true; });
+  await page.locator('#globalLayer').selectOption('map:ctx');
+  await page.waitForFunction(() => murrayOn('terrain') && !murray.state.terrain.loading &&
+    !!murray.state.terrain.provider?.regionalError && !document.querySelector('#murrayTerrainRetry').hidden);
+  result = await state();
+  assert.equal(result.flat, false);
+  assert.equal(result.providerActive, true);
+  assert.match(result.globalStatus, /global terrain remains active/);
+  await record('detailed catalog failure retains real global heights and exposes retry');
+  await page.unroute(detailCatalog);
+  await page.locator('#murrayTerrainRetry').click();
+  await page.waitForFunction(() => murrayOn('terrain') && !murray.state.terrain.loading &&
+    murray.state.terrain.provider?.regionalMetadata?.available && !murray.state.terrain.provider.regionalError,
+    null, { timeout: 120000 });
+  assert.equal((await state()).globalRetryHidden, true);
+  await record('detailed catalog retry restores surveyed coverage without a page reload');
+  await closePage();
   assert.deepEqual(pageErrors, []);
   assert.deepEqual(renderErrors, []);
 } catch (error) {
