@@ -35,6 +35,7 @@ body.gm.drawer #gmChips { left: 818px; }
                   background: #fbf4ee !important; color: #2a1d17 !important; font-size: 12.5px; font-weight: 500;
                   text-transform: none; letter-spacing: 0; box-shadow: 0 1px 6px #0007; min-height: 0; }
 #gmChips button.on { background: #e0703a !important; color: #fff !important; }
+#gmChips button[hidden] { display: none; }
 #gmChips svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round;
                stroke-linejoin: round; }
 
@@ -80,6 +81,9 @@ body.gm.drawer #gmChips { left: 818px; }
                      background: #fff; color: #2a1d17; min-width: 0; }
 #gmChat form button { width: auto !important; margin: 0 !important; padding: 6px 14px !important; border-radius: 18px !important;
                       text-transform: none; letter-spacing: 0; min-height: 0; }
+@media (min-width: 761px) {
+  body.gm.drawer #routePlayback { left: 424px; max-width: calc(100% - 438px); }
+}
 @media (max-width: 1100px) {
   #gmChips { top: 64px; left: 14px; }
   body.gm.drawer #gmChips { left: 424px; }

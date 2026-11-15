@@ -48,3 +48,6 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#42](PR-042-feat-siddhi.md) | Feat/siddhi | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#43](PR-043-feat-siddhi.md) | Feat/siddhi | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#44](PR-044-feat-gk.md) | Game: first-person 3D view with a helmet AR HUD and lighter dialogue | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | 2 file(s) |
+| [#45](PR-045-feat-siddhi.md) | docs: changelog files for PRs #40-#44 | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#46](PR-046-feat-gk.md) | Game: vehicle handling, dismounting, and a sampling spot at B | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | none |
+| [#47](PR-047-feat-siddhi.md) | Feat/siddhi | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |

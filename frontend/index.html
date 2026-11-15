@@ -11,7 +11,9 @@
 <script src="/wind_motion.js"></script>
 <script src="/temperature_view.js"></script>
 <script src="/mars_lighting.js"></script>
+<script src="/mars_sky.js"></script>
 <script src="/route_playback.js"></script>
+<script src="/regional_terrain.js"></script>
 <script src="/planner_layout.js"></script>
 <script src="/game-launch.js" defer></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
@@ -271,8 +273,10 @@
   <h1>Mars Walk Planner</h1>
   <div class="small adv" id="status">Connecting to back end…</div>
 
-  <label>Region <select id="region"></select></label>
+  <label id="regionPicker">Region <select id="region" aria-describedby="regionHint"></select></label>
+  <p class="small" id="regionHint">Choose a region to fly to its topographic map. Use 3D view or right-drag to explore its measured terrain.</p>
   <div class="small" id="areaStatus"></div>
+  <button id="region3dView" class="secondary" type="button" hidden>View this region in 3D</button>
 
   <p class="small">Plan a mission, or open Mars global maps to explore. Click the map to inspect a point.</p>
   <div class="row">
@@ -336,6 +340,10 @@
   <input type="range" id="hour" min="0" max="24" step="0.25" value="11" />
   <label class="check"><input type="checkbox" id="globeLighting" checked aria-describedby="lightingNote" /> Sunlight and atmosphere</label>
   <div class="small" id="lightingNote">Move your mouse over the night side to reveal the map. Globe lighting follows the selected region’s solar time.</div>
+  <label class="check"><input type="checkbox" id="showStars" checked /> Star background</label>
+  <label class="check"><input type="checkbox" id="showDustHaze" aria-describedby="dustHazeNote" /> Seasonal dust haze</label>
+  <div class="small" id="dustHazeNote">Illustrative haze from seasonal dust data at the view center. It does not locate individual clouds or show live storms.</div>
+  <div class="small" id="dustHazeStatus" role="status" hidden></div>
   </details>
 
   <details id="globalMaps" class="panel-section" name="workspace">
@@ -343,6 +351,18 @@
     <p class="small">Choose one planet-wide view. Add names, rover tracks and photo outlines below.</p>
     <label for="globalLayer">Map view (choose one)</label>
     <select id="globalLayer"><option value="">The planner's own map</option></select>
+    <div id="terrainDisplayControls" hidden>
+      <label for="terrainScale">Terrain height: <b id="terrainScaleValue">2.7× (enhanced)</b></label>
+      <input id="terrainScale" type="range" min="1" max="8" step="0.1" value="2.7" aria-describedby="terrainScaleNote" />
+      <div class="small" id="terrainScaleNote">Display exaggeration only. 1× shows true proportions; measured heights and planning calculations stay unchanged.</div>
+      <div class="row"><button id="terrainAngledView" class="secondary" type="button">Angled terrain view</button>
+        <button id="terrainTrueScale" class="secondary" type="button">True scale (1×)</button></div>
+      <button id="terrainJezero" class="secondary" type="button">Explore Jezero in 3D</button>
+      <button id="terrainReload" class="secondary" type="button">Reload terrain detail</button>
+      <div class="small" id="terrainResolutionNote"></div>
+      <div class="small" id="terrainLocationNote"></div>
+      <div class="small" id="terrainStreamingStatus" role="status" hidden></div>
+    </div>
   <div id="radiationControls" hidden>
     <label for="radiationSolar">Solar activity scenario</label>
     <select id="radiationSolar">
@@ -380,12 +400,25 @@
     <p class="small">Inspect the selected area's terrain, minerals and route conditions.</p>
     <label for="regionalLayer">Regional data layer</label>
     <select id="regionalLayer"><option value="">No regional data layer</option></select>
-  <h2>Sharp imagery (5 m)</h2>
+  <h2>Sharp photos &amp; 3D terrain</h2>
+  <p class="small">Photo boxes can overlay any map. Select Topographic map for measured 3D terrain, then right-drag to tilt. Zoom loads finer available survey tiles.</p>
   <div class="row">
     <button id="boxBtn" class="secondary" type="button">Box a sharp area</button>
     <button id="clearBox" class="secondary" type="button">Clear</button>
   </div>
   <div class="small" id="boxInfo">Click "Box a sharp area", then click two corners on the map.</div>
+  <div class="small" id="sharpTerrainStatus" role="status" hidden></div>
+  <button id="sharpTerrainRetry" class="secondary" type="button" hidden>Retry 3D terrain</button>
+  <div id="sharpTerrainDisplayControls" hidden>
+    <label for="sharpTerrainScale">Terrain height: <b id="sharpTerrainScaleValue">2.7× (enhanced)</b></label>
+    <input id="sharpTerrainScale" type="range" min="1" max="8" step="0.1" value="2.7" aria-describedby="sharpTerrainScaleNote" />
+    <div class="small" id="sharpTerrainScaleNote">Display exaggeration only. Measured heights and planning values stay unchanged.</div>
+    <div class="row"><button id="sharpTerrainAngledView" class="secondary" type="button">Angled terrain view</button>
+      <button id="sharpTerrainTrueScale" class="secondary" type="button">True scale (1×)</button></div>
+    <div class="small" id="sharpTerrainResolutionNote"></div>
+    <button id="sharpTerrainReload" class="secondary" type="button">Reload terrain detail</button>
+    <div class="small" id="sharpTerrainStreamingStatus" role="status" hidden></div>
+  </div>
 
   <label class="check"><input type="checkbox" id="showTracks" /> Show rover tracks</label>
   <div id="trackInfo" class="small"></div>
@@ -442,6 +475,9 @@
     <p><a href="/api/weather/sources" target="_blank" rel="noopener">Weather data and source inventory</a></p>
     <p><a href="/api/radiation/method" target="_blank" rel="noopener">Radiation method, assumptions and sources</a></p>
     <p><a href="https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html" target="_blank" rel="noopener">Murray Lab CTX viewer and global map catalogue</a></p>
+    <p><a href="https://astrogeology.usgs.gov/search/map/mars_2020_science_investigation_ctx_dem_mosaic" target="_blank" rel="noopener">USGS / NASA-JPL Mars 2020 Jezero elevation survey (20 m)</a> · <a href="/api/terrain/jezero" target="_blank" rel="noopener">Local coverage and processing details</a></p>
+    <p><a href="https://stac.astrogeology.usgs.gov/docs/data/mars/ctxdtms/" target="_blank" rel="noopener">USGS Mars CTX stereo elevation catalog</a> · <a href="https://hrscteam.dlr.de/public/data/regionaldtms.php" target="_blank" rel="noopener">ESA/DLR HRSC quadrangle elevation mosaics</a> · <a href="/api/terrain/detail" target="_blank" rel="noopener">Available terrain coverage and limitations</a></p>
+    <p><a href="https://svs.gsfc.nasa.gov/3572/" target="_blank" rel="noopener">NASA Tycho/Hipparcos star atlas</a>, bundled with Cesium. Decorative orientation; not a sky-navigation chart. <a href="https://www-mars.lmd.jussieu.fr/mars/dust_scenarios/index.html" target="_blank" rel="noopener">LMD seasonal dust climatology</a> supplies optional illustrative haze, not observed clouds.</p>
     <div id="layerSources"></div>
     <h2>Global map credits</h2>
     <ul id="mapSources"></ul>
@@ -489,43 +525,89 @@ const viewer = new Cesium.Viewer("map", {
   sceneModePicker: false, homeButton: false, navigationHelpButton: false, infoBox: false, selectionIndicator: false,
 });
 const trekLayer = viewer.imageryLayers.addImageryProvider(marsTiles);
+// Stream only visible tiles, refining the measured terrain and photos as they
+// occupy more screen pixels. Height amplification is a labeled display setting;
+// providers and planning calculations always retain the original measured values.
+viewer.scene.globe.maximumScreenSpaceError = 1;
+viewer.scene.globe.tileCacheSize = 256;
+let terrainScale = 2.7;
+viewer.scene.verticalExaggeration = terrainScale;
+viewer.scene.verticalExaggerationRelativeHeight = 0;
+const cameraControls = viewer.scene.screenSpaceCameraController;
+cameraControls.tiltEventTypes = [Cesium.CameraEventType.RIGHT_DRAG, Cesium.CameraEventType.MIDDLE_DRAG,
+  Cesium.CameraEventType.PINCH,
+  { eventType: Cesium.CameraEventType.LEFT_DRAG, modifier: Cesium.KeyboardEventModifier.CTRL },
+  { eventType: Cesium.CameraEventType.RIGHT_DRAG, modifier: Cesium.KeyboardEventModifier.CTRL }];
+cameraControls.zoomEventTypes = [Cesium.CameraEventType.WHEEL, Cesium.CameraEventType.PINCH];
+cameraControls.maximumTiltAngle = Math.PI / 2;
+cameraControls.enableCollisionDetection = true;
+cameraControls.enableTilt = false; // Only the topographic map permits an angled camera.
+cameraControls.enableLook = false;
+viewer.scene.canvas.addEventListener("contextmenu", event => event.preventDefault());
 if (viewer.scene.sun) viewer.scene.sun.show = false;
 if (viewer.scene.moon) viewer.scene.moon.show = false;
 viewer.scene.backgroundColor = Cesium.Color.BLACK;
 viewer.scene.globe.baseColor = Cesium.Color.fromCssColorString("#171b21");
 const globeLighting = createMarsLighting(viewer, MARS, $("marsSun"));
+let marsSky = null;
 const routePlayback = createRoutePlayback({ viewer, ellipsoid: MARS, controls: {
   panel: $("routePlayback"), button: $("playRoute"), status: $("routePlaybackStatus"),
   walk: $("walkerView"), walkNav: $("walkerNav"), walkPrev: $("walkerPrev"), walkNext: $("walkerNext"),
   walkExit: $("walkerExit"), walkStatus: $("walkerStatus"),
+  beforeWalk: async () => {
+    if (!await selectTopographicMap(() => routePlayback.walking())) throw new Error("View changed.");
+    const selected = murray.state.terrain;
+    if (selected?.loading) await selected.loading;
+    if (!topographicSelected() || viewer.terrainProvider === flatTerrain) throw new Error("Topographic terrain is unavailable.");
+    return { provider: viewer.terrainProvider };
+  },
 } });
-$("globeLighting").onchange = () => globeLighting.setEnabled($("globeLighting").checked);
+$("globeLighting").onchange = () => {
+  globeLighting.setEnabled($("globeLighting").checked);
+  marsSky?.refresh();
+};
 globeLighting.setEnabled($("globeLighting").checked);
 
-// Sharp 5 m CTX imagery (Murray Lab, Caltech), coloured by our back end, loaded ONLY inside a chosen box
-// (keeps the globe fast). Selecting a Jezero region boxes it automatically.
-let ctxLayer = null, boxEntity = null, sharpBox = null;
-function setSharpBox(r) {                       // r = {west, south, east, north} in degrees, or null
+// Black-and-white CTX photos inside a region. Explicitly drawn areas stay pinned
+// until Clear; automatic regional previews can still fade out at globe distance.
+let ctxLayer = null, boxEntity = null, sharpBox = null, sharpBoxPinned = false;
+function syncSharpBoxOrder() {
+  if (sharpBoxPinned && ctxLayer && viewer.imageryLayers.contains(ctxLayer)) {
+    viewer.imageryLayers.raiseToTop(ctxLayer);
+  }
+}
+function mapTileUrl(url) { return url.startsWith("/") ? API + url : url; }
+// Later weather detail tiles must not cover a deliberately pinned photo area.
+viewer.imageryLayers.layerAdded.addEventListener(() => queueMicrotask(syncSharpBoxOrder));
+function setSharpBox(r, { persistent = false } = {}) { // degrees; east < west crosses the dateline
+  if (r && sharpBoxPinned && !persistent) return; // region loads cannot replace the user's box
   if (ctxLayer) { viewer.imageryLayers.remove(ctxLayer, true); ctxLayer = null; }
   if (boxEntity) { viewer.entities.remove(boxEntity); boxEntity = null; }
   sharpBox = r;
-  if (!r) { viewer.scene.requestRender(); return; }
+  sharpBoxPinned = !!r && persistent;
+  if (!r) { applyGlobalMap(); return; }
   const rect = Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north);
-  // The Murray Lab "Detailed photos (black and white)" map (CTX mosaic, 5 m, straight from Esri's OnMars tiles),
-  // clipped to the box.
+  // Murray Lab CTX photos, validated by our tile proxy and clipped to the box.
   const ctxDef = murray.defs.find((d) => d.id === "ctx");
   ctxLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-    url: ctxDef ? ctxDef.url : "https://astro.arcgis.com/arcgis/rest/services/OnMars/CTX1/MapServer/tile/{z}/{y}/{x}",
+    url: mapTileUrl(ctxDef ? ctxDef.url : "/murray/ctx/{z}/{y}/{x}"),
     tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
-    tileWidth: 512, tileHeight: 512, maximumLevel: ctxDef ? ctxDef.max_level : 17, rectangle: rect,
+    tileWidth: 512, tileHeight: 512, maximumLevel: ctxDef ? ctxDef.max_level : 12, rectangle: rect,
     credit: ctxDef ? ctxDef.credit : "Imagery: NASA, JPL, MSSS, Caltech/Murray Lab, Esri",
   }));                                              // above every background map...
+  const sharpLayer = ctxLayer;
+  sharpLayer.imageryProvider.errorEvent.addEventListener(error => {
+    const current = ctxLayer === sharpLayer;
+    error.retry = current && error.timesRetried === 0; // one bounded retry for a transient image failure
+    if (current && sharpBoxPinned && !error.retry) $("boxInfo").textContent = "Some sharp-area photos could not load. Redraw the area to retry. Terrain remains available independently.";
+  });
   for (const l of overlay) if (viewer.imageryLayers.contains(l)) viewer.imageryLayers.raiseToTop(l);   // ...below data
   boxEntity = viewer.entities.add({ polyline: {
     positions: Cesium.Cartesian3.fromDegreesArray([r.west, r.south, r.east, r.south, r.east, r.north,
       r.west, r.north, r.west, r.south], MARS),
-    width: 1.5, material: Cesium.Color.ORANGE.withAlpha(0.8), clampToGround: true } });
-  syncBasemapVisibility();
+    width: 1.5, material: Cesium.Color.ORANGE.withAlpha(0.8), clampToGround: true,
+    arcType: Cesium.ArcType.RHUMB } });
+  applyGlobalMap();
   fadePhoto();
   viewer.scene.requestRender();
 }
@@ -549,13 +631,14 @@ async function loadHiresPhoto(region) {
   } catch (e) { console.warn("hi-res photo", e); }
 }
 
-// Photo fades in as you zoom toward the surface (invisible from far away)
+// Automatic region previews fade with distance; a drawn box never fades away.
 const PHOTO_FULL_KM = 120, PHOTO_HIDDEN_KM = 600;
 function fadePhoto() {
   const km = viewer.camera.positionCartographic.height / 1000;
   const t = Math.max(0, Math.min(1, (PHOTO_HIDDEN_KM - km) / (PHOTO_HIDDEN_KM - PHOTO_FULL_KM)));
   if (photoLayer) photoLayer.alpha = t;
-  if (ctxLayer && ctxLayer.alpha !== t) { ctxLayer.alpha = t; viewer.scene.requestRender(); }
+  const alpha = sharpBoxPinned ? 1 : t;
+  if (ctxLayer && ctxLayer.alpha !== alpha) { ctxLayer.alpha = alpha; viewer.scene.requestRender(); }
 }
 viewer.camera.percentageChanged = 0.05;
 viewer.camera.changed.addEventListener(fadePhoto);
@@ -579,6 +662,15 @@ let timeline = null, shownConditions = null, shownResponse = null;
 let hoverPoint = null, hoverTimer, hoverLoad, hoverVersion = 0;
 let windPaused = matchMedia("(prefers-reduced-motion: reduce)").matches;
 let pointRequest = 0;
+marsSky = createMarsSky({ viewer, ellipsoid: MARS, api: API,
+  getConditions: conditions, getLocation: viewCenter,
+  onStatus: text => {
+    $("dustHazeStatus").textContent = text;
+    $("dustHazeStatus").hidden = !text;
+  },
+});
+$("showStars").onchange = () => marsSky.setStarsEnabled($("showStars").checked);
+$("showDustHaze").onchange = () => marsSky.setDustEnabled($("showDustHaze").checked);
 const marks = viewer.entities;
 const imageLayers = () => tileset ? tileset.imageryLayers : viewer.imageryLayers;
 const mapOpacity = () => +$("mapOpacity").value / 100;
@@ -645,6 +737,7 @@ function syncGlobeLighting() {
     Cesium.Rectangle.fromDegrees(rectangle.west, rectangle.south, rectangle.east, rectangle.north)
   ).longitude) : 0;
   globeLighting.update(+$("hour").value, +$("ls").value, longitude);
+  marsSky?.refresh();
 }
 
 async function api(path, body, signal) {
@@ -727,6 +820,11 @@ async function refreshLayer() {
     weatherDisplay.renderLegend(guide);
   }
   if (!name) return false;
+  if (current?.planningReady === false && !globalLayerSelected()) {
+    clearOverlay();
+    $("layerStatus").textContent = "Regional planning data is still unavailable here. The topographic map is ready to explore.";
+    return false;
+  }
   const load = new AbortController();
   layerLoad = load;
   $("layerStatus").textContent = "Loading layer…";
@@ -905,7 +1003,7 @@ function pin(id, p, color, text) {
     point: { pixelSize: 12, color, outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
     label: { text, font: "13px sans-serif", pixelOffset: new Cesium.Cartesian2(0, -20),
-             disableDepthTestDistance: 1e9 } });
+             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 } });
 }
 
 new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e) => {
@@ -913,11 +1011,13 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
   const request = ++pointRequest;
   if (mode === "box1") { boxCorner = p; mode = "box2"; $("boxInfo").textContent = "Now click the opposite corner."; return; }
   if (mode === "box2") {
+    const b = sharpRectangle(boxCorner, p);
+    if (!b) { $("boxInfo").textContent = "Choose an opposite corner with a different latitude and longitude."; return; }
     mode = null; $("boxBtn").classList.remove("active");
-    const b = { west: Math.min(boxCorner.lon, p.lon), east: Math.max(boxCorner.lon, p.lon),
-                south: Math.min(boxCorner.lat, p.lat), north: Math.max(boxCorner.lat, p.lat) };
-    setSharpBox(b);
-    $("boxInfo").textContent = `Sharp area: ${(b.east - b.west).toFixed(2)}° x ${(b.north - b.south).toFixed(2)}°. Zoom in to see 5 m detail.`;
+    boxCorner = null;
+    setSharpBox(b, { persistent: true });
+    $("boxInfo").textContent = `Pinned area: ${((b.east - b.west + 360) % 360).toFixed(2)}° × ${(b.north - b.south).toFixed(2)}°. ` +
+      "Photos stay visible at any zoom. Select Topographic map for 3D terrain and right-drag to tilt. Clear removes the photo overlay.";
     return;
   }
   if (!mode) {
@@ -965,9 +1065,19 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
 let boxCorner = null;
+function sharpRectangle(a, b) {
+  const west = Math.min(a.lon, b.lon), east = Math.max(a.lon, b.lon);
+  const south = Math.min(a.lat, b.lat), north = Math.max(a.lat, b.lat);
+  if (north - south < 1e-7 || Math.min(east - west, 360 - (east - west)) < 1e-7) return null;
+  return east - west > 180 ? { west: east, east: west, south, north } : { west, east, south, north };
+}
 $("boxBtn").onclick = () => { mode = "box1"; $("boxBtn").classList.add("active");
   $("boxInfo").textContent = "Click the first corner of the area."; };
-$("clearBox").onclick = () => { setSharpBox(null); $("boxInfo").textContent = "Sharp imagery off (fast mode)."; };
+$("clearBox").onclick = () => {
+  if (mode === "box1" || mode === "box2") mode = null;
+  boxCorner = null; $("boxBtn").classList.remove("active");
+  setSharpBox(null); $("boxInfo").textContent = "Sharp area cleared. The selected global map stays on.";
+};
 $("setBase").onclick = () => { mode = "base"; $("setBase").classList.add("active"); };
 $("setTarget").onclick = () => { mode = "target"; $("setTarget").classList.add("active"); };
 $("gearLink").onclick = () => {
@@ -1002,6 +1112,7 @@ function chooseMatch(i, fly = true) {
   if (fly) viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(m.lon, m.lat, 30000, MARS) });
 }
 async function findTarget() {
+  if (current?.planningReady === false) { $("findInfo").textContent = "Wait for this region's planning data to load, or choose a ready region."; return; }
   const query = $("query").value.trim();
   if (!query) { $("findInfo").textContent = "Type what you are looking for, e.g. valley with clay."; return; }
   const id = ++findRequest;
@@ -1031,7 +1142,7 @@ async function findTarget() {
         point: { pixelSize: 8, color: Cesium.Color.GOLD, outlineColor: Cesium.Color.BLACK, outlineWidth: 1,
                  heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
         label: { text: String(i + 1), font: "12px sans-serif", pixelOffset: new Cesium.Cartesian2(10, -10),
-                 disableDepthTestDistance: 1e9 } });
+                 heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 } });
       const li = document.createElement("li");
       li.textContent = `${Math.round(m.score * 100)}% match · ${m.lat.toFixed(4)}°N ${m.lon.toFixed(4)}°E`;
       const why = document.createElement("span");
@@ -1163,6 +1274,7 @@ function invalidatePlan() {
 
 // ------------------------------------------------------------------ plan ----
 $("plan").onclick = async () => {
+  if (current?.planningReady === false) { $("warn").textContent = "This region's planning data is not ready yet."; return; }
   if (!base || !target) { $("warn").textContent = "Set a base and a target first."; return; }
   $("explain").textContent = "Planning…"; $("warn").textContent = "";
   const planId = ++planRequest;
@@ -1229,7 +1341,8 @@ function marker(ds, p, color, text, size = 11) {
   ds.entities.add({ position: Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS),
     point: { pixelSize: size, color, outlineColor: Cesium.Color.WHITE, outlineWidth: 2,
              heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 },
-    label: { text, font: "12px sans-serif", pixelOffset: new Cesium.Cartesian2(0, -18), disableDepthTestDistance: 1e9 } });
+    label: { text, font: "12px sans-serif", pixelOffset: new Cesium.Cartesian2(0, -18),
+             heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 } });
 }
 
 let missionCtl = null;                       // the plan being streamed; a new plan aborts the old stream
@@ -1593,7 +1706,7 @@ function drawMission(fly) {
         label: { text: noteText(n), font: "12px Inter, sans-serif", fillColor: Cesium.Color.WHITE, showBackground: true,
                  backgroundColor: C("#1c1d22").withAlpha(0.85), backgroundPadding: new Cesium.Cartesian2(6, 4),
                  horizontalOrigin: Cesium.HorizontalOrigin.LEFT, pixelOffset: new Cesium.Cartesian2(9, 0),
-                 disableDepthTestDistance: 1e9 } });
+                 heightReference: Cesium.HeightReference.CLAMP_TO_GROUND, disableDepthTestDistance: 1e9 } });
     }
     const sel = i === selected;
     marker(missionLayer, c.A, sel ? C("#2f8fff") : C("#2f8fff").withAlpha(0.5), `A${c.rank}${c.A.kind === "NASA candidate" ? " NASA" : ""}`);
@@ -1652,11 +1765,148 @@ $("mVehicle").addEventListener("change", () => { if ($("showTracks").checked) sh
 
 
 // ------------------------------------------------------- Murray Lab maps ----
-// Every map from the Murray Lab CTX viewer (murray.py on the server). Tiles come straight from Esri's OnMars
-// services; terrain, traverses, names, craters, the CTX tile index and HiRISE footprints come via our server.
+// Murray Lab CTX viewer sources (murray.py). CTX photos are validated by our
+// server; other imagery uses Esri directly. Terrain and annotations use our server.
 const murray = { defs: [], state: {}, selectedMap: null };
 const flatTerrain = new Cesium.EllipsoidTerrainProvider({ ellipsoid: MARS });
 const murrayOn = (id) => !!(murray.state[id] && murray.state[id].on);
+let terrainViewRequest = 0, terrainFlight = false, terrainClearanceRemove = null;
+let pendingTerrainTiles = 0;
+function updateTerrainStreaming() {
+  for (const prefix of ["terrain", "sharpTerrain"]) {
+    const node = $(prefix + "StreamingStatus");
+    node.hidden = !(murrayOn("terrain") && pendingTerrainTiles > 0);
+    node.textContent = node.hidden ? "" : "Loading terrain and photo tiles… Detail sharpens as the measured data arrives.";
+  }
+}
+viewer.scene.globe.tileLoadProgressEvent.addEventListener(count => {
+  pendingTerrainTiles = count;
+  updateTerrainStreaming();
+});
+function terrainResolutionText() {
+  const provider = murray.state.terrain?.provider;
+  let minimum = Infinity, maximum = -Infinity;
+  for (const region of provider?.detailRegions || []) {
+    minimum = Math.min(minimum, region.resolution_m);
+    maximum = Math.max(maximum, region.resolution_m);
+  }
+  const spacing = Number.isFinite(minimum) ? minimum === maximum ? `${minimum.toFixed(0)} m`
+    : `${minimum.toFixed(0)}–${maximum.toFixed(0)} m` : "finer surveyed";
+  return provider?.regionalMetadata?.available
+    ? `Elevation grids: ${spacing} where available; 200 m global fallback. Gaps and survey edges blend into the coarser measured terrain. Grid spacing is not a guarantee of feature accuracy.`
+    : "Elevation: global 200 m grid. Finer surveys could not load. Photos: up to 5 m.";
+}
+function updateTerrainLocation() {
+  const provider = murray.state.terrain?.provider;
+  const p = viewCenter();
+  if (!p || !provider?.regionalMetadata?.available) {
+    $("terrainLocationNote").textContent = !p ? "Point the view at Mars to check survey coverage."
+      : "Detailed survey inventory is unavailable; using global terrain.";
+    return;
+  }
+  const detail = p && provider?.getDetailForPosition?.(Cesium.Cartographic.fromDegrees(p.lon, p.lat));
+  $("terrainLocationNote").textContent = detail
+    ? `Survey coverage at the view center: ${detail.resolution_m.toFixed(1).replace(/\.0$/, "")} m grid. Data gaps or unavailable sources use the global terrain.`
+    : "View center: global 200 m terrain; no finer survey is cataloged here.";
+}
+viewer.camera.moveEnd.addEventListener(updateTerrainLocation);
+function syncTerrainControls() {
+  const on = topographicSelected();
+  $("terrainDisplayControls").hidden = !on;
+  $("region3dView").hidden = !on;
+  $("sharpTerrainDisplayControls").hidden = !on || !sharpBoxPinned;
+  cameraControls.enableTilt = on;
+  cameraControls.enableLook = on;
+  for (const prefix of ["terrain", "sharpTerrain"]) {
+    $(prefix + "Scale").value = terrainScale;
+    $(prefix + "ScaleValue").textContent = terrainScale === 1 ? "1× (true scale)" : `${terrainScale.toFixed(1)}× (enhanced)`;
+    $(prefix + "ResolutionNote").textContent = terrainResolutionText();
+  }
+  updateTerrainLocation();
+  updateTerrainStreaming();
+}
+function setTerrainScale(value) {
+  const next = Math.round(Math.min(8, Math.max(1, Number(value))) * 10) / 10;
+  if (!Number.isFinite(next)) return;
+  ++terrainViewRequest;
+  if (terrainFlight) viewer.camera.cancelFlight();
+  terrainScale = next;
+  viewer.scene.verticalExaggeration = next;
+  // Read the newly rendered surface, not a stale mesh from before a rapid slider
+  // gesture. Cesium also keeps collision detection enabled while tiles refine.
+  terrainClearanceRemove?.();
+  terrainClearanceRemove = viewer.scene.postRender.addEventListener(() => {
+    terrainClearanceRemove?.(); terrainClearanceRemove = null;
+    const camera = viewer.camera, location = camera.positionCartographic;
+    const ground = viewer.scene.globe.getHeight(location);
+    if (Number.isFinite(ground) && location.height < ground + 50) {
+      camera.setView({ destination: Cesium.Cartesian3.fromRadians(location.longitude, location.latitude, ground + 50, MARS),
+        orientation: { heading: camera.heading, pitch: camera.pitch, roll: camera.roll } });
+      viewer.scene.requestRender();
+    }
+  });
+  syncTerrainControls();
+  viewer.scene.requestRender();
+}
+for (const prefix of ["terrain", "sharpTerrain"]) {
+  $(prefix + "Scale").oninput = event => setTerrainScale(event.target.value);
+  $(prefix + "Scale").addEventListener("dragstart", event => event.preventDefault());
+  $(prefix + "TrueScale").onclick = () => setTerrainScale(1);
+  $(prefix + "AngledView").onclick = () => angledTerrainView(sharpBoxPinned ? sharpBox : null);
+}
+async function angledTerrainView(rect = null, headingDegrees = 0) {
+  const request = ++terrainViewRequest;
+  const selected = murray.state.terrain;
+  if (!selected?.on) return;
+  const camera = viewer.camera;
+  const rectangle = rect && Cesium.Rectangle.fromDegrees(rect.west, rect.south, rect.east, rect.north);
+  const center = rectangle ? Cesium.Rectangle.center(rectangle) : (() => {
+    const p = viewCenter();
+    return p ? Cesium.Cartographic.fromDegrees(p.lon, p.lat) : Cesium.Cartographic.clone(camera.positionCartographic);
+  })();
+  if (!center) return;
+  const range = rectangle
+    ? Math.max(3500, MARS.maximumRadius * Math.max(rectangle.width * Math.cos(center.latitude), rectangle.height) * 1.05)
+    : Math.max(12000, Math.min(750000, Math.abs(camera.positionCartographic.height) * 1.35));
+  try { if (selected.loading) await selected.loading; } catch (_) { return; }
+  if (request !== terrainViewRequest || !murrayOn("terrain")) return;
+  let displayHeight;
+  const detail = selected.provider?.getDetailForPosition?.(center);
+  try {
+    // A just-switched globe can still report its previous flat mesh's height.
+    // Sample the selected source before aiming a close view into a deep crater.
+    const [sample] = await Cesium.sampleTerrain(selected.provider, detail?.maximum_level || 7,
+      [Cesium.Cartographic.clone(center)]);
+    displayHeight = sample.height * terrainScale;
+  } catch (_) { /* Retain a usable camera view if the source cannot be sampled. */ }
+  if (!Number.isFinite(displayHeight)) displayHeight = viewer.scene.globe.getHeight(center);
+  if (request !== terrainViewRequest || !murrayOn("terrain")) return;
+  const point = Cesium.Cartesian3.fromRadians(center.longitude, center.latitude,
+    Number.isFinite(displayHeight) ? displayHeight : 0, MARS);
+  camera.cancelFlight();
+  terrainFlight = true;
+  camera.flyToBoundingSphere(new Cesium.BoundingSphere(point, 0), {
+    offset: new Cesium.HeadingPitchRange(Cesium.Math.toRadians(headingDegrees), Cesium.Math.toRadians(-28), range),
+    duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.2,
+    complete: () => { terrainFlight = false; }, cancel: () => { terrainFlight = false; },
+  });
+}
+async function showJezeroTerrain() {
+  const select = $("globalLayer");
+  select.value = "map:terrain";
+  select.dispatchEvent(new Event("change", { bubbles: true }));
+  $("globalMaps").open = true;
+  const request = terrainViewRequest, selected = murray.state.terrain;
+  try { if (selected?.loading) await selected.loading; } catch (_) { return; }
+  if (request !== terrainViewRequest || !murrayOn("terrain")) return;
+  // Frame the full survey, including the high terrain east of the crater,
+  // instead of cropping those mountains out of a small landing-site box.
+  const rect = selected?.provider?.detailRegions?.find(region => region.id === "jezero")?.rectangle ||
+    { west: 77.0, south: 17.58, east: 78.58, north: 19.29 };
+  await angledTerrainView(rect, 270);
+}
+$("terrainJezero").onclick = showJezeroTerrain;
+$("region3dView").onclick = () => angledTerrainView(anywhere() ? null : current?.rect);
 
 function murrayLine(ds, ring, color, width, maxDist) {
   if (ring.length < 2) return;
@@ -1805,14 +2055,23 @@ viewer.camera.moveEnd.addEventListener(refreshHirise);
 function murrayStatus(id, message) {
   const status = $(`murray_${id}_status`);
   if (status) { status.textContent = message; status.hidden = !message; }
+  if (id === "terrain") {
+    const local = $("sharpTerrainStatus");
+    local.textContent = message; local.hidden = !topographicSelected() || !sharpBoxPinned || !message;
+    const failed = !!message && message.includes("could not load");
+    $("sharpTerrainRetry").hidden = !topographicSelected() || !sharpBoxPinned || !failed;
+    if ($("murrayTerrainRetry")) $("murrayTerrainRetry").hidden = !failed;
+  }
 }
 function syncBasemapVisibility() {
-  const own = !globalLayerSelected() && (!murray.selectedMap || murray.selectedMap === "terrain");
+  const own = !globalLayerSelected() && !murray.selectedMap;
   baseMap.show = own;
   trekLayer.show = own;
-  if (ctxLayer) ctxLayer.show = own;
+  if (ctxLayer) ctxLayer.show = own || sharpBoxPinned;
   if (photoLayer) photoLayer.show = own;
-  if (boxEntity) boxEntity.show = own;
+  if (boxEntity) boxEntity.show = own || sharpBoxPinned;
+  murrayStatus("terrain", $("murray_terrain_status")?.textContent || "");
+  syncSharpBoxOrder();
   viewer.scene.requestRender();
 }
 function limitTerrainLevels(provider, maximumLevel) {
@@ -1837,7 +2096,7 @@ function focusMurrayRoute(def) {
   const points = st.routePoints.map(p => Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS));
   const sphere = Cesium.BoundingSphere.fromPoints(points);
   viewer.camera.flyToBoundingSphere(sphere, {
-    offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(-65), Math.max(1800, sphere.radius * 3.5)),
+    offset: new Cesium.HeadingPitchRange(0, Cesium.Math.toRadians(topographicSelected() ? -65 : -90), Math.max(1800, sphere.radius * 3.5)),
     duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.5,
   });
   if (def.id === "m2020") routePlayback.setRoute("murray_m2020", st.routePoints, "perseverance",
@@ -1857,11 +2116,19 @@ async function murrayToggle(def, on) {
     if (def.kind === "tiles") {
       if (on && !st.layer) {                                   // above every base map, below the data overlays
         st.layer = coll.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
-          url: def.url, tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
+          url: mapTileUrl(def.url), tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
           tileWidth: 512, tileHeight: 512, maximumLevel: def.max_level, credit: def.credit }));
-        st.layer.imageryProvider.errorEvent.addEventListener(error => {
-          error.retry = false;
-          if (st.on) murrayStatus(def.id, "Some image tiles could not load. Choose another background or retry this map.");
+        const activeLayer = st.layer;
+        activeLayer.imageryProvider.errorEvent.addEventListener(error => {
+          const current = st.on && st.layer === activeLayer;
+          if (current) {
+            st.imageErrors ||= [];
+            st.imageErrors.push({ x: error.x, y: error.y, level: error.level, message: error.message,
+              detail: error.error?.message || String(error.error || ""), attempts: error.timesRetried });
+            if (st.imageErrors.length > 8) st.imageErrors.shift();
+          }
+          error.retry = current && error.timesRetried === 0;
+          if (current && !error.retry) murrayStatus(def.id, "Some image tiles could not load. Choose another background or retry this map.");
         });
         for (const l of overlay) if (coll.contains(l)) coll.raiseToTop(l);
       }
@@ -1869,12 +2136,13 @@ async function murrayToggle(def, on) {
     } else if (def.kind === "terrain") {
       if (on && !st.provider) {
         st.loading ||= Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(API + def.url, { ellipsoid: MARS })
-          .then(provider => {
+          .then(async provider => {
             provider.errorEvent.addEventListener(error => {
               error.retry = false;
-              if (st.on) murrayStatus(def.id, "Some 3D terrain tiles could not load. Zoom out or toggle terrain to retry.");
+              if (st.on && (st.provider === provider || st.provider?.baseProvider === provider))
+                murrayStatus(def.id, "Some 3D terrain tiles could not load. Use Retry 3D terrain to reload the elevation service.");
             });
-            return st.provider = limitTerrainLevels(provider, def.max_level);
+            return st.provider = await createRegionalTerrainProvider(Cesium, limitTerrainLevels(provider, def.max_level), { api: API });
           }).finally(() => { st.loading = null; });
         await st.loading;
       }
@@ -1882,6 +2150,14 @@ async function murrayToggle(def, on) {
       const provider = on ? st.provider : flatTerrain;
       if (viewer.terrainProvider !== provider) viewer.terrainProvider = provider;
       viewer.scene.globe.depthTestAgainstTerrain = on;
+      syncTerrainControls();
+      // Crater floors can lie below the reference sphere. Switching to a flat
+      // map must not leave the camera inside that newly restored sphere.
+      if (!on && viewer.camera.positionCartographic.height < 25) {
+        const c = viewer.camera.positionCartographic;
+        viewer.camera.setView({ destination: Cesium.Cartesian3.fromRadians(c.longitude, c.latitude, 25, MARS),
+          orientation: { heading: viewer.camera.heading, pitch: viewer.camera.pitch, roll: viewer.camera.roll } });
+      }
     } else if (def.kind === "geojson") {
       if (on) {
         if (!st.ds) {
@@ -1914,7 +2190,10 @@ async function murrayToggle(def, on) {
     if (!latest()) return;
     if (focus) focus.disabled = false;
     if (on && def.kind !== "bbox" && def.id !== "names") murrayStatus(def.id,
-      def.kind === "terrain" ? "3D terrain is on. Hold Ctrl and drag the map to tilt and see the hills."
+      def.kind === "terrain" ? (st.provider?.regionalError
+        ? "Detailed terrain surveys could not load; global terrain remains active. Use Retry 3D terrain to reload the survey catalog."
+        : "3D terrain is on. Use Angled terrain view to see the relief, or right-drag to tilt. The height control changes display proportions only.")
+      : def.id === "ctx" ? "Black-and-white photos: up to 5 m/pixel. Damaged image tiles use valid coarser photos. Select Topographic map for measured 3D elevation."
       : st.routePoints ? `${def.title}. Archived route, not a live rover position.`
       : `${MURRAY_PLAIN[def.id] || def.title} is on.`);
   } catch (e) {
@@ -1926,10 +2205,21 @@ async function murrayToggle(def, on) {
     if (def.kind === "tiles") {
       if (st.layer) { coll.remove(st.layer, true); st.layer = null; }
     }
-    murrayStatus(def.id, `${def.title} could not load: ${e.message || e}. Toggle to retry.`);
+    murrayStatus(def.id, `${def.title} could not load: ${e.message || e}. ` +
+      (def.kind === "terrain" ? "Use Retry 3D terrain." : "Toggle to retry."));
   }
   viewer.scene.requestRender();
 }
+function retryTerrain() {
+  const def = murray.defs.find(layer => layer.kind === "terrain");
+  if (!def) return;
+  murrayToggle(def, false);
+  murray.state[def.id].provider = null;
+  applyGlobalMap();
+}
+$("sharpTerrainRetry").onclick = retryTerrain;
+$("terrainReload").onclick = retryTerrain;
+$("sharpTerrainReload").onclick = retryTerrain;
 
 async function murrayPointLinks(p, request) {
   const box = $("infoLinks");
@@ -1952,27 +2242,71 @@ async function murrayPointLinks(p, request) {
   } catch (e) { /* the panel already shows the pixel values */ }
 }
 
-// One surface view at a time; annotation overlays remain independent.
-const MURRAY_PLAIN = { ctx: "Detailed photos (black and white)", mola: "Height map (coloured by height)",
-  viking: "Colour photos", terrain: "3D hills and craters", m2020: "Perseverance rover's path",
+// One global surface view. Only Topographic map combines CTX imagery with measured
+// elevation; pinned photos and annotation overlays never turn 3D terrain on.
+const MURRAY_PLAIN = { ctx: "Detailed photos (black and white, 2D)", mola: "Elevation colours (2D)",
+  viking: "Colour photos", terrain: "Topographic map (3D + detailed photos)", m2020: "Perseverance rover's path",
   msl: "Curiosity rover's path", names: "Place names", craters: "Crater names",
   quads: "Photo tile grid (with download links)", hirise: "Where close-up photos exist" };
+function topographicSelected() { return plannerLayout.globalChoice() === "map:terrain"; }
+async function selectTopographicMap(isCurrent = () => true) {
+  await murrayCatalogueReady;
+  if (!isCurrent()) return false;
+  if (!murray.defs.some(def => def.id === "terrain")) throw new Error("The topographic map catalogue could not load. Reload to retry.");
+  if (!topographicSelected()) {
+    $("globalLayer").value = "map:terrain";
+    $("globalLayer").dispatchEvent(new Event("change", { bubbles: true }));
+  }
+  return true;
+}
+function overheadMapView() {
+  const camera = viewer.camera;
+  // Preserve the point being inspected when leaving an oblique view. A point on
+  // the old elevated mesh must be projected to the restored reference sphere.
+  const center = viewCenter(), old = camera.positionCartographic;
+  let destination;
+  if (center) {
+    const surface = Cesium.Cartesian3.fromDegrees(center.lon, center.lat, 0, MARS);
+    const range = Cesium.Cartesian3.distance(camera.positionWC, surface);
+    destination = Cesium.Cartesian3.fromDegrees(center.lon, center.lat, Math.max(100, range), MARS);
+  } else destination = Cesium.Cartesian3.fromRadians(old.longitude, old.latitude, Math.max(100, old.height), MARS);
+  camera.cancelFlight();
+  camera.setView({ destination, orientation: { heading: camera.heading, pitch: -Math.PI / 2, roll: 0 } });
+}
 function applyGlobalMap() {
+  ++terrainViewRequest;
   const choice = plannerLayout.globalChoice();
   const id = choice.startsWith("map:") ? choice.slice(4) : null;
   const def = murray.defs.find(layer => layer.id === id);
+  const leavingTerrain = murray.selectedMap === "terrain" && id !== "terrain";
+  if (leavingTerrain) {
+    routePlayback.exitWalker(false);
+    overheadMapView();
+  }
   murray.selectedMap = id;
+  const terrainWanted = id === "terrain";
   // Turn off old surfaces synchronously before starting the chosen provider.
   // Each provider also guards its pending load, so a late response cannot revive it.
   for (const layer of murray.defs) {
-    if (["tiles", "terrain"].includes(layer.kind) && layer !== def && murrayOn(layer.id)) {
+    const wanted = layer.kind === "terrain" ? terrainWanted : layer === def || (terrainWanted && layer.id === "ctx");
+    if (["tiles", "terrain"].includes(layer.kind) && !wanted && murrayOn(layer.id)) {
       murrayToggle(layer, false);
     }
   }
+  if (!terrainWanted) {
+    if (terrainFlight) viewer.camera.cancelFlight();
+    murrayStatus("terrain", "");
+  }
   syncBasemapVisibility();
   if (def && !murrayOn(def.id)) murrayToggle(def, true);
+  const photos = murray.defs.find(layer => layer.id === "ctx");
+  if (terrainWanted && photos && !murrayOn("ctx")) murrayToggle(photos, true);
+  const terrain = murray.defs.find(layer => layer.kind === "terrain");
+  if (terrainWanted && terrain && !murrayOn(terrain.id)) murrayToggle(terrain, true);
+  syncTerrainControls();
+  syncSharpBoxOrder();
 }
-api("/api/murray/layers").then((d) => {
+const murrayCatalogueReady = api("/api/murray/layers").then((d) => {
   murray.defs = d.layers;
   plannerLayout.mapCredits(d.layers);
   plannerLayout.setGlobalMaps(d.layers.filter(def => ["tiles", "terrain"].includes(def.kind))
@@ -1982,6 +2316,8 @@ api("/api/murray/layers").then((d) => {
     MURRAY_PLAIN[def.id] || def.title, el("span", { className: "adv", textContent: def.title }));
   const status = def => el("div", { id: `murray_${def.id}_status`, className: "small", role: "status", hidden: true });
   for (const def of d.layers.filter(x => ["tiles", "terrain"].includes(x.kind))) box.append(status(def));
+  box.append(el("button", { id: "murrayTerrainRetry", type: "button", className: "secondary",
+    textContent: "Retry 3D terrain", hidden: true, onclick: retryTerrain }));
   box.append(el("div", { className: "small murrayHead", textContent: "Labels, tracks & photo outlines (combine as needed)" }));
   for (const def of d.layers.filter((x) => x.kind !== "tiles" && x.kind !== "terrain")) {
     const c = el("input", { type: "checkbox", id: `murray_${def.id}` });
@@ -2010,6 +2346,7 @@ const ROVER_HEADING_OFFSET = 0;                   // the model faces +X, which C
 const roverEntity = viewer.entities.add({ id: "hoverRover", show: false,
   position: Cesium.Cartesian3.fromDegrees(0, 0, 0, MARS),
   model: { uri: "rover.glb", minimumPixelSize: 64, maximumScale: 20000,
+           enableVerticalExaggeration: false,
            heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
            silhouetteColor: Cesium.Color.fromCssColorString("#e0703a"), silhouetteSize: 1.5 } });
 
@@ -2168,41 +2505,89 @@ document.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key ===
 $("startExploring").focus();
 
 // ------------------------------------------------ plan anywhere on Mars ----
-let namedSites = [];             // /api/sites: famous places, loaded on demand (about a minute the first time)
+let namedSites = [], siteSizeDegrees = 0.8;
+let regionSelectionRequest = 0, globalSelectionRequest = 0, siteLoad = null;
 function fillRegions(selected = $("region").value) {
   const loaded = new Set(regions.map((r) => r.region));
   const more = namedSites.filter((s) => !loaded.has(s.site));
-  $("region").innerHTML = `<option value="${ANYWHERE}">Anywhere on Mars (where you're looking)</option>` +
-    '<optgroup label="Loaded areas">' +
-    regions.map((r) => `<option value="${r.region}">${r.label || r.region}</option>`).join("") + "</optgroup>" +
-    (more.length ? '<optgroup label="More places (load in about a minute)">' +
-      more.map((s) => `<option value="site:${s.site}">${s.label}</option>`).join("") + "</optgroup>" : "");
-  if (selected && regions.some((r) => r.region === selected)) $("region").value = selected;
+  const ready = el("optgroup", { label: "Regions · planning data ready" });
+  ready.append(...regions.map(r => el("option", { value: r.region, textContent: r.label || r.region })));
+  const browse = el("optgroup", { label: "Regions · explore now, planning data loads separately" });
+  browse.append(...more.map(s => el("option", { value: `site:${s.site}`, textContent: s.label })));
+  $("region").replaceChildren(el("option", { value: ANYWHERE, textContent: "Anywhere on Mars (where you're looking)" }),
+    ready, ...(more.length ? [browse] : []));
+  if (selected?.startsWith("site:") && loaded.has(selected.slice(5))) selected = selected.slice(5);
+  if ([...$("region").options].some(o => o.value === selected)) $("region").value = selected;
 }
-async function loadNamedSite(key) {            // build a named site's data cube, then switch to it
+function syncRegionReady() {
+  const pending = current?.planningReady === false;
+  for (const id of ["runMission", "plan", "find", "targets", "regionalLayer"]) {
+    const control = $(id);
+    if (pending) { control.disabled = true; control.dataset.regionPending = "true"; }
+    else if (control.dataset.regionPending) { control.disabled = false; delete control.dataset.regionPending; }
+  }
+}
+function clearRegionResults() {
+  routePlayback.clear();
+  findRequest++; missionRequest++; pointRequest++;
+  missionCtl?.abort();
+  $("mStatus").textContent = "";
+  $("runMission").disabled = false;
+  clearMatches(); $("findInfo").textContent = "";
+  mission = prevMission = null; tracksData = null;
+  missionLayer.entities.removeAll(); $("mResult").innerHTML = "";
+  plannerLayout.clearMission();
+  showTracks(false);
+  invalidatePlan();
+}
+async function openRegionTerrain(rect, request) {
+  const mapRequest = globalSelectionRequest;
+  try {
+    if (!await selectTopographicMap(() => request === regionSelectionRequest && mapRequest === globalSelectionRequest)) return;
+    if (request !== regionSelectionRequest) return;
+    setSharpBox(rect);
+    flyTo(rect);
+  } catch (error) {
+    if (request === regionSelectionRequest) setMsg($("areaStatus"), error.message);
+  }
+}
+async function loadNamedSite(key, request) {
   const s = namedSites.find((x) => x.site === key);
   if (!s) return;
-  viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(s.lon - 0.4, s.lat - 0.4, s.lon + 0.4, s.lat + 0.4) });
+  const half = siteSizeDegrees / 2;
+  current = { region: key, label: s.label, planningReady: false, targets: [], minerals: {},
+    rect: { west: s.lon - half, east: s.lon + half, south: Math.max(-89.9, s.lat - half), north: Math.min(89.9, s.lat + half) } };
+  showRegionInfo(); syncRegionReady(); syncGlobeLighting();
+  void openRegionTerrain(current.rect, request);
+  const controller = siteLoad = new AbortController();
+  const active = () => request === regionSelectionRequest && !controller.signal.aborted;
   const t0 = Date.now();
   try {
-    let st = await api("/api/sites/build", { site: key });
+    setMsg($("areaStatus"), `Exploring ${s.label}. Planning data is loading separately…`);
+    // Rapid browsing should not start a server-side cube build for every option
+    // the user passes through. The topographic view does not wait for this delay.
+    await sleep(500);
+    if (!active()) return;
+    let st = await api("/api/sites/build", { site: key }, controller.signal);
+    if (!active()) return;
     while (!st.ready) {
       if (st.status === "failed") throw new Error((st.log || []).slice(-1).join(" "));
-      setMsg($("areaStatus"), `Loading ${s.label}… ${Math.round((Date.now() - t0) / 1000)} s | 3D terrain, THEMIS, ` +
-        "TES albedo; CRISM minerals follow");
+      setMsg($("areaStatus"), `Explore ${s.label} now. Planning data loading: ${Math.round((Date.now() - t0) / 1000)} s. | THEMIS, TES albedo; CRISM minerals follow.`);
       await sleep(2000);
-      st = await api(`/api/sites/build/${st.region}`);
+      if (!active()) return;
+      st = await api(`/api/sites/build/${st.region}`, undefined, controller.signal);
+      if (!active()) return;
     }
-    namedSites = (await api("/api/sites")).sites;
-    await useArea(st.region);
-    $("region").value = st.region;
-    $("region").onchange();
-    setMsg($("areaStatus"), `${s.label} is loaded.`);
+    // Updating metadata must not change the user's map, camera or newer selection.
+    if (!await useArea(st.region, request)) return;
+    fillRegions(st.region);
+    syncRegionReady();
+    setMsg($("areaStatus"), `${s.label}: planning data is ready.`);
     if (st.status !== "done") watchArea(st.region);
   } catch (e) {
-    setMsg($("areaStatus"), `Couldn't load ${s.label}. | ${e.message}`);
-    fillRegions();
-  }
+    if (!active()) return;
+    setMsg($("areaStatus"), `Planning data couldn't load for ${s.label}. You can still explore the topographic map. Select this region again to retry. | ${e.message}`);
+  } finally { if (siteLoad === controller) siteLoad = null; }
 }
 // ------------------------------------------- advanced (technical) details ----
 // Everything technical has class "adv" and shows only after pressing A. Server messages are "plain | detail":
@@ -2249,6 +2634,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ZOOMED_OUT_M = 1.5e6;                      // above this camera height "where you're looking" is too vague
 const zoomedOut = () => viewer.camera.positionCartographic.height > ZOOMED_OUT_M;
 async function ensureArea(p, say = () => {}, need = [p]) {
+  const selection = regionSelectionRequest;
+  if (current?.planningReady === false) throw new Error("This region's planning data is not ready. You can explore its topographic map while it loads.");
   if (zoomedOut() && current && need.length === 1) {       // whole-planet view: keep the current area
     say(`Planning in ${current.label}. Zoom in on any other place on Mars to plan there.`);
     return current.region;
@@ -2261,24 +2648,31 @@ async function ensureArea(p, say = () => {}, need = [p]) {
   let st = await api("/api/sites/build", { lat: p.lat, lon: p.lon });
   const t0 = Date.now();
   while (!st.ready) {
+    if (selection !== regionSelectionRequest) throw new Error("Region selection changed.");
     if (st.status === "failed") throw new Error("Couldn't load this area: " + (st.log || []).slice(-1).join(" "));
     say(`Loading this part of Mars… ${Math.round((Date.now() - t0) / 1000)} s | 3D terrain (MDEM200M), THEMIS ` +
         `thermal inertia and night-time IR, TES albedo around ${pointLabel(p)}`);
     await sleep(2000);
     st = await api(`/api/sites/build/${st.region}`);
   }
-  await useArea(st.region);
+  if (!await useArea(st.region, selection)) throw new Error("Region selection changed.");
   if (!need.every((q) => inside(current, q, 0))) throw new Error("Base and target are too far apart for one area " +
     `(about ${(current.rect.north - current.rect.south).toFixed(1)}° across); move them closer together.`);
   if (st.status !== "done") watchArea(st.region);
   return st.region;
 }
-async function useArea(region) {
-  regions = (await api("/api/regions")).regions;
+async function useArea(region, selection = regionSelectionRequest) {
+  const next = (await api("/api/regions")).regions;
+  if (selection !== regionSelectionRequest) return false;
+  const loaded = next.find(r => r.region === region);
+  if (!loaded) throw new Error("The server hasn't published this region's planning data yet.");
+  regions = next;
   fillRegions();
-  current = regions.find((r) => r.region === region);
+  current = loaded;
+  syncRegionReady();
   showRegionInfo(); setSharpBox(current.rect); syncGlobeLighting(); refreshLayer();
   if ($("showTracks").checked) showTracks(true);
+  return true;
 }
 const watching = new Set();
 async function watchArea(region) {                // CRISM minerals arrive a few minutes after the terrain
@@ -2309,7 +2703,9 @@ try { advStart = localStorage.getItem(ADV_KEY) === "1"; } catch (e) { /* storage
 setAdvanced(advStart);
 let wholeMarsResizeObserver = null;
 function flyTo(r) {
-  viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
+  viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north),
+    duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.5,
+    orientation: { heading: 0, pitch: -Math.PI / 2, roll: 0 } });
 }
 function showWholeMars() {
   viewer.camera.cancelFlight();
@@ -2351,7 +2747,7 @@ let wasGlobal = globalLayerSelected();
 applyGlobalMap();
 showWholeMars();
 $("wholeMars").onclick = () => showWholeMars();   // just the view: weather layers only when picked in the menu
-$("zoomRegion").onclick = () => { if (current) flyTo(current.rect); };
+$("zoomRegion").onclick = () => { if (current) void openRegionTerrain(current.rect, regionSelectionRequest); };
 
 // Quick-jump places: the 16 shortcuts in Caltech Murray Lab's Global CTX Mosaic viewer
 // (murray-lab.caltech.edu/CTX/V01/SceneView). Coordinates are near each feature; height = how far out to view it.
@@ -2366,10 +2762,20 @@ const JUMP_PLACES = [
   ["Terra Sirenum", -39.47, -157.36, 250e3], ["Eberswalde", -23.70, -33.31, 120e3],
 ];
 $("jumpTo").innerHTML += JUMP_PLACES.map(([n], i) => `<option value="${i}">${n}</option>`).join("");
+async function explorePlace(lon, lat, height) {
+  const selection = regionSelectionRequest, mapRequest = globalSelectionRequest;
+  try {
+    if (!await selectTopographicMap(() => selection === regionSelectionRequest && mapRequest === globalSelectionRequest)) return;
+    viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat, height, MARS),
+      orientation: { heading: 0, pitch: -Math.PI / 2, roll: 0 },
+      duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.5 });
+  } catch (error) { setMsg($("areaStatus"), error.message); }
+}
 $("jumpTo").onchange = () => {
+  if (!$("jumpTo").value) return;
   const p = JUMP_PLACES[+$("jumpTo").value];
   if (!p) return;
-  viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(p[2], p[1], p[3], MARS) });
+  void explorePlace(p[2], p[1], p[3]);
   $("jumpTo").value = "";
 };
 ["hour", "ls", "budget"].forEach((id) => {
@@ -2387,6 +2793,7 @@ $("jumpTo").onchange = () => {
   refreshLayer();
 }));
 $("layer").onchange = () => {
+  ++globalSelectionRequest;
   applyGlobalMap();
   const isGlobal = globalLayerSelected();
   if (isGlobal && !wasGlobal) showWholeMars();
@@ -2397,23 +2804,27 @@ $("layer").onchange = () => {
 };
 ["budget", "region"].forEach((id) => $(id).addEventListener("change", invalidatePlan));
 $("region").onchange = () => {
-  if ($("region").value.startsWith("site:")) { loadNamedSite($("region").value.slice(5)); return; }
+  const request = ++regionSelectionRequest;
+  siteLoad?.abort(); siteLoad = null;
+  clearRegionResults();
+  if ($("region").value.startsWith("site:")) { void loadNamedSite($("region").value.slice(5), request); return; }
   setMsg($("areaStatus"), anywhere() ? "Zoom in anywhere on Mars and plan: the plan uses the place in the middle " +
     `of the map. Zoomed out, it uses ${current ? current.label : "the current area"}. | New areas load from the ` +
     "3D terrain (MDEM200M) in seconds; CRISM minerals follow." : "");
-  if (anywhere()) { if (current) { showRegionInfo(); refreshLayer(); } return; }
+  if (anywhere()) {
+    // A cancelled named-site build cannot leave Anywhere planning against an absent cube.
+    if (current?.planningReady === false) current = regions.find(r => r.region === "jezero") || regions[0] || null;
+    syncRegionReady();
+    if (current) { showRegionInfo(); syncGlobeLighting(); refreshLayer(); }
+    return;
+  }
   current = regions.find((r) => r.region === $("region").value);
+  if (!current) return;
+  syncRegionReady();
   syncGlobeLighting();
-  routePlayback.clear();
-  findRequest++; missionRequest++; if (missionCtl) missionCtl.abort();
-  $("mStatus").textContent = ""; $("runMission").disabled = false;
-  clearMatches(); $("findInfo").textContent = "";
-  mission = prevMission = null; tracksData = null; missionLayer.entities.removeAll(); $("mResult").innerHTML = "";
-  plannerLayout.clearMission();
   if ($("showTracks").checked) showTracks(true);
   showRegionInfo();
-  if (!globalLayerSelected()) flyTo(current.rect);
-  setSharpBox(current.rect);
+  void openRegionTerrain(current.rect, request);
   if (!USE_GLOBAL_CTX) setTimeout(() => loadHiresPhoto(current.region), 0);
   refreshLayer();
 };
@@ -2427,7 +2838,8 @@ function showRegionInfo() {
   mineralLayers.hidden = !mineralLayers.children.length;
   $("targets").innerHTML = '<option value="">…or pick a science target</option>' +
     current.targets.map((t, i) => `<option value="${i}">${t.name}</option>`).join("");
-  $("status").textContent = `${current.size[0]}×${current.size[1]} px · ~${current.pixel_m[1]} m/px · ` +
+  $("status").textContent = current.planningReady === false ? "Terrain streams independently. Regional planning data is not ready yet." :
+    `${current.size[0]}×${current.size[1]} px · ~${current.pixel_m[1]} m/px · ` +
     `bands: ${current.bands.join(", ")}`;
 }
 labels();
@@ -2456,7 +2868,11 @@ api("/api/weather/calendar").then(calendar => {
     fill("mPriority", opts.priorities, "safety");
     const meta = await api("/api/regions");
     regions = meta.regions;
-    try { namedSites = (await api("/api/sites")).sites; } catch (e) { namedSites = []; }
+    try {
+      const catalog = await api("/api/sites");
+      namedSites = catalog.sites;
+      if (Number.isFinite(catalog.size_deg) && catalog.size_deg > 0) siteSizeDegrees = catalog.size_deg;
+    } catch (e) { namedSites = []; }
     Object.assign(SPECS, meta.vehicle_specs || {});
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
     fillRegions(ANYWHERE);
@@ -2469,6 +2885,17 @@ api("/api/weather/calendar").then(calendar => {
     } else $("status").textContent = "Move the globe anywhere on Mars and plan: the area loads from the 3D terrain.";
     refreshLayer();
     $("region").onchange();
+    const initialView = new URLSearchParams(location.search).get("view");
+    if (initialView === "jezero3d") {
+      await murrayCatalogueReady;
+      if (murray.defs.length) await showJezeroTerrain();
+    } else if (initialView === "terrain") {
+      await murrayCatalogueReady;
+      $("globalMaps").open = true;
+      $("globalLayer").value = "map:terrain";
+      $("globalLayer").dispatchEvent(new Event("change", { bubbles: true }));
+      showWholeMars();
+    }
   } catch (e) {
     $("status").textContent = "Regional layers could not load: " + e.message;
     if (globalLayerSelected()) refreshLayer();

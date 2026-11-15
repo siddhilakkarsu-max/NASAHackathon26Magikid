@@ -2,8 +2,9 @@
 Every map from the Murray Lab global CTX mosaic viewer
 (https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html), for our Cesium globe:
 
-- image tiles (CTX 5 m mosaic, MOLA colour shaded relief, Viking MDIM) load straight from Esri's "OnMars"
-  services in the browser: same geographic 512 px tiling as Cesium's, and they allow cross-origin requests;
+- CTX image tiles are validated and cached locally; damaged upstream tiles use
+  the corresponding crop of a valid coarser source tile. MOLA/Viking imagery
+  loads straight from Esri's "OnMars" services;
 - 3D terrain (MDEM200M, MOLA/HRSC 200 m) is relayed here: Cesium only accepts Esri elevation services in
   WKID 4326, so the service description is passed on with Mars 2000 (104971) relabelled - the grid is identical;
 - feature layers (rover traverses, IAU names, impact craters, the CTX tile index with download links, HiRISE
@@ -12,14 +13,17 @@ Every map from the Murray Lab global CTX mosaic viewer
 murray-lab.caltech.edu sends the wrong intermediate certificate, so downloads from it also trust the correct
 public one shipped in certs/ (InCommon RSA OV SSL CA 3, issued by Sectigo Public Server Authentication Root R46).
 """
+import io
 import json
 import math
 import ssl
 import threading
+import time
 import urllib.request
 from pathlib import Path
 
 import numpy as np
+from PIL import Image, PngImagePlugin
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 
@@ -31,13 +35,19 @@ CRATERS = ("https://services.arcgis.com/P3ePLMYs2RVChkJx/arcgis/rest/services/"
            "Mars_Nomenclature_Mountains/FeatureServer/7")
 CALTECH_CA = ROOT / "certs" / "InCommon_RSA_OV_SSL_CA_3.pem"
 MARS_R = 3396190.0
+CTX_MAX_LEVEL = 12
 TERRAIN_MAX_LEVEL = 7
 UA = {"User-Agent": "Mozilla/5.0 (compatible; mars-cube-builder)"}
 
 # The viewer's layers, in its order. "default" = shown by default on the Murray Lab page.
 LAYERS = [
-    dict(id="ctx", kind="tiles", title="CTX mosaic, 5 m (Murray Lab)", default=True, max_level=17,
-         url=f"{ESRI}/CTX1/MapServer/tile/{{z}}/{{y}}/{{x}}", credit="Imagery: NASA, JPL, MSSS, Caltech/Murray Lab, Esri"),
+    # CTX1 advertises a generic 0..17 pyramid, but its native ~5 m imagery
+    # ends at level 12. Level 13..17 requests return HTTP 400 (verified at
+    # Jezero, Gale, Olympus Mons and Valles Marineris on 2026-11-15).
+    dict(id="ctx", kind="tiles", title="CTX mosaic, up to 5 m (Murray Lab)", default=True, max_level=CTX_MAX_LEVEL,
+         url="/murray/ctx/{z}/{y}/{x}", source_url=f"{ESRI}/CTX1/MapServer/tile/{{z}}/{{y}}/{{x}}",
+         resolution_note="Up to 5 m/pixel. Damaged or unavailable source tiles use valid coarser CTX imagery.",
+         credit="Imagery: NASA, JPL, MSSS, Caltech/Murray Lab, Esri"),
     # These global products have usable cached tiles through level 7. The service's
     # generic image metadata lists finer levels, but their level-8 tile requests fail.
     # Let Cesium magnify the native imagery instead of requesting nonexistent tiles.
@@ -80,6 +90,87 @@ def _fetch(url, timeout=600):
     req = urllib.request.Request(url, headers=UA)
     with urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx()) as r:
         return r.read()
+
+
+# ------------------------------------------------------ validated CTX tiles ----
+CTX_FALLBACK_TTL = 3600
+CTX_REQUEST_BUDGET = 20
+
+
+def _ctx_decode(raw):
+    """Check the complete PNG/JPEG stream, then decode every source pixel."""
+    if len(raw) > 4 * 1024 * 1024:
+        raise ValueError("CTX source tile exceeds the bounded image size")
+    with Image.open(io.BytesIO(raw)) as image:
+        if image.format not in ("PNG", "JPEG") or image.size != (512, 512):
+            raise ValueError("Unexpected CTX source format or dimensions")
+        image.verify()
+    with Image.open(io.BytesIO(raw)) as image:
+        image.load()  # Never enable LOAD_TRUNCATED_IMAGES or fill absent pixels.
+        info = image.info.copy()
+        mode = "RGBA" if image.mode == "RGBA" or "transparency" in info else "RGB"
+        return image.convert(mode), info
+
+
+def _ctx_png(image, source_level):
+    metadata = PngImagePlugin.PngInfo()
+    metadata.add_text("source_level", str(source_level))
+    output = io.BytesIO()
+    image.save(output, format="PNG", pnginfo=metadata)
+    return output.getvalue()
+
+
+def _ctx_tile(z, y, x, deadline):
+    path = CACHE / "ctx" / f"{z}_{y}_{x}.png"
+    if path.exists():
+        try:
+            raw = path.read_bytes()
+            _, info = _ctx_decode(raw)
+            source_level = int(info["source_level"])
+            if 0 <= source_level <= z and (source_level == z or time.time() - path.stat().st_mtime < CTX_FALLBACK_TTL):
+                return raw, source_level
+        except (OSError, ValueError, KeyError, SyntaxError):
+            pass  # Invalid cache entries are replaced only after a valid decode.
+    image = None
+    remaining = deadline - time.monotonic()
+    if remaining > 0:
+        try:
+            raw = _fetch(f"{ESRI}/CTX1/MapServer/tile/{z}/{y}/{x}", timeout=min(8, remaining))
+            image, _ = _ctx_decode(raw)
+            source_level = z
+        except (OSError, ValueError, SyntaxError):
+            image = None
+    if image is None:
+        if z == 0:
+            raise ValueError("No valid CTX image or coarser source is available")
+        # Geographic tile y increases southward, matching image rows. Crop the
+        # real parent quadrant before interpolation; never repair missing pixels.
+        parent, source_level = _ctx_tile(z - 1, y // 2, x // 2, deadline)
+        parent_image, _ = _ctx_decode(parent)
+        left, top = (x % 2) * 256, (y % 2) * 256
+        image = parent_image.crop((left, top, left + 256, top + 256)).resize((512, 512), Image.Resampling.BILINEAR)
+    result = _ctx_png(image, source_level)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(f".{threading.get_ident()}.part")
+    temporary.write_bytes(result)
+    temporary.replace(path)  # Image and source-level metadata commit atomically.
+    return result, source_level
+
+
+@router.get("/murray/ctx/{z}/{y}/{x}")
+def murray_ctx_tile(z: int, y: int, x: int):
+    if (not all(isinstance(v, (int, np.integer)) for v in (z, y, x))
+            or not 0 <= z <= CTX_MAX_LEVEL or not 0 <= y < 2 ** z or not 0 <= x < 2 ** (z + 1)):
+        raise HTTPException(404, "Outside the native CTX geographic tile grid")
+    try:
+        raw, source_level = _ctx_tile(z, y, x, time.monotonic() + CTX_REQUEST_BUDGET)
+    except (OSError, ValueError, SyntaxError) as error:
+        raise HTTPException(503, "CTX imagery and its coarser source tiles could not load") from error
+    return Response(raw, media_type="image/png", headers={
+        "Cache-Control": f"public, max-age={604800 if source_level == z else CTX_FALLBACK_TTL}",
+        "X-Imagery-Fallback-Level": str(source_level),
+        "X-Imagery-Resolution": "native" if source_level == z else "coarser-source-crop",
+    })
 
 
 def _raw(name):
@@ -378,7 +469,7 @@ def murray_elevation_meta():
     return _elev_meta
 
 
-def elevation_tile_bytes(z, y, x):
+def elevation_tile_bytes(z, y, x, *, timeout=60):
     """One LERC tile of the 3D terrain (MDEM200M), cached on disk. Shared by the globe and the cube builder."""
     if (not all(isinstance(v, (int, np.integer)) for v in (z, y, x))
             or not 0 <= z <= TERRAIN_MAX_LEVEL
@@ -386,7 +477,7 @@ def elevation_tile_bytes(z, y, x):
         raise ValueError("elevation tile outside the published level-0..7 geographic grid")
     path = CACHE / "elevation" / f"{z}_{y}_{x}.lerc"
     if not path.exists():
-        data = _fetch(f"{ESRI}/MDEM200M/ImageServer/tile/{z}/{y}/{x}", timeout=60)
+        data = _fetch(f"{ESRI}/MDEM200M/ImageServer/tile/{z}/{y}/{x}", timeout=timeout)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(f".{threading.get_ident()}.part")
         tmp.write_bytes(data)

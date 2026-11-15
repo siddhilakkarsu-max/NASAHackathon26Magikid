@@ -34,6 +34,8 @@ import annotate
 import assistant
 import mission
 import murray
+import jezero_terrain
+import global_terrain
 import physics
 import search
 from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
@@ -1489,6 +1491,8 @@ def build_site_status(region: str):
 
 
 app.include_router(murray.router)          # every map from the Murray Lab CTX viewer (murray.py)
+app.include_router(jezero_terrain.router)  # genuine 20 m Jezero elevation tiles, where surveyed
+app.include_router(global_terrain.router)  # published CTX/HRSC surveys across Mars with real global fallback
 
 (ROOT / "cubes").mkdir(exist_ok=True)
 app.mount("/cubes", StaticFiles(directory=ROOT / "cubes"), name="cubes")   # hi-res photo overlays
