@@ -6,6 +6,63 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-15, game: complete vehicle models
+
+Branch `feat/Gk`.
+
+### Fixed
+
+- **Half the rover was missing while riding** (`frontend/game.html`). The riding view used a separate front-only
+  "cockpit" model, so there were no seats or rear, and it did not match the parked vehicle. Each vehicle is now one
+  complete model (`g3VehModel`) drawn around the driver's eye when riding and placed on the ground when parked.
+
+### Changed
+
+- Open rover: four wheels with hubs and fenders, two seats, console with display and hand controller, foot rest,
+  headlights, TV camera, tool pallet; the dish moved behind the driver, out of the forward view.
+- Bike: frame, fork, handlebar with grips and levers, display, headlight, fenders, seat, battery, panniers.
+- Pressurised rover: six wheels, nose, cabin with window frame, dash, yoke and two seats, rear module, roof gear.
+- Ground rings are thinner and their fill fainter; the parked vehicle has a ring and label but no light pillar.
+- Test hook `window.__MW.look(yawDeg, pitchDeg)`. 1 test.
+
+### Verification
+
+- Headless Chrome screenshots: riding view forward, down, left and right for all three vehicles; the parked rover
+  and bike from three sides. Autopilot completes all 14 baked routes.
+
+### Limits
+
+- Models are flat-shaded boxes, beams and cylinders built in code. Wheels do not turn and the steering does not
+  move. The pressurised rover cannot be left, so it is never seen from outside.
+
+## [Unreleased] - 2026-11-15, game: leaderboard, callsigns and a "mission ready" button
+
+Branch `feat/Gk`.
+
+### Added
+
+- **Leaderboard and callsigns** (`leaderboard.py`, routes `/api/game/players`, `/api/game/scores`,
+  `/api/game/leaderboard`; one include line in `app.py`). A player claims a callsign on the game's title screen;
+  successful missions flown by hand at normal speed are posted; the end screen shows the rank and top ten for that
+  mission and route, the title screen the overall board. Stored in `game_state/leaderboard.sqlite3` (not in git,
+  folder set by `MARSWALK_GAME_STATE_DIR`). Browser storage: `marswalk.game.player`.
+- **"Mission ready · Play" button** (`frontend/game-launch.js`). A green pulsing button appears at the top right
+  of the planner map when a plan is ready and opens the selected route in the game. Hidden while planning.
+- 8 tests (174 total): `tests/test_leaderboard.py` (7) and one in `tests/test_game.py`.
+
+### Verification
+
+- Headless Chrome against the local server: claim a callsign, finish a mission by hand, see the rank and board;
+  duplicate and invalid callsigns refused with a message; autopilot runs not posted. On the planner: the button is
+  hidden before and during planning, appears when the plan is ready, overlaps no other control, and launches the
+  game with the selected route.
+
+### Limits
+
+- Scores come from the browser and can be faked; the server checks ranges, the callsign token and a 4 s gap.
+- A callsign has no password and cannot be recovered on another device. No name filter beyond the character rule,
+  no admin page. Each server keeps its own board.
+
 ## [Unreleased] - 2026-11-15, game: vehicle handling, dismounting and a sample at B
 
 Branch `feat/Gk`.

@@ -13,7 +13,8 @@ const baked=JSON.parse('['+html.slice(a,html.indexOf('\n];',a))+']');
 const fixture={...baked[0],request_region:'area_saved'};
 const planner=`<!doctype html><title>Launcher test</title><button id="runMission">Plan</button><input id="goal" value="edited draft"><input id="mVehicle" value="buggy"><input id="mPriority" value="science"><input id="region" value="here"><input id="ls" value="20"><input id="hour" value="15"><input id="greenOnly" type="checkbox"><details id="missionResults" open><summary>Mission results</summary><div id="mResult"></div></details><script>let mission=${JSON.stringify(fixture)},selected=2;function regionId(){return 'area_resolved';}</script><script src="game-launch.js" defer></script>`;
 const kit='<!doctype html><title>Kit test</title><form id="form"><input id="vehicle" value="astronaut"><input id="ls" value="247.5"><input id="region" value="gale"><div id="goals"></div></form><div id="sheet"><div class="head"><div class="tools"></div></div></div><script src="game-launch.js" defer></script>';
-const browser=await chromium.launch({executablePath:process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true});
+const browser=await chromium.launch({executablePath:process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,
+  args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
 const context=await browser.newContext();const requests=[],errors=[];
 context.on('page',page=>page.on('pageerror',error=>errors.push(error.message)));
 const svg=color=>'data:image/svg+xml,'+encodeURIComponent(`<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256"><rect width="256" height="256" fill="${color}"/></svg>`);
@@ -62,6 +63,7 @@ try{
  assert.equal(await page.locator('#playLink').count(),0,'no duplicate link near gear controls');
  const popupPromise=page.waitForEvent('popup');await page.locator('#playMission').click();const game=await popupPromise;
  await game.waitForFunction(()=>window.__MW?.getSnapshot().screen==='brief');
+ assert.equal(await game.evaluate(()=>document.body.classList.contains('v3d')),true,'latest default first-person renderer starts');
  assert.equal(await game.evaluate(()=>window.__MW.getSnapshot().cand),2);
  assert.equal(await game.evaluate(()=>window.__MW.state.N.region),'area_saved');
  assert.equal(await game.evaluate(()=>window.__MW.state.N.goal),fixture.settings.goal);
@@ -86,7 +88,9 @@ try{
  assert.ok(requests.some(r=>r.path==='/api/tracks'&&r.query.get('region')==='gale'),'another region fetches new tracks');
  assert.equal(await live.evaluate(()=>window.__MW.state.tracksLL.length),0,'empty regional tracks do not reuse Jezero tracks');
 
- const geo=await context.newPage();await geo.goto('http://mars.test/game.html?goal=olivine&region=gale&skip=1&mute=1');
+ // Pixel/crop alignment below targets the supported 2D fallback. The default
+ // game is now first-person WebGL and does not issue these Canvas2D draw calls.
+ const geo=await context.newPage();await geo.goto('http://mars.test/game.html?goal=olivine&region=gale&skip=1&mute=1&view=2d');
  await geo.waitForFunction(()=>window.__MW?.state.imgs.imagery && window.__MW.state.imgs.science);
  assert.ok((await geo.locator('#bDos').textContent()).includes('No rover-track survey was supplied for this region.'),'missing regional tracks must not invent Jezero survey totals');
  const brief=await geo.evaluate(([im,science])=>({

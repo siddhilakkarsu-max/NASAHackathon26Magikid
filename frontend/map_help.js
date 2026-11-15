@@ -30,7 +30,7 @@
       </ol>
       <h4>Around the screen</h4>
       <ul>
-        <li><b>Left bar:</b> Plan, Results, Layers, Area data, Time and Point info each open their part of the panel;
+        <li><b>Left bar:</b> Regions, Plan, Results, Layers, Area data, Time and Point info each open their part of the panel;
           Menu shows everything.</li>
         <li><b>Chips next to the search bar:</b> one tap for radiation, temperature, wind, minerals,
           sunlight, sharp photos or rover tracks; tap again to turn off.</li>
@@ -39,7 +39,8 @@
       <h4>Moving the map</h4>
       <ul>
         <li><b>Drag</b> to move. <b>Scroll</b> (or pinch) to zoom.</li>
-        <li><b>Right-drag</b> or <kbd>Ctrl</kbd> + drag to tilt and see hills in 3D.</li>
+        <li>Choose <b>Topographic</b>, then <b>3D view</b>, <b>right-drag</b> or <kbd>Ctrl</kbd> + drag to tilt.
+          Other maps stay overhead. Fine terrain appears only where real elevation surveys are available.</li>
         <li><b>Click</b> any spot to see what is there (slope, rock, minerals, temperature…).</li>
         <li><b>Whole Mars</b> zooms out to the planet; <b>Zoom to region</b> goes back to the area you are planning in.</li>
       </ul>
@@ -51,12 +52,12 @@
         <dd>Type a place name and pick it from the list. If nothing matches, the last suggestion plans a mission
           with your words as the goal.</dd>
         <dt>Region</dt>
-        <dd>The area the planner works in. <b>Loaded areas</b> are ready now. <b>More places</b> load the first time you
-          pick them (about a minute; mineral maps follow a few minutes later). <b>Anywhere on Mars</b> uses
-          whatever is in the middle of the map.</dd>
+        <dd>Pick a region to fly there and open its detailed topographic map. Explore immediately while any missing
+          planning data loads separately; mineral maps may take longer. <b>Anywhere on Mars</b> uses
+          whatever is in the middle of the map for planning.</dd>
         <dt>Jump to a place</dt>
         <dd>Flies to famous places (rover landing sites, Olympus Mons, Valles Marineris…) to look around.
-          It moves the view only; pick the place in Region to plan there.</dd>
+          Opens the topographic map; pick the place in Region to load its planning data.</dd>
       </dl>`],
     ["mission", "Plan a mission", `
       <h3>Plan a mission</h3>
@@ -114,9 +115,10 @@
       <h3>Mars global maps</h3>
       <dl>
         <dt>Map view (choose one)</dt>
-        <dd><b>The planner's own map</b>: colour photos plus the planner's data. <b>Detailed photos</b>: 5 m black
-          and white images of almost all of Mars. <b>Height map</b>: coloured by elevation. <b>Colour photos</b>:
-          the Viking colour mosaic. <b>3D hills and craters</b>: real elevation everywhere.</dd>
+        <dd><b>Topographic map</b>: black-and-white photos draped over measured elevation, with 3D navigation.
+          <b>Detailed photos</b>: overhead black-and-white imagery. <b>Elevation colours</b>: overhead height colours.
+          <b>Colour photos</b>: the Viking mosaic. <b>The planner's own map</b>: the default photo background.
+          Only the topographic map enables tilt; finer survey coverage varies by location.</dd>
         <dt>Weather layers</dt>
         <dd>Ground and air temperature, air pressure, wind speed and arrows, and dust in the air, from Mars climate
           data. They follow the Season and Local solar time sliders.</dd>
@@ -298,10 +300,10 @@
     };
     try {
       for (const r of regions) add(r.label || r.region, "Ready to plan", () => pickRegion(r.region));
-      for (const s of namedSites) add(s.label, s.ready ? "Ready to plan" : "Loads in about a minute, then ready to plan",
-                                      () => pickRegion(s.ready ? s.site : `site:${s.site}`));
+      for (const s of namedSites) add(s.label, "Explore topographic map; planning data loads separately",
+                                      () => pickRegion(regions.some(r => r.region === s.site) ? s.site : `site:${s.site}`));
       for (const [name, lat, lon, h] of JUMP_PLACES) add(name, "Fly there to look around", () =>
-        viewer.camera.flyTo({ destination: Cesium.Cartesian3.fromDegrees(lon, lat, h, MARS) }));
+        explorePlace(lon, lat, h));
     } catch { /* the main script hasn't finished loading */ }
     return out;
   }

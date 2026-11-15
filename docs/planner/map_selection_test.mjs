@@ -10,7 +10,7 @@ const out = process.env.MARSWALK_AUDIT_DIR || await fs.mkdtemp(path.join(os.tmpd
 await fs.mkdir(out, { recursive: true });
 console.log('Audit artifacts: ' + out);
 const base = process.env.MARSWALK_TEST_URL || 'http://127.0.0.1:8001';
-const checks = [], pageErrors = [];
+const checks = [], pageErrors = [], sourceFailures = [];
 const browser = await chromium.launch({ executablePath: process.env.CHROME || undefined, headless: true,
   args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'] });
 let page, failure;
@@ -18,14 +18,19 @@ async function open() {
   const p = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   p.setDefaultTimeout(45000);
   p.on('pageerror', e => pageErrors.push(String(e)));
+  await p.addInitScript(() => localStorage.setItem('mapManualSeen', '1'));
+  p.on('response', r => { if (r.status() >= 400 && /\/OnMars\/|\/murray\/ctx\//.test(r.url())) sourceFailures.push({url:r.url(), status:r.status()}); });
+  p.on('requestfailed', r => { if (/\/OnMars\/|\/murray\/ctx\//.test(r.url())) sourceFailures.push({url:r.url(), error:r.failure()?.errorText}); });
   await p.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await p.locator('#startExploring').click();
+  await p.locator('#gmRail button[data-section="globalMaps"]').click();
   await p.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight && document.querySelector('#globalLayer option[value="map:terrain"]'));
-  await p.evaluate(() => {
+  await p.evaluate(scale => {
+    viewer.resolutionScale = scale;
     document.querySelector('#globalMaps').open = true;
     window.selectionRenderErrors = [];
     viewer.scene.renderError.addEventListener((scene, error) => window.selectionRenderErrors.push(String(error)));
-  });
+  }, Number(process.env.MARSWALK_RENDER_SCALE || 1));
   return p;
 }
 async function state(p = page) {
@@ -45,15 +50,16 @@ async function state(p = page) {
 async function check(value, p = page, annotations = true) {
   const mapId = value.startsWith('map:') ? value.slice(4) : null;
   const weather = !!value && !mapId;
-  const own = !weather && (!mapId || mapId === 'terrain');
+  const own = !weather && !mapId;
   const s = await state(p);
   assert.equal(s.choice, value); assert.equal(s.visible, value);
   assert.equal(s.canonical, mapId ? '' : value); assert.equal(s.regional, '');
   assert.equal(s.selectedMap, mapId);
-  assert.deepEqual(s.activeSurfaces, mapId ? [mapId] : []);
-  assert.deepEqual(s.imagerySurfaces, mapId && mapId !== 'terrain' ? [mapId] : []);
+  assert.deepEqual(s.activeSurfaces, mapId === 'terrain' ? ['ctx', 'terrain'] : mapId ? [mapId] : []);
+  assert.deepEqual(s.imagerySurfaces, mapId === 'terrain' ? ['ctx'] : mapId ? [mapId] : []);
   assert(s.own.every(visible => visible === own), 'Planner imagery visibility must follow surface choice: ' + JSON.stringify(s));
-  assert.equal(s.flat, mapId !== 'terrain'); assert.equal(s.depthTest, mapId === 'terrain');
+  const terrain = mapId === 'terrain';
+  assert.equal(s.flat, !terrain); assert.equal(s.depthTest, terrain);
   assert.equal(s.overlayCount, weather ? 1 : 0); assert.equal(s.displayedLayer, weather ? value : '');
   assert.equal(s.radiation, value === 'radiation_dose');
   assert.equal(s.status, '', 'Selected layer failed: ' + s.status);
@@ -62,6 +68,9 @@ async function check(value, p = page, annotations = true) {
   return s;
 }
 async function choose(value, p = page, annotations = true) {
+  if (!await p.locator('#globalLayer').isVisible()) {
+    await p.locator('#gmRail button[data-section="globalMaps"]').click();
+  }
   await p.locator('#globalLayer').selectOption(value);
   if (value === 'map:terrain') await p.waitForFunction(() => murray.state.terrain?.on && !murray.state.terrain.loading && viewer.terrainProvider === murray.state.terrain.provider, null, { timeout: 120000 });
   else if (value && !value.startsWith('map:')) {
@@ -120,7 +129,7 @@ try {
 
   // Regional selection returns to planner imagery and synchronizes the global menu.
   await choose('map:ctx');
-  await page.evaluate(() => { document.querySelector('#regionalMaps').open = true; });
+  await page.locator('#gmRail button[data-section="regionalMaps"]').click();
   await page.locator('#regionalLayer').selectOption('temperature');
   await page.waitForFunction(() => displayedLayer === 'temperature' || document.querySelector('#layerStatus').textContent.startsWith('Layer could not load'), null, { timeout: 120000 });
   const regional = await state();
@@ -157,7 +166,7 @@ try {
   failure = String(error.stack || error);
   await page?.screenshot({ path: path.join(out, 'global-selection-failure.png') }).catch(() => {});
 } finally {
-  await fs.writeFile(path.join(out, 'global-selection-results.json'), JSON.stringify({ checks, pageErrors, failure }, null, 2));
+  await fs.writeFile(path.join(out, 'global-selection-results.json'), JSON.stringify({ checks, pageErrors, sourceFailures, failure }, null, 2));
   await browser.close();
 }
 if (failure) throw new Error(failure);

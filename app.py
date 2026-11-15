@@ -34,12 +34,15 @@ import annotate
 import assistant
 import mission
 import murray
+import jezero_terrain
+import global_terrain
 import physics
 import search
 from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
                     PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, SITE_SIZE_DEG, BASE_SEASONS, season_for_ls, SITES, VEHICLES,
                     region_box, region_label, site_id)
 from gear.api import router as gear_router
+from leaderboard import router as game_router
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
 import mars_radiation
 from surface_temperature import temperature_overlay
@@ -1237,6 +1240,7 @@ def trek_tile(layer: str, z: int, y: int, x: int):
 
 
 app.include_router(gear_router)
+app.include_router(game_router)          # game callsigns + leaderboard (leaderboard.py)
 
 
 # ------------------------------------- global 5 m CTX mosaic, colourised ----
@@ -1487,6 +1491,8 @@ def build_site_status(region: str):
 
 
 app.include_router(murray.router)          # every map from the Murray Lab CTX viewer (murray.py)
+app.include_router(jezero_terrain.router)  # genuine 20 m Jezero elevation tiles, where surveyed
+app.include_router(global_terrain.router)  # published CTX/HRSC surveys across Mars with real global fallback
 
 (ROOT / "cubes").mkdir(exist_ok=True)
 app.mount("/cubes", StaticFiles(directory=ROOT / "cubes"), name="cubes")   # hi-res photo overlays

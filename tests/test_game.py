@@ -121,6 +121,23 @@ class GameTest(unittest.TestCase):
                      "DRIVE_ACCEL", "MOUNT_M", "k === snapK", "if (kl === 'v')"):
             self.assertIn(word, self.script, word)
 
+    def test_leaderboard_client_and_ready_button(self):
+        """The game posts to the leaderboard API, and the planner gets a "mission ready" launch button."""
+        for word in ("/api/game/players", "/api/game/scores", "/api/game/leaderboard", "marswalk.game.player",
+                     "function lbSubmit(", "R.bot || R.fast"):
+            self.assertIn(word, self.script, word)
+        self.assertIn('id="lb"', self.html)
+        for word in ('"playFab"', "playFabPulse", "MISSION READY"):
+            self.assertIn(word, self.launch, word)
+
+    def test_one_model_per_vehicle(self):
+        """Riding and parked use the same full vehicle model, built once per vehicle (no view-only half models)."""
+        for word in ("function g3VehModel(", "G3.vmod[key] = MB.a.slice(0, MB.n)", "const src = G3.vmod[W.veh.key]",
+                     "SEAT: { two_wheel:", "look(yawDeg, pitchDeg)"):
+            self.assertIn(word, self.script, word)
+        for old in ("mk('four_wheel'", "mk('two_wheel'", "mk('buggy'"):
+            self.assertNotIn(old, self.script, old)
+
     def test_handoff_contract(self):
         self.assertIn(HANDOFF_KEY, self.html)
         self.assertIn(HANDOFF_KEY, self.launch)
