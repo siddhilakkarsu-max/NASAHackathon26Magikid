@@ -190,14 +190,16 @@ def no_landing_reason(cube):
     ti = _ti(cube)
     if ti is not None and float(np.nanmean(np.nan_to_num(ti, nan=0) >= R["min_ti"])) < 0.02:
         lo, hi = np.nanpercentile(ti, [5, 95])
-        return (f"No safe landing spot here: the whole area is covered in fine dust (thermal inertia {lo:.0f}-{hi:.0f}; "
-                f"a lander or rover needs at least {R['min_ti']:.0f} to avoid sinking in)."), True
+        return (f"No safe place to land here: the whole area is covered in soft dust that a lander or rover would "
+                f"sink into. | Thermal inertia {lo:.0f}-{hi:.0f} (5th-95th percentile); landing needs at least "
+                f"{R['min_ti']:.0f}."), True
     flat = float(np.nanmean(np.nan_to_num(b["slope"], nan=90) <= R["max_slope_deg"]))
     if flat < 0.05:
-        return (f"No safe landing spot here: the ground is too steep (only {100 * flat:.0f}% is flatter than "
-                f"{R['max_slope_deg']:.0f}°)."), False
-    return ("No safe landing spot here: no 1 km circle is flat, smooth and firm enough all round "
-            f"(slope ≤ {R['max_slope_deg']:.0f}°, thermal inertia ≥ {R['min_ti']:.0f})."), False
+        return (f"No safe place to land here: the ground is too steep. | Only {100 * flat:.0f}% of the area is "
+                f"flatter than {R['max_slope_deg']:.0f}° (over a 100 m baseline)."), False
+    return ("No safe place to land here: there is no patch of flat, smooth, firm ground big enough. | No 1 km "
+            f"circle passes on 90% of its area: slope ≤ {R['max_slope_deg']:.0f}°, roughness ≤ "
+            f"{R['max_rough_percentile']}th percentile, thermal inertia ≥ {R['min_ti']:.0f}."), False
 
 
 def nearest_firm_ground(cube, min_ti=None, search_deg=5.0):
@@ -471,7 +473,7 @@ def read_goal(goal):
         if llm and llm["criteria"]:
             spec, parser = llm, "ai"
         elif why:
-            notes.append(why)
+            notes.append(f"| {why}")
     return spec, parser, notes
 
 
@@ -501,7 +503,10 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
     score, parts = search.score_map(ctx, criteria)
     notes += ctx.notes
     if score is None:
-        raise ValueError("None of the goal's features can be mapped here. " + " ".join(notes))
+        plain = "; ".join(n.split(" | ")[0] for n in notes if not n.startswith("| "))
+        detail = " ".join(n.split(" | ", 1)[-1] for n in notes)
+        raise ValueError(f"None of what you asked for can be found in this area ({plain}). Try another part of "
+                         f"Mars. | {detail}")
     safe = ~L["red"] & np.isfinite(L["time"])
     safe[:2, :] = safe[-2:, :] = safe[:, :2] = safe[:, -2:] = False
     nearest_landing(cube, (0, 0))                                   # builds the distance-to-landing maps
@@ -509,23 +514,25 @@ def plan(cube, goal, vehicle="on_foot", season="northern_summer", priority="safe
     if "any" not in edts:
         raise NoLandingSpot(*no_landing_reason(cube))
     if "thermal_inertia" not in cube.bands and "themis_night" not in cube.bands:
-        notes.append("Ground firmness: no thermal data here (THEMIS maps stop near 60° latitude), so firmness is "
-                     "unknown and assumed medium everywhere. Check for sand and dust traps on orbital images.")
+        notes.append("We don't know how soft the ground is this far north or south, so watch out for sand and dust. "
+                     "| No thermal data (THEMIS maps stop near 60° latitude): firmness assumed medium (0.5) everywhere.")
     relaxed = landing_relaxed(cube)
     if relaxed:
         R = LANDING_RULES
-        why = {"elevation": f"lies above {R['max_elevation_m']:+.0f} m, where the air is too thin for a parachute "
-                            "landing like Perseverance's",
-               "latitude": f"lies poleward of {R['max_abs_lat']:.0f}°, where landers face weak sun and deep cold"}
-        notes.append("Landing: every spot in this area " + " and ".join(why[r] for r in relaxed) +
-                     ". Landing spots were chosen on slope, roughness and firm ground only; landing here needs a "
-                     "lander with powered descent, as planned for crewed missions.")
+        plain = {"elevation": "the ground is so high that the air is too thin for a parachute",
+                 "latitude": "it is so far north or south that sunlight is weak and it is very cold"}
+        tech = {"elevation": f"every spot lies above {R['max_elevation_m']:+.0f} m",
+                "latitude": f"every spot lies poleward of {R['max_abs_lat']:.0f}°"}
+        notes.append("Landing here needs a rocket-powered lander: " + " and ".join(plain[r] for r in relaxed) +
+                     ". | " + "; ".join(tech[r] for r in relaxed) + ", so those lander rules were not applied; "
+                     "landing spots were chosen on slope, roughness and firm ground only.")
     reach = edts["any"][0] <= 0.8 * v["range_km"] * 1000            # routes run ~25 % longer than straight
     if not (safe & reach & (score > 0.05)).any():
         loose = float(_loose(cube).mean())
         if loose > 0.5:
-            raise NoLandingSpot(f"Nothing matching the goal can be reached on firm ground here: {100 * loose:.0f}% of "
-                                "this area is loose dust or sand, which is off-limits for every vehicle.", dusty=True)
+            raise NoLandingSpot("What you asked for can't be reached on firm ground here: most of this area is soft "
+                                f"dust or sand that no vehicle can cross. | {100 * loose:.0f}% of the area has thermal "
+                                "inertia below 150 (off-limits).", dusty=True)
         if (safe & (score > 0.05)).any():                          # it exists, just too far from a landing spot
             raise ValueError(f"Nothing matching the goal lies within {v['range_km']:.0f} km of a safe landing spot "
                              f"for {v['label'].lower()}. Try a vehicle with more range.")
@@ -676,7 +683,7 @@ def _card(cube, b_rc, parts, criteria, score, cand, zones, sun_e, illum, temp, s
     inside = [z["name"] for z in zones if z["bounds"][0] <= cand["B"]["lon"] <= z["bounds"][2]
               and z["bounds"][1] <= cand["B"]["lat"] <= z["bounds"][3]]
     return dict(
-        target=targets, confidence=conf,
+        target=targets, target_plain=[search.describe(cr) for cr, _ in parts], confidence=conf,
         terrain=[f"slope {b['slope'][r, c]:.1f}°, roughness {b['roughness'][r, c]:.1f} m, elevation {b['elevation'][r, c]:.0f} m",
                  search.ground_text(cube, r, c)],
         conditions=[f"{SEASONS[season]['label']}, dust risk {SEASONS[season]['dust_risk']:.0%}",
@@ -719,9 +726,9 @@ def _template(res):
     w, s = cands[0], res["settings"]
     r, R = w["route"], w["resources"]
     bind = next(i for i in R["items"] if i["name"] == R["binding"])
-    txt = (f"Route #1 wins with {w['total']}/100: its destination has {w['card']['target'][0]}, "
-           f"{r['distance_km']:.1f} km by route from its {'NASA-candidate' if w['A']['kind'] == 'NASA candidate' else 'tool-found'} "
-           f"landing spot; it ")
+    txt = (f"Route #1 wins with {w['total']}/100: its destination has {' and '.join(w['card']['target_plain'])}, "
+           f"{r['distance_km']:.1f} km by route from its landing spot"
+           f"{' (a NASA landing site)' if w['A']['kind'] == 'NASA candidate' else ''}; it ")
     if res["tracks"] and r["green_km"] > 0:
         txt += f"follows {r['green_km']:.1f} km of {res['tracks']['rover']}'s green track ({r['green_pct']}% of the route), "
     txt += f"stays under {math.ceil(r['max_slope'])}° slope and leaves {bind['left_pct']}% of its {bind['name']}"
@@ -742,7 +749,7 @@ def explain_facts(res):
     def row(c):
         bind = next(i for i in c["resources"]["items"] if i["name"] == c["resources"]["binding"])
         r = c["route"]
-        return {"rank": c["rank"], "total": c["total"], "scores": c["scores"], "target_at_B": c["card"]["target"][0],
+        return {"rank": c["rank"], "total": c["total"], "scores": c["scores"], "target_at_B": " and ".join(c["card"]["target_plain"]),
                 "landing": c["A"]["kind"], "route_km": r["distance_km"], "round_trip_h": r["round_trip_h"],
                 "max_slope_deg": r["max_slope"], "green_track_pct": r["green_pct"], "green_track_km": r["green_km"],
                 f"{bind['name']}_used": bind["used"], f"{bind['name']}_left_pct": bind["left_pct"]}
@@ -754,10 +761,12 @@ def explain_facts(res):
 
 
 EXPLAIN_SYSTEM = (
-    "You explain a Mars traverse plan to an astronaut in 2-3 plain sentences. Rewrite the 'summary' more "
-    "naturally and keep its numbers; you may add one more comparison from the candidates table. Routes #2 and "
-    "#3 are backups, not dropped; only entries under 'dropped' were dropped. Use only numbers given. "
-    "No lists, no markdown.")
+    "You explain a Mars trip plan in 2-3 short, plain sentences that anyone can follow, with no science "
+    "background. Rewrite the 'summary' more naturally and keep its key numbers (distance, hours, how much oxygen "
+    "or battery is left); you may add one more comparison from the candidates table. Routes #2 and #3 are "
+    "backups, not dropped; only entries under 'dropped' were dropped. Use only numbers given. Avoid jargon: no "
+    "'thermal inertia', 'CRISM', 'Ls', 'band depth', 'criterion' or 'decision matrix'; say 'soft sand', 'firm "
+    "ground', 'clay' and so on. No lists, no markdown.")
 
 
 def explain_ai(facts):

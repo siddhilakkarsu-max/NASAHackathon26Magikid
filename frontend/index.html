@@ -120,7 +120,9 @@
   pre.thinking.answer { color: var(--fg); }
   .live::after { content: " ▍"; animation: blink 1s steps(2) infinite; color: var(--accent); }
   @keyframes blink { 50% { opacity: 0; } }
-  #murrayLayers label.check { margin: 3px 0; } #panel a { color: var(--accent); }
+  #murrayLayers label.check { margin: 3px 0; }
+  #murrayLayers .murrayHead { margin: 10px 0 2px; text-transform: uppercase; letter-spacing: .08em; }
+  #murrayLayers input[type="radio"] { accent-color: var(--accent); width: 14px; height: 14px; margin: 0 8px 0 0; } #panel a { color: var(--accent); }
   #infoLinks a { display: block; }
   .legendkey span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 8px; }
 
@@ -188,6 +190,15 @@
   #landing button { width: auto; margin: 0; padding: 10px 26px; background: #fff; color: #111; border-radius: 999px;
                     font-size: clamp(10px, 1.5vmin, 13px); font-weight: 500; letter-spacing: .12em; }
   #landing button:hover { background: #ffe9d6; }
+  /* Advanced (technical) details: hidden until the A key is pressed */
+  body:not(.adv-on) .adv, body:not(.adv-on) .adv-only { display: none !important; }
+  .adv { color: var(--muted); }
+  span.adv::before { content: " · "; }
+  #advHint { margin-top: 18px; opacity: .7; }
+  #advToast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 50; background: var(--accent);
+              color: #1c1d22; font-weight: 600; padding: 8px 16px; border-radius: 999px; font-size: 12px;
+              transition: opacity .3s; pointer-events: none; }
+  #advToast.hide { opacity: 0; }
   #areaStatus:empty { display: none; } #areaStatus { margin: -4px 0 12px; }
   #landing button:focus { outline: none; } #landing button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 </style>
@@ -208,9 +219,10 @@
   <div id="weatherHover" aria-hidden="true" hidden></div>
   <div id="routeHover" aria-hidden="true" hidden></div>
 </div>
+<div id="advToast" class="hide" aria-live="polite"></div>
 <div id="panel">
   <h1>Mars Walk Planner</h1>
-  <div class="small" id="status">Connecting to back end…</div>
+  <div class="small adv" id="status">Connecting to back end…</div>
 
   <label>Region <select id="region"></select></label>
   <div class="small" id="areaStatus"></div>
@@ -222,7 +234,8 @@
     <label>Vehicle <select id="mVehicle"></select></label>
     <label>Priority <select id="mPriority"></select></label>
   </div>
-  <label>Season <select id="mSeason"></select></label>
+  <label for="ls">Season: <b id="lsVal"></b></label>
+  <input type="range" id="ls" min="0" max="360" step="0.1" value="90" />
   <label class="check"><input type="checkbox" id="greenOnly" /> Stick to green rover-verified tracks</label>
   <button id="runMission">Plan mission</button>
   <div id="mStatus" class="small"></div>
@@ -237,8 +250,6 @@
   </div>
   <label>Local solar time: <b id="hourVal"></b></label>
   <input type="range" id="hour" min="0" max="24" step="0.25" value="11" />
-  <label>Season (Ls): <b id="lsVal"></b></label>
-  <input type="range" id="ls" min="0" max="360" step="0.1" value="90" />
   <label class="check"><input type="checkbox" id="globeLighting" checked aria-describedby="lightingNote" /> Sunlight and atmosphere</label>
   <div class="small" id="lightingNote">Move your mouse over the night side to reveal the map. Globe lighting follows the selected region’s solar time.</div>
   <select id="layer">
@@ -332,8 +343,9 @@
   </details>
 
   <h2>Clicked point</h2>
-  <div id="info" class="small">Click the map to see every value stored in that pixel.</div>
+  <div id="info" class="small">Click the map to see what's there.</div>
   <div id="infoLinks" class="small"></div>
+  <div id="advHint" class="small">Press A for technical details.</div>
 </div>
 
 <script>
@@ -491,7 +503,10 @@ function conditions() {
 function labels() {
   const h = +$("hour").value;
   $("hourVal").textContent = `${Math.floor(h)}:${String(Math.round((h % 1) * 60)).padStart(2, "0")}`;
-  $("lsVal").textContent = `${+$("ls").value}°`;
+  const ls = +$("ls").value;                        // plain season name; the exact solar longitude in advanced mode
+  $("lsVal").replaceChildren(document.createTextNode(
+    ["northern spring", "northern summer", "northern autumn", "northern winter"][Math.min(3, Math.floor(ls / 90))] +
+    (ls >= 180 && ls < 330 ? " (dust-storm season)" : "")), el("span", { className: "adv", textContent: `Ls ${ls}°` }));
   $("budgetVal").textContent = $("budget").value;
   syncGlobeLighting();
 }
@@ -762,7 +777,7 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
       if (request !== pointRequest || snapshot !== shownConditions) return;
       $("info").textContent = `${pointLabel(p)}\n${sampleLabel(sample)}\nData grid ${sample.grid_step_deg}° · ${snapshot.local_hour} h local solar time · ${snapshot.ls}° Ls`;
     } catch (err) {
-      if (request === pointRequest) $("info").textContent = `${pointLabel(p)}\n${err.message}`;
+      if (request === pointRequest) setMsg($("info"), err.message, `${pointLabel(p)}: `);
     }
     return;
   }
@@ -774,12 +789,23 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
     if (request !== pointRequest) return;
     const lines = Object.entries(px.values).map(([k, v]) => `${k.padEnd(13)} ${v ?? "no data"}`);
     const minerals = px.minerals && px.minerals.length ? `minerals: ${px.minerals.join("; ")}\n` : "";
-    $("info").textContent = `${pointLabel(p)}` +
+    const info = $("info"), row = (t, cls = "") => info.append(el("div", { textContent: t, className: cls }));
+    const v = px.values;
+    info.replaceChildren();
+    row(pointLabel(p));
+    if (px.ground) row(`Ground: ${px.ground.replace(/^TI \d+:\s*/, "").replace(" - ", ", ")}`);
+    if (px.minerals && px.minerals.length) row(`Minerals: ${px.minerals.map((m) => m.split(/ \(|: /)[0] +
+      (/strong/.test(m) ? " (strong)" : /clear/.test(m) ? "" : /weak/.test(m) ? " (weak)" : "")).join(", ")}`);
+    if (v.elevation != null) row(`Height: ${Math.round(v.elevation).toLocaleString()} m`);
+    if (v.slope != null) row(`Slope: ${Math.round(v.slope)}°`);
+    const tech = el("div", { className: "adv" }); tech.style.whiteSpace = "pre-wrap"; tech.style.marginTop = "6px";
+    info.append(tech);
+    tech.textContent = `${pointLabel(p)}` +
       (px.source === "global" ? "  (live lookup)\n" : `  (${px.source} map)\n`) +
       (px.ground ? `ground: ${px.ground}\n` : "") + minerals + (px.notes || []).map((n) => "• " + n + "\n").join("") +
       `confidence: ${px.confidence}\n\n` + lines.join("\n");
     murrayPointLinks(p, request);
-  } catch (err) { if (request === pointRequest) $("info").textContent = `${pointLabel(p)}: ${err.message}`; }
+  } catch (err) { if (request === pointRequest) setMsg($("info"), err.message, `${pointLabel(p)}: `); }
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
 let boxCorner = null;
@@ -839,7 +865,7 @@ async function findTarget() {
   const isCurrent = () => id === findRequest;
   $("findInfo").textContent = "Searching…"; clearMatches();
   try {
-    if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) $("findInfo").textContent = t; });
+    if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) setMsg($("findInfo"), t); });
     if (!isCurrent()) return;
     const res = await api("/api/find", { ...conditions(), query, base, focus: viewCenter() });
     if (!isCurrent()) return;
@@ -870,7 +896,7 @@ async function findTarget() {
       $("matches").appendChild(li);
     });
     chooseMatch(0, heatmapShown);
-  } catch (e) { if (isCurrent()) $("findInfo").textContent = e.message; }
+  } catch (e) { if (isCurrent()) setMsg($("findInfo"), e.message); }
 }
 $("find").onclick = findTarget;
 $("query").addEventListener("keydown", (e) => { if (e.key === "Enter") findTarget(); });
@@ -999,7 +1025,7 @@ $("plan").onclick = async () => {
   const requestAtStart = layerRequest;
   try {
     if (anywhere()) await ensureArea({ lat: (base.lat + target.lat) / 2, lon: (base.lon + target.lon) / 2 },
-                                     (t) => { if (planId === planRequest) $("explain").textContent = t; }, [base, target]);
+                                     (t) => { if (planId === planRequest) setMsg($("explain"), t); }, [base, target]);
     if (planId !== planRequest) return;
     const res = await api("/api/plan", { ...conditions(), base, target });
     if (planId !== planRequest) return;
@@ -1027,7 +1053,7 @@ $("plan").onclick = async () => {
     renderConsumables();
   } catch (e) {
     if (planId !== planRequest) return;
-    $("explain").textContent = e.message;
+    setMsg($("explain"), e.message);
     lastPlan = null;
     renderConsumables();
   } finally {
@@ -1085,7 +1111,7 @@ function renderLiveGoal(g) {                 // the AI reading the goal, before 
   let box = $("mGoalLive");
   if (!box) {
     $("mResult").innerHTML = "";
-    box = el("details", { className: "ai", id: "mGoalLive", open: true });
+    box = el("details", { className: "ai adv", id: "mGoalLive", open: true });
     box.append(el("summary", { id: "mGoalSum" }), el("pre", { className: "thinking", id: "mGoalThink" }),
                el("pre", { className: "thinking answer", id: "mGoalAns" }));
     $("mResult").append(box);
@@ -1110,12 +1136,12 @@ async function runMission() {
   $("mStatus").textContent = "Planning…";
   $("runMission").disabled = true;
   try {
-    if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) $("mStatus").textContent = t; });
+    if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) setMsg($("mStatus"), t); });
     if (!isCurrent()) return;
     await streamEvents("/api/mission/stream", { region: regionId(), goal, vehicle: $("mVehicle").value,
-      season: $("mSeason").value, priority: $("mPriority").value, green_only: $("greenOnly").checked }, async (e) => {
+      ls: +$("ls").value, priority: $("mPriority").value, green_only: $("greenOnly").checked }, async (e) => {
       if (!isCurrent()) return;
-      if (e.type === "status") $("mStatus").textContent = e.text;
+      if (e.type === "status") setMsg($("mStatus"), e.text);
       else if (e.type === "ai" && e.phase === "goal") { goalAI[e.kind] += e.text; renderLiveGoal(goalAI); }
       else if (e.type === "result") {
         res = e.mission; res.goal_ai = goalAI;
@@ -1137,7 +1163,7 @@ async function runMission() {
         res.explanation = e.text; res.explanation_source = e.source; res.explain_ai.live = false;
         $("mStatus").textContent = ""; updateExplain();
       } else if (e.type === "error") {
-        $("mStatus").textContent = e.text;
+        setMsg($("mStatus"), e.detail ? `${e.text} | ${e.detail}` : e.text);
         if (e.suggest) {                                   // e.g. a dust-covered area: offer the nearest firm ground
           const go = document.createElement("button");
           go.className = "secondary"; go.type = "button"; go.style.marginTop = "8px";
@@ -1153,7 +1179,7 @@ async function runMission() {
       else if (e.type === "done" && res && !res.explain_ai.live) $("mStatus").textContent = "";
     }, ctl.signal);
   } catch (err) {
-    if (err.name !== "AbortError" && isCurrent()) $("mStatus").textContent = err.message;
+    if (err.name !== "AbortError" && isCurrent()) setMsg($("mStatus"), err.message);
   } finally {
     if (isCurrent()) $("runMission").disabled = false;
   }
@@ -1182,33 +1208,43 @@ function selectRoute(i) { selected = i; renderMission(); drawMission(true); }
 function renderMission() {
   const r = mission, s = r.settings, out = $("mResult"), h3 = (t) => out.append(el("h3", { textContent: t }));
   out.innerHTML = "";
-  h3("Mission settings");
+  h3("Your mission");
   const set = el("ul"), li = (ul, t, cls = "") => ul.append(el("li", { textContent: t, className: cls }));
-  li(set, `Target: ${s.targets.join(" + ")}` + (s.parser === "ai" ? ` (goal read by ${s.model})` : ""));
+  const liAdv = (ul, plain, detail, cls = "") => {           // plain line + a technical tail for advanced mode
+    const item = el("li", { textContent: plain, className: cls });
+    if (detail) item.append(el("span", { className: "adv", textContent: detail }));
+    ul.append(item);
+  };
+  if (current) liAdv(set, `Where: ${current.label}`, `region ${current.region}`);
+  liAdv(set, `Looking for: ${s.targets.join(" + ")}`, s.parser === "ai" ? `goal read by ${s.model}` : "goal read by keywords");
   if (s.not_understood.length) li(set, `Not understood: ${s.not_understood.join(", ")}`);
-  li(set, `${s.vehicle.label}: max slope ${s.vehicle.max_slope}°, range ${s.vehicle.range_km} km`);
-  li(set, `${s.season.label}; walk planned for ${s.local_hour}:00 local (sun ${s.sun_elevation}° up)`);
-  li(set, `Priority ${s.priority.label}: route cost weighs time ${s.priority.cost.time}, energy ${s.priority.cost.energy}, ` +
-          `risk ${s.priority.cost.risk}` + (s.green_only ? "; sticking to green tracks" : ""));
+  liAdv(set, `Travelling by: ${plainName(s.vehicle.label).toLowerCase()}`,
+        `${s.vehicle.label}: max slope ${s.vehicle.max_slope}°, range ${s.vehicle.range_km} km`);
+  liAdv(set, `Season: ${plainName(s.season.label).replace(/:.*/, "")}`,
+        `${s.season.label}; walk planned for ${s.local_hour}:00 local (sun ${s.sun_elevation}° up)`);
+  liAdv(set, `Priority: ${s.priority.label.toLowerCase()}` + (s.green_only ? ", staying on rover tracks" : ""),
+        `route cost weighs time ${s.priority.cost.time}, energy ${s.priority.cost.energy}, risk ${s.priority.cost.risk}`);
   out.append(set);
-  for (const n of r.notes) out.append(el("div", { className: "small", textContent: n }));
+  for (const n of r.notes) { const d = el("div", { className: "small" }); setMsg(d, n); out.append(d); }
   const g = r.goal_ai;
   if (g && (g.reasoning || g.content)) {                       // how the AI read the goal (collapsed)
-    const d = el("details", { className: "ai" });
+    const d = el("details", { className: "ai adv" });
     d.append(el("summary", { textContent: `How ${s.model || "the AI model"} read the goal` }),
              el("pre", { className: "thinking", textContent: g.reasoning || "(no reasoning returned)" }),
              el("pre", { className: "thinking answer", textContent: g.content }));
     out.append(d);
   }
 
-  h3(`Tools: ${r.tools.kg} kg, ${r.tools.w} W if all run at once`);
+  const toolsH = el("h3", { textContent: "What to bring" });
+  toolsH.append(el("span", { className: "adv", textContent: `${r.tools.kg} kg, ${r.tools.w} W if all run at once` }));
+  out.append(toolsH);
   const tl = el("ul");
-  for (const t of r.tools.items) li(tl, `${t.name}: ${t.kg} kg${t.w ? `, ${t.w} W` : ""} (${t.why})`);
+  for (const t of r.tools.items) liAdv(tl, plainName(t.name), `${t.name}: ${t.kg} kg${t.w ? `, ${t.w} W` : ""} (${t.why})`);
   out.append(tl);
 
   if (r.candidates.length) {
-    h3("Decision matrix (each criterion scored 1-5)");
-    const tb = el("table", { className: "matrix" }), head = el("tr");
+    out.append(el("h3", { className: "adv", textContent: "Decision matrix (each criterion scored 1-5)" }));
+    const tb = el("table", { className: "matrix adv" }), head = el("tr");
     head.append(el("th", { textContent: "Criterion" }), el("th", { textContent: "Weight" }));
     r.candidates.forEach((c, i) => head.append(el("th", { className: `cand${i === 0 ? " win" : ""}${i === selected ? " sel" : ""}`,
       textContent: `#${c.rank}`, title: "Show this route", onclick: () => selectRoute(i) })));
@@ -1225,10 +1261,10 @@ function renderMission() {
     tb.append(tot); out.append(tb);
   }
 
-  h3("Why");
-  const think = el("details", { className: "ai", id: "mThinkBox" });
+  h3("Why this plan");
+  const think = el("details", { className: "ai adv", id: "mThinkBox" });
   think.append(el("summary", { id: "mThinkSum" }), el("pre", { className: "thinking", id: "mThinking" }));
-  out.append(think, el("div", { id: "mExplain" }), el("div", { className: "small", id: "mExplainNote" }));
+  out.append(think, el("div", { id: "mExplain" }), el("div", { className: "small adv", id: "mExplainNote" }));
   updateExplain();
   if (selected > 0) {
     const a = r.candidates[0], b = r.candidates[selected];
@@ -1240,8 +1276,8 @@ function renderMission() {
   if (prevMission && prevMission.candidates.length && r.candidates.length) {
     const a = prevMission.candidates[0], b = r.candidates[0], ps = prevMission.settings;
     const same = Math.abs(a.B.lat - b.B.lat) < 1e-4 && Math.abs(a.B.lon - b.B.lon) < 1e-4;
-    h3("Compared with the previous plan");
-    out.append(el("div", { id: "mCompare", className: "small", textContent:
+    out.append(el("h3", { className: "adv", textContent: "Compared with the previous plan" }));
+    out.append(el("div", { id: "mCompare", className: "small adv", textContent:
       `Before: ${ps.goal} · ${ps.vehicle.label} · ${ps.priority.label} · ${ps.season.label.split(" (")[0]}\n` +
       `${same ? "Same destination" : `New destination (${deg(a.B)} → ${deg(b.B)})`}\n` +
       `Score ${a.total} → ${b.total} · round trip ${a.route.round_trip_h} → ${b.route.round_trip_h} h · ` +
@@ -1249,9 +1285,9 @@ function renderMission() {
       `green track ${a.route.green_pct}% → ${b.route.green_pct}% · max slope ${a.route.max_slope}° → ${b.route.max_slope}°` }));
   }
 
-  h3(r.candidates.length ? "Candidates (click to open)" : "Candidates");
+  h3(r.candidates.length ? "Options (best first, click to open)" : "Options");
   r.candidates.forEach((c, i) => out.append(candidateCard(c, i)));
-  for (const d of r.dropped) out.append(el("div", { className: "small bad", textContent: `Dropped B${d.id} (${deg(d.B)}): ${d.reason}` }));
+  for (const d of r.dropped) out.append(el("div", { className: "small bad adv", textContent: `Dropped B${d.id} (${deg(d.B)}): ${d.reason}` }));
 }
 
 // Mission-planner vehicle (config.MISSION_VEHICLES) -> closest gear-page traveller (config.VEHICLES).
@@ -1269,10 +1305,18 @@ function missionGearHref(c) {
 
 function candidateCard(c, i) {
   const d = el("details", { className: "card" + (i === selected ? " sel" : ""), open: i === selected });
-  const chip = el("span", { className: "chip" + (c.A.kind === "NASA candidate" ? " nasa" : ""), textContent: c.A.kind });
-  d.append(el("summary", {}, `#${c.rank} · ${c.total}/100 · B ${deg(c.B)} `, chip));
-  const ul = el("ul"), add = (t, cls = "") => ul.append(el("li", { textContent: t, className: cls }));
+  const nasa = c.A.kind === "NASA candidate";
+  const chip = el("span", { className: "chip" + (nasa ? " nasa" : "") + (nasa ? "" : " adv"),
+                            textContent: nasa ? "NASA landing site" : c.A.kind });
+  d.append(el("summary", {}, `#${c.rank} · score ${c.total}/100 `, el("span", { className: "adv", textContent: `B ${deg(c.B)} ` }), chip));
   const k = c.card, rt = c.route, R = c.resources, ta = R.turnaround;
+  const easy = el("ul"), say = (t, cls = "") => easy.append(el("li", { textContent: t, className: cls }));
+  say(`What's there: ${(k.target_plain || k.target).join(", ")}`);
+  say(`Land at ${nasa ? "a NASA landing site" : "a flat, firm spot"} ${c.A.dist_km.toFixed(1)} km away`);
+  say(`Trip: ${rt.distance_km} km, about ${rt.round_trip_h} h there and back`);
+  for (const it of R.items) say(`${it.name[0].toUpperCase() + it.name.slice(1)} left at the end: ${it.left_pct}%`, it.ok ? "ok" : "bad");
+  say(`Turn back after ${ta.h} h at the latest`);
+  const ul = el("ul", { className: "adv" }), add = (t, cls = "") => ul.append(el("li", { textContent: t, className: cls }));
   add(`Target: ${k.target.join("; ")}`);
   add(`Data confidence: ${k.confidence}`);
   add(`Terrain: ${k.terrain.join("; ")}`);
@@ -1288,7 +1332,7 @@ function candidateCard(c, i) {
     if (it.source) ul.lastChild.title = it.source;                // hover: where the number comes from
   }
   add(`Turn back no later than ${ta.h} h after leaving A` + (ta.at_B ? " (B is reached before then)" : ` (at ${deg(ta)})`));
-  d.append(ul, el("button", { className: "secondary", textContent: i === selected ? "Showing this route" : "Show this route",
+  d.append(easy, ul, el("button", { className: "secondary", textContent: i === selected ? "Showing this route" : "Show this route",
                               onclick: () => selectRoute(i) }),
            el("p", { className: "small" }, el("a", { href: missionGearHref(c), target: "_blank", rel: "noopener",
                                                     textContent: "Gear for this mission" })));
@@ -1359,7 +1403,7 @@ async function showTracks(on) {
           ? `${rt.green_pct}% of this route follows green rover-verified track (${rt.green_km} km, highlighted).`
           : "This route doesn't use rover-verified track; the green network shows other ways through." }));
       }
-    } catch (e) { if (id === trackRequest) $("trackInfo").textContent = e.message; }
+    } catch (e) { if (id === trackRequest) setMsg($("trackInfo"), e.message); }
   }
   drawMission(false);
 }
@@ -1494,6 +1538,7 @@ async function murrayToggle(def, on) {
     if (on && def.kind !== "bbox") $("murrayInfo").textContent = `${def.title}: ${def.credit}`;
   } catch (e) {
     st.on = false; $(`murray_${def.id}`).checked = false;
+    if (def.kind === "tiles") $("murray_none").checked = true;      // a map failed: back to the planner's own map
     $("murrayInfo").textContent = `${def.title} could not load: ${e.message || e}`;
   }
   viewer.scene.requestRender();
@@ -1519,12 +1564,35 @@ async function murrayPointLinks(p, request) {
   } catch (e) { /* the panel already shows the pixel values */ }
 }
 
+// Background maps are radio buttons (one at a time: each one hides the others completely); the rest draw on top
+// of any map, so they stay checkboxes. Plain names for everyone, the catalogue title in advanced mode.
+const MURRAY_PLAIN = { ctx: "Detailed photos (black and white)", mola: "Height map (coloured by height)",
+  viking: "Colour photos", terrain: "3D hills and craters", m2020: "Perseverance rover's path",
+  msl: "Curiosity rover's path", names: "Place names", craters: "Crater names",
+  quads: "Photo tile grid (with download links)", hirise: "Where close-up photos exist" };
+async function pickMurrayMap(def) {
+  for (const m of murray.defs) if (m.kind === "tiles" && m !== def && murrayOn(m.id)) await murrayToggle(m, false);
+  if (def) await murrayToggle(def, true);
+}
 api("/api/murray/layers").then((d) => {
   murray.defs = d.layers;
-  for (const def of d.layers) {
-    const box = el("input", { type: "checkbox", id: `murray_${def.id}` });
-    box.onchange = () => murrayToggle(def, box.checked);
-    $("murrayLayers").append(el("label", { className: "check", title: def.credit }, box, def.title));
+  const box = $("murrayLayers");
+  const label = (def, input) => el("label", { className: "check", title: def.credit || "" }, input,
+    MURRAY_PLAIN[def.id] || def.title, el("span", { className: "adv", textContent: def.title }));
+  box.append(el("div", { className: "small murrayHead", textContent: "Map (one at a time)" }));
+  const none = el("input", { type: "radio", name: "murrayMap", id: "murray_none", checked: true });
+  none.onchange = () => pickMurrayMap(null);
+  box.append(el("label", { className: "check" }, none, "The planner's own map"));
+  for (const def of d.layers.filter((x) => x.kind === "tiles")) {
+    const r = el("input", { type: "radio", name: "murrayMap", id: `murray_${def.id}` });
+    r.onchange = () => { if (r.checked) pickMurrayMap(def); };
+    box.append(label(def, r));
+  }
+  box.append(el("div", { className: "small murrayHead", textContent: "Show on top" }));
+  for (const def of d.layers.filter((x) => x.kind !== "tiles")) {
+    const c = el("input", { type: "checkbox", id: `murray_${def.id}` });
+    c.onchange = () => murrayToggle(def, c.checked);
+    box.append(label(def, c));
   }
 }).catch((e) => { $("murrayInfo").textContent = "Murray Lab maps unavailable: " + e.message; });
 
@@ -1590,40 +1658,42 @@ function lerpPoint(a, b, t) {
 
 const fmt = (x, d = 1) => (x == null || Number.isNaN(x) ? "–" : (+x).toFixed(d));
 const hm = (h) => (h == null ? "–" : h < 1 ? `${Math.round(h * 60)} min` : `${Math.floor(h)} h ${String(Math.round((h % 1) * 60)).padStart(2, "0")} min`);
-function groundText(p) {
+function groundLines(p) {                       // [[plain line], [technical line, "adv"]] for the hover card
   if (p.ti != null) {
-    const cls = p.ti < 150 ? "fine dust" : p.ti < 300 ? "sand" : p.ti < 600 ? "coarse sand / crusted" : "bedrock";
-    return `Ground: ${cls} (thermal inertia ${fmt(p.ti, 0)})` + (p.firm != null ? `, firmness ${fmt(p.firm, 2)}` : "");
+    const cls = p.ti < 150 ? "soft dust" : p.ti < 300 ? "sand" : p.ti < 600 ? "coarse sand or crust" : "solid rock";
+    return [[`Ground: ${cls}`], [`thermal inertia ${fmt(p.ti, 0)}` + (p.firm != null ? `, firmness ${fmt(p.firm, 2)}` : ""), "adv"]];
   }
-  return p.firm != null ? `Ground firmness ${fmt(p.firm, 2)}` : "";
+  if (p.firm == null) return [];
+  return [[`Ground: ${p.firm < 0.3 ? "soft" : p.firm < 0.6 ? "medium" : "firm"}`], [`firmness ${fmt(p.firm, 2)}`, "adv"]];
 }
 
 function roverCard(path, p) {
   const lines = [];                                  // [text, className]
   if (path.kind === "mission") {
     const c = path.c, r = c.route;
-    lines.push([`Route #${c.rank}${path.selected ? "" : " (backup)"} · ${mission.settings.vehicle.label}`, "title"]);
+    lines.push([`Route #${c.rank}${path.selected ? "" : " (backup)"} · ${plainName(mission.settings.vehicle.label)}`, "title"]);
     lines.push([`${fmt(p.d, 2)} of ${r.distance_km} km · ${hm(p.t)} of ${hm(r.one_way_h)} out`]);
-    lines.push([`Elevation ${fmt(p.elev, 0)} m · slope ${fmt(p.slope)}°`]);
-    lines.push([groundText(p)]);
+    lines.push([`Height ${fmt(p.elev, 0)} m · slope ${fmt(p.slope, 0)}°`]);
+    lines.push(...groundLines(p));
     lines.push([`Risk: ${["low", "moderate", "high"][Math.round(p.risk)] || "–"}` +
                 (p.green ? " · on green rover-verified track" : p.yellow ? " · on high-strain (yellow) track" : ""),
                 p.risk >= 1.5 ? "warn" : ""]);
-    lines.push([`Sunlight cos(i) ${fmt(p.sun, 2)} · surface ~${fmt(p.temp, 0)} K at ${mission.settings.local_hour}:00`]);
+    lines.push([`Sunlight cos(i) ${fmt(p.sun, 2)} · surface ~${fmt(p.temp, 0)} K at ${mission.settings.local_hour}:00`, "adv"]);
     for (const it of c.resources.items) {
       const used = p.used && p.used[it.name];
       if (used == null) continue;
       const left = 100 * (1 - used / it.capacity), back = 100 * (1 - 2 * used / it.capacity);
       const name = it.name[0].toUpperCase() + it.name.slice(1);
-      lines.push([`${name}: ${fmt(used, it.unit === "Wh" ? 0 : 2)} ${it.unit} used so far (${fmt(left, 0)}% left)`]);
+      lines.push([`${name}: ${fmt(left, 0)}% left`]);
+      lines.push([`${fmt(used, it.unit === "Wh" ? 0 : 2)} ${it.unit} used so far`, "adv"]);
       lines.push([`  turning back here: ${fmt(back, 0)}% left at base`, back < c.resources.reserve_pct ? "warn" : ""]);
     }
   } else if (path.kind === "manual") {
     const s = path.plan.stats || {};
     lines.push([`Planned route · ${path.plan.vehicle}`, "title"]);
     lines.push([`${fmt(p.d, 2)} of ${s.distance_km ?? "–"} km · ${hm(p.t)} of ${hm(s.one_way_h)} out`]);
-    lines.push([`Elevation ${fmt(p.elev, 0)} m · slope ${fmt(p.slope)}°`]);
-    lines.push([groundText(p)]);
+    lines.push([`Height ${fmt(p.elev, 0)} m · slope ${fmt(p.slope, 0)}°`]);
+    lines.push(...groundLines(p));
     if (p.o2_kg != null) lines.push([`O2: ≈${fmt(p.o2_kg, 2)} kg used so far` + (s.o2_max_kg ? ` of ${s.o2_max_kg} kg` : "")]);
     if (p.energy_kwh != null) lines.push([`Energy: ≈${fmt(p.energy_kwh, 2)} kWh used so far` + (s.energy_max_kwh ? ` of ${s.energy_max_kwh} kWh` : "")]);
   } else {
@@ -1633,7 +1703,7 @@ function roverCard(path, p) {
     lines.push([sg.class === "green" ? "Green: drove without warning signs" : `Yellow, high strain: ${sg.why}`,
                 sg.class === "green" ? "" : "warn"]);
   }
-  lines.push([`${Math.abs(p.lat).toFixed(4)}° ${p.lat < 0 ? "S" : "N"}, ${p.lon.toFixed(4)}° E`]);
+  lines.push([`${Math.abs(p.lat).toFixed(4)}° ${p.lat < 0 ? "S" : "N"}, ${p.lon.toFixed(4)}° E`, "adv"]);
   return lines.filter(([t]) => t);
 }
 
@@ -1699,24 +1769,66 @@ function fillRegions(selected = $("region").value) {
     regions.map((r) => `<option value="${r.region}">${r.label || r.region}</option>`).join("") + "</optgroup>";
   if (selected && regions.some((r) => r.region === selected)) $("region").value = selected;
 }
+// ------------------------------------------- advanced (technical) details ----
+// Everything technical has class "adv" and shows only after pressing A. Server messages are "plain | detail":
+// the plain part is for everyone, the detail part is technical (a message starting "| " is technical only).
+const ADV_KEY = "marswalk.advanced";
+function setAdvanced(on, toast = false) {
+  document.body.classList.toggle("adv-on", on);
+  $("advHint").textContent = on ? "Technical details are on. Press A to hide them." : "Press A for technical details.";
+  try { localStorage.setItem(ADV_KEY, on ? "1" : "0"); } catch (e) { /* private mode: not remembered */ }
+  if (toast) {
+    const t = $("advToast");
+    t.textContent = on ? "Technical details on" : "Technical details off";
+    t.classList.remove("hide");
+    clearTimeout(setAdvanced.timer);
+    setAdvanced.timer = setTimeout(() => t.classList.add("hide"), 1400);
+  }
+}
+document.addEventListener("keydown", (e) => {
+  if ((e.key !== "a" && e.key !== "A") || e.ctrlKey || e.metaKey || e.altKey || e.repeat) return;
+  const t = e.target;
+  if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;   // typing a goal
+  setAdvanced(!document.body.classList.contains("adv-on"), true);
+});
+function splitMsg(text) {
+  text = String(text ?? "");
+  if (text.startsWith("| ")) return ["", text.slice(2)];
+  const i = text.indexOf(" | ");
+  return i < 0 ? [text, ""] : [text.slice(0, i), text.slice(i + 3)];
+}
+function setMsg(node, text, prefix = "") {          // plain part for everyone, detail only in advanced mode
+  const [plain, detail] = splitMsg(text);
+  node.replaceChildren(document.createTextNode(plain ? prefix + plain : ""));
+  if (detail) node.append(el("span", { className: "adv", textContent: detail }));
+  node.classList.toggle("adv-only", !plain && !!detail);
+}
+const plainName = (t) => String(t).split(" (")[0];   // "Handheld spectrometer (VNIR / Raman)" -> "Handheld spectrometer"
+
 const ANYWHERE = "here";
 const anywhere = () => $("region").value === ANYWHERE;
 const regionId = () => current?.region || "jezero";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Make sure the area around `p` is loaded (and every point in `need` lies inside it), building it from the
 // globe's 3D terrain if needed; it becomes `current`. Minerals keep loading in the background (watchArea).
+const ZOOMED_OUT_M = 1.5e6;                      // above this camera height "where you're looking" is too vague
+const zoomedOut = () => viewer.camera.positionCartographic.height > ZOOMED_OUT_M;
 async function ensureArea(p, say = () => {}, need = [p]) {
+  if (zoomedOut() && current && need.length === 1) {       // whole-planet view: keep the current area
+    say(`Planning in ${current.label}. Zoom in on any other place on Mars to plan there.`);
+    return current.region;
+  }
   if (!p) throw new Error("Point the map at the surface of Mars first.");
   const inside = (r, q, m = 0.05) => q.lat > r.rect.south + m && q.lat < r.rect.north - m &&
                                       q.lon > r.rect.west + m && q.lon < r.rect.east - m;
   if (current && need.every((q) => inside(current, q))) return current.region;
-  say(`Loading the 3D terrain around ${pointLabel(p)}…`);
+  say(`Loading this part of Mars… | 3D terrain around ${pointLabel(p)}`);
   let st = await api("/api/sites/build", { lat: p.lat, lon: p.lon });
   const t0 = Date.now();
   while (!st.ready) {
     if (st.status === "failed") throw new Error("Couldn't load this area: " + (st.log || []).slice(-1).join(" "));
-    say(`Loading the 3D terrain, thermal inertia and night-time IR around ${pointLabel(p)}… ` +
-        `${Math.round((Date.now() - t0) / 1000)} s (usually under a minute)`);
+    say(`Loading this part of Mars… ${Math.round((Date.now() - t0) / 1000)} s | 3D terrain (MDEM200M), THEMIS ` +
+        `thermal inertia and night-time IR, TES albedo around ${pointLabel(p)}`);
     await sleep(2000);
     st = await api(`/api/sites/build/${st.region}`);
   }
@@ -1744,12 +1856,12 @@ async function watchArea(region) {                // CRISM minerals arrive a few
       if (st.status === "done" || st.status === "failed") {
         regions = (await api("/api/regions")).regions; fillRegions();
         if (current?.region === region) { current = regions.find((r) => r.region === region); showRegionInfo(); }
-        if (mine) $("areaStatus").textContent = st.status === "done"
-          ? `${st.label}: CRISM minerals loaded. Mineral goals (clay, sulfate…) now work here.` : "";
+        if (mine) setMsg($("areaStatus"), st.status === "done"
+          ? `Mineral maps loaded: goals like "clay" now work here. | ${st.label}: CRISM summary parameters` : "");
         return;
       }
-      if (mine) $("areaStatus").textContent = `${st.label}: terrain ready. Loading CRISM minerals` +
-        (st.crism_total ? ` (${st.crism_done}/${st.crism_total} observations)` : "") + "… mineral goals work once done.";
+      if (mine) setMsg($("areaStatus"), "Loading the mineral maps for this area… goals like \"clay\" work once " +
+        `they're in. | ${st.label}: CRISM ` + (st.crism_total ? `${st.crism_done}/${st.crism_total} observations` : "query"));
       await sleep(5000);
     }
   } catch (e) { /* the server restarted: the next plan reloads the area */ }
@@ -1757,6 +1869,9 @@ async function watchArea(region) {                // CRISM minerals arrive a few
 }
 
 // ------------------------------------------------------------------ boot ----
+let advStart = false;
+try { advStart = localStorage.getItem(ADV_KEY) === "1"; } catch (e) { /* storage blocked: start plain */ }
+setAdvanced(advStart);
 function flyTo(r) {
   viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
 }
@@ -1802,8 +1917,9 @@ $("layer").onchange = () => {
 };
 ["budget", "region"].forEach((id) => $(id).addEventListener("change", invalidatePlan));
 $("region").onchange = () => {
-  $("areaStatus").textContent = anywhere() ? "Plan mission, Find and Plan route work wherever the map is centred: " +
-    "move the globe anywhere on Mars. New areas load from the 3D terrain in under a minute." : "";
+  setMsg($("areaStatus"), anywhere() ? "Zoom in anywhere on Mars and plan: the plan uses the place in the middle " +
+    `of the map. Zoomed out, it uses ${current ? current.label : "the current area"}. | New areas load from the ` +
+    "3D terrain (MDEM200M) in seconds; CRISM minerals follow." : "");
   if (anywhere()) { if (current) { showRegionInfo(); refreshLayer(); } return; }
   current = regions.find((r) => r.region === $("region").value);
   syncGlobeLighting();
@@ -1852,7 +1968,7 @@ api("/api/weather/calendar").then(calendar => {
     const opts = await api("/api/mission/options");
     const fill = (id, obj, val) => { $(id).innerHTML = Object.entries(obj).map(([k, v]) =>
       `<option value="${k}">${typeof v === "string" ? v : v.label}</option>`).join(""); $(id).value = val; };
-    fill("mVehicle", opts.vehicles, "on_foot"); fill("mSeason", opts.seasons, "northern_summer");
+    fill("mVehicle", opts.vehicles, "on_foot");
     fill("mPriority", opts.priorities, "safety");
     const meta = await api("/api/regions");
     regions = meta.regions;

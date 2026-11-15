@@ -160,6 +160,7 @@ def themis_ti(mc):
 # ---------------------------------------------------------------------------
 # MINERALS from CRISM spectral summary parameters (Viviano-Beck et al. 2014, JGR Planets 119, 1403).
 # Each mineral band in the cube = the strongest of its CRISM parameters (a band depth, no unit).
+# label: plain name shown to everyone ("clay"); science: the precise name, shown in the advanced view.
 # detect: below this, treat as no detection (noise); strong: a clear, strong signature.
 # Thresholds are for ~100 m cube pixels: averaging 18 m CRISM pixels lowers band depths, so they sit below
 # full-resolution values. Checked at Jezero against published maps (Ehlmann 2008, Goudge 2015, Horgan 2020):
@@ -168,20 +169,20 @@ def themis_ti(mc):
 # add a mineral here and rebuild the cube.
 # ---------------------------------------------------------------------------
 MINERALS = {
-    "clay": dict(label="Fe/Mg clay (smectite)", params=["D2300"], detect=0.010, strong=0.020, words=[
+    "clay": dict(label="clay", science="Fe/Mg clay (smectite)", params=["D2300"], detect=0.010, strong=0.020, words=[
         "clay", "clays", "smectite", "phyllosilicate", "nontronite", "saponite", "clay minerals", "mud",
         "mudstone", "clay rich"]),
-    "carbonate": dict(label="carbonate", params=["MIN2295_2480", "MIN2345_2537"], detect=0.002, strong=0.006,
+    "carbonate": dict(label="carbonate", science="carbonate (Mg/Fe/Ca)", params=["MIN2295_2480", "MIN2345_2537"], detect=0.002, strong=0.006,
                       words=["carbonate", "magnesite", "siderite", "calcite"]),
-    "olivine": dict(label="olivine", params=["OLINDEX3"], detect=0.12, strong=0.16, words=[
+    "olivine": dict(label="olivine", science="olivine (Fe/Mg silicate)", params=["OLINDEX3"], detect=0.12, strong=0.16, words=[
         "olivine", "forsterite", "ultramafic"]),
-    "pyroxene": dict(label="pyroxene", params=["LCPINDEX2", "HCPINDEX2"], detect=0.010, strong=0.020, words=[
+    "pyroxene": dict(label="pyroxene", science="pyroxene (low/high-Ca)", params=["LCPINDEX2", "HCPINDEX2"], detect=0.010, strong=0.020, words=[
         "pyroxene", "augite", "pigeonite", "basaltic"]),
-    "sulfate": dict(label="sulfate", params=["SINDEX2"], detect=0.010, strong=0.020, words=[
+    "sulfate": dict(label="sulfate", science="sulfate (polyhydrated)", params=["SINDEX2"], detect=0.010, strong=0.020, words=[
         "sulfate", "sulphate", "gypsum", "jarosite"]),
-    "hydrated_silica": dict(label="hydrated silica (opal)", params=["MIN2250"], detect=0.005, strong=0.010,
+    "hydrated_silica": dict(label="silica", science="hydrated silica (opal)", params=["MIN2250"], detect=0.005, strong=0.010,
                             words=["hydrated silica", "opal", "opaline", "silica"]),
-    "hydrated": dict(label="water-bearing minerals", params=["BD1900_2"], detect=0.008, strong=0.015, words=[
+    "hydrated": dict(label="water-bearing minerals", science="hydrated minerals (1.9 µm water band)", params=["BD1900_2"], detect=0.008, strong=0.015, words=[
         "hydrated", "hydrated minerals", "water bearing", "water bearing minerals", "water", "h2o", "aqueous", "wet"]),
 }
 
@@ -414,6 +415,23 @@ SEASONS = {
     "northern_autumn": dict(label="Northern autumn (Ls 180-270): dust-storm season", ls=225, dust_risk=0.50),
     "northern_winter": dict(label="Northern winter (Ls 270-360): dust-storm season", ls=315, dust_risk=0.35),
 }
+
+
+BASE_SEASONS = list(SEASONS)          # the four named seasons, Ls 0-90 / 90-180 / 180-270 / 270-360 in order
+
+
+def season_for_ls(ls):
+    """Season entry for any solar longitude from the season slider: the dust risk of the SEASONS range it falls in,
+    planned at that exact Ls. Registered in SEASONS under "ls_<deg>" so the planner can use it like the others."""
+    ls = round(float(ls) % 360, 1)
+    key = f"ls_{ls:g}"
+    if key not in SEASONS:
+        base = SEASONS[BASE_SEASONS[min(3, int(ls // 90))]]       # spring 0-90, summer, autumn, winter 270-360
+        name, dusty = base["label"].split(" (")[0], base["dust_risk"] >= 0.3
+        SEASONS[key] = dict(label=f"{name} (Ls {ls:g}°)" + (": dust-storm season" if dusty else ""), ls=ls,
+                            dust_risk=base["dust_risk"])
+    return key
+
 
 # Priority: how the route cost map weighs time, energy/oxygen and terrain risk, and which decision-matrix
 # criterion gets +10 points (the rest are scaled down so weights still sum to 100).
