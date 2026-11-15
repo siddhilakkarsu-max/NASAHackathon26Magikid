@@ -36,13 +36,15 @@ async function setup(viewport) {
     await p.addInitScript(() => localStorage.setItem('mapManualSeen', '1'));
     await p.goto((process.env.MARSWALK_TEST_URL || 'http://127.0.0.1:8001') + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await p.locator('#startExploring').click();
-    await p.locator('#regionsButton').click();
+    await p.locator('#gmRail button[data-section="conditionsPanel"]').click();
     // Sliders are usable while the camera flies. On narrow screens the open
     // drawer can cover the entire globe, so camera rendering is not UI readiness.
     await p.waitForFunction(() => current && document.querySelector('#globalLayer option[value="map:terrain"]'), null, { timeout: 60000 });
     await p.evaluate(scale => { viewer.resolutionScale = scale; }, Number(process.env.MARSWALK_RENDER_SCALE || 1));
   }
-  await p.locator('#conditionsPanel > summary').click();
+  if (!await p.locator('#conditionsPanel').evaluate(panel => panel.open)) {
+    await p.locator('#conditionsPanel > summary').click();
+  }
   await p.locator('#hour').scrollIntoViewIfNeeded();
   if (selection === 'keyboard') {
     await p.locator('#conditionsPanel > p').click();

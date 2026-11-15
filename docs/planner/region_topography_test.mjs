@@ -16,8 +16,15 @@ page.on('pageerror', e => errors.push(String(e)));
 const pass = name => { checks.push(name); console.log('PASS ' + name); };
 let failure;
 const choose = async value => {
+  if (!await page.locator('#globalLayer').isVisible()) {
+    await page.locator('#gmRail button[data-section="globalMaps"]').click();
+  }
   await page.locator('#globalLayer').selectOption(value);
   await page.waitForFunction(value => plannerLayout.globalChoice() === value, value);
+};
+const selectRegion = async value => {
+  await page.locator('#regionsButton').click();
+  await page.locator('#region').selectOption(value);
 };
 const state = () => page.evaluate(() => ({ choice: plannerLayout.globalChoice(), region: current?.region,
   pending: current?.planningReady === false, selected: document.querySelector('#region').value,
@@ -58,13 +65,15 @@ try {
   await page.locator('#regionsButton').click();
   await page.waitForFunction(() => document.body.classList.contains('drawer'));
   assert(await page.locator('#region').isVisible());
+  assert.equal(await page.locator('#missionSetup').isVisible(), false);
+  assert.equal(await page.locator('#globalMaps').isVisible(), false);
   pass('Regions button opens the updated teammate drawer and accessible region selector');
   const choices = await page.locator('#region option').evaluateAll(options => options.map(o => o.value).filter(v => v !== 'here'));
   const catalog = await page.evaluate(() => namedSites.map(s => s.site));
   for (const key of catalog) assert(choices.includes(key) || choices.includes('site:' + key), key);
   assert.equal(new Set(choices).size, choices.length);
   for (const value of choices) {
-    await page.locator('#region').selectOption(value);
+    await selectRegion(value);
     const key = value.replace(/^site:/, '');
     await page.waitForFunction(key => current?.region === key && topographicSelected() && !viewer.camera._currentFlight, key);
     const s = await state();
@@ -76,7 +85,7 @@ try {
     if (value.startsWith('site:')) assert(s.pending && s.planDisabled, 'Never plan in the previous region');
   }
   pass(`All ${choices.length} region choices fly to their real catalog bounds and select topographic imagery`);
-  await page.locator('#region').selectOption('jezero');
+  await selectRegion('jezero');
   await page.waitForFunction(() => current?.region === 'jezero' && topographicSelected() && !murray.state.terrain.loading && viewer.terrainProvider === murray.state.terrain.provider,
     null, { timeout: 120000 });
   await page.locator('#region3dView').click();
@@ -105,6 +114,9 @@ try {
   pass('Every other surface disables 3D and resets tilt, even with a pinned photo overlay');
   await page.evaluate(() => routePlayback.setRoute('audit', [{ lat: 18.45, lon: 77.45 },
     { lat: 18.451, lon: 77.451 }], 'astronaut', 'Interaction test fixture'));
+  const drawerBox = await page.locator('#panel').boundingBox();
+  const routeBox = await page.locator('#routePlayback').boundingBox();
+  assert(routeBox.x >= drawerBox.x + drawerBox.width, 'The wider drawer must not cover route controls');
   await page.locator('#walkerView').click();
   await page.waitForFunction(() => routePlayback.walking() && topographicSelected() &&
     document.querySelector('#walkerStatus').textContent.includes('eye height'), null, { timeout: 120000 });
@@ -126,9 +138,9 @@ try {
       return window.originalRegionApi(url, body, signal);
     };
   }, first);
-  await page.locator('#region').selectOption('site:' + first);
+  await selectRegion('site:' + first);
   await page.waitForFunction(() => window.buildHeld);
-  await page.locator('#region').selectOption('site:' + second);
+  await selectRegion('site:' + second);
   await page.waitForFunction(key => current?.region === key && topographicSelected() && !viewer.camera._currentFlight, second);
   await choose('map:viking');
   await page.evaluate(() => { window.releaseRegionBuild(); api = window.originalRegionApi; });
@@ -138,7 +150,7 @@ try {
   await page.evaluate(() => fillRegions());
   assert.equal((await state()).selected, 'site:' + second);
   pass('Late planning completion cannot change a newer region or map; metadata refresh preserves pending selection');
-  await page.locator('#region').selectOption('here');
+  await selectRegion('here');
   assert.equal((await state()).pending, false); assert.equal((await state()).planDisabled, false);
   pass('Anywhere cancels pending region selection and restores a usable planner');
   // A synthetic planning metadata response tests successful completion without
@@ -157,7 +169,7 @@ try {
       return window.originalRegionApi(url, body, signal);
     };
   }, first);
-  await page.locator('#region').selectOption('site:' + first);
+  await selectRegion('site:' + first);
   await page.waitForFunction(() => typeof window.completePlanning === 'function' && topographicSelected() && !viewer.camera._currentFlight);
   await choose('map:mola');
   const beforeReady = await page.evaluate(() => ({ camera: Cesium.Cartesian3.clone(viewer.camera.positionWC) }));
@@ -175,12 +187,12 @@ try {
   // Failure of planning data does not remove usable topography or claim readiness.
   await page.unroute('**/api/sites/build');
   await page.route('**/api/sites/build', route => route.fulfill({ status: 503, json: { detail: 'Deliberate planning fixture failure' } }));
-  await page.locator('#region').selectOption('site:' + first);
+  await selectRegion('site:' + first);
   await page.waitForFunction(() => document.querySelector('#areaStatus').textContent.includes("couldn't load"));
   s = await state();
   assert(s.pending && s.planDisabled); assert.equal(s.choice, 'map:terrain'); assert.equal(s.tilt, true);
   pass('Planning download failure leaves topography usable and explains retry without invented data');
-  await page.locator('#region').selectOption('jezero');
+  await selectRegion('jezero');
   await page.waitForFunction(() => current?.region === 'jezero' && topographicSelected());
   await page.locator('#drawerClose').click();
   assert.deepEqual(errors, []);

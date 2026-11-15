@@ -116,7 +116,7 @@ try {
   await page.addInitScript(() => localStorage.setItem('mapManualSeen', '1'));
   await page.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await page.locator('#startExploring').click();
-  await page.locator('#regionsButton').click();
+  await page.locator('#gmRail button[data-section="all"]').click();
   await page.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight &&
     document.querySelector('#globalLayer option[value="map:ctx"]'));
   await page.evaluate(scale => {

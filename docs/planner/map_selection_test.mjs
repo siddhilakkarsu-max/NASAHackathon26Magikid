@@ -23,7 +23,7 @@ async function open() {
   p.on('requestfailed', r => { if (/\/OnMars\/|\/murray\/ctx\//.test(r.url())) sourceFailures.push({url:r.url(), error:r.failure()?.errorText}); });
   await p.goto(base + '/', { waitUntil: 'domcontentloaded', timeout: 60000 });
   await p.locator('#startExploring').click();
-  await p.locator('#regionsButton').click();
+  await p.locator('#gmRail button[data-section="globalMaps"]').click();
   await p.waitForFunction(() => murray.defs.length && current && !viewer.camera._currentFlight && document.querySelector('#globalLayer option[value="map:terrain"]'));
   await p.evaluate(scale => {
     viewer.resolutionScale = scale;
@@ -68,6 +68,9 @@ async function check(value, p = page, annotations = true) {
   return s;
 }
 async function choose(value, p = page, annotations = true) {
+  if (!await p.locator('#globalLayer').isVisible()) {
+    await p.locator('#gmRail button[data-section="globalMaps"]').click();
+  }
   await p.locator('#globalLayer').selectOption(value);
   if (value === 'map:terrain') await p.waitForFunction(() => murray.state.terrain?.on && !murray.state.terrain.loading && viewer.terrainProvider === murray.state.terrain.provider, null, { timeout: 120000 });
   else if (value && !value.startsWith('map:')) {
@@ -126,7 +129,7 @@ try {
 
   // Regional selection returns to planner imagery and synchronizes the global menu.
   await choose('map:ctx');
-  await page.evaluate(() => { document.querySelector('#regionalMaps').open = true; });
+  await page.locator('#gmRail button[data-section="regionalMaps"]').click();
   await page.locator('#regionalLayer').selectOption('temperature');
   await page.waitForFunction(() => displayedLayer === 'temperature' || document.querySelector('#layerStatus').textContent.startsWith('Layer could not load'), null, { timeout: 120000 });
   const regional = await state();

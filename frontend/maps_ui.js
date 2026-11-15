@@ -81,9 +81,9 @@
   rail.append(el("div", { className: "logo", title: "Marswalk Planner" }));
   railBtn("menu", "Menu", toggle("all"), "all");
   const regionsBtn = railBtn("globe", "Regions", () => {
-    drawer(true, "regionPicker");
+    drawer(true, "panelPlace");
     setTimeout(() => $("region").focus(), 250);
-  }, "regionPicker");
+  }, "panelPlace");
   regionsBtn.id = "regionsButton";
   railBtn("chat", "Assistant", () => chat.open(true));
   railBtn("route", "Plan", toggle("missionSetup"), "missionSetup");

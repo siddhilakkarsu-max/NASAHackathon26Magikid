@@ -82,7 +82,7 @@ body.gm.drawer #gmChips { left: 818px; }
 #gmChat form button { width: auto !important; margin: 0 !important; padding: 6px 14px !important; border-radius: 18px !important;
                       text-transform: none; letter-spacing: 0; min-height: 0; }
 @media (min-width: 761px) {
-  body.gm.drawer #routePlayback { left: 374px; max-width: calc(100% - 388px); }
+  body.gm.drawer #routePlayback { left: 424px; max-width: calc(100% - 438px); }
 }
 @media (max-width: 1100px) {
   #gmChips { top: 64px; left: 14px; }

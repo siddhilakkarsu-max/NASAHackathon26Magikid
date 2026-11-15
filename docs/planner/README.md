@@ -210,7 +210,10 @@ mouse drags and keyboard input across four viewport sizes. Its optional
 The region audit checks every menu choice against its catalog bounds, accessible
 3D controls, map exclusivity, pending/failed planning data and stale responses.
 It uses real map providers but deliberately fixtures planning-job responses so
-the test does not start dozens of long-running regional builds.
+the test does not start dozens of long-running regional builds. Two named regions
+are treated as not yet downloaded inside that browser, even if their local cubes
+already exist; the test does not change those files. It also checks the Regions
+rail section and route-control clearance with the team's wider drawer.
 
 The terrain test uses mouse gestures to tilt, zoom and draw boxes; checks pinning
 at several camera distances, clearing, terrain picking and dateline crossing;
