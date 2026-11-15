@@ -1,5 +1,5 @@
 """The map assistant: a chat box where the astronaut types a sentence and the planner answers, asks what it needs
-(time of day, how they travel) and drives the map (plan a mission, show the route in 3D, Walker's view, layers).
+(time of day, how they travel) and drives the map (plan a mission, play the route, Walker's view, layers).
 
 reply(messages, state, memo) -> {"reply", "chips", "actions", "memo", "source"}
   messages: the chat so far, [{"role": "user"|"assistant", "text": ...}] (the last one is the user's new message)
@@ -23,8 +23,6 @@ ACTIONS = {
     "set_priority": f"priority: one of {', '.join(PRIORITIES)}",
     "go_to": "place (text): fly to and select a place by name",
     "plan_mission": "plan with the current goal, time and vehicle",
-    "show_route_3d": "show the selected route over the 3D terrain, tilted",
-    "show_3d": "turn on 3D terrain and tilt the current view",
     "walker_view": "stand on the ground at eye height along the selected route",
     "play_route": "animate the traveller along the selected route",
     "select_option": "n (1-3): show route option n",
@@ -64,7 +62,7 @@ SEASON_WORDS = [(r"dust storm season|storm season", 250.0), (r"spring", 0.0), (r
                 (r"autumn|\bfall\b", 180.0), (r"winter", 270.0)]
 TIME_CHIPS = ["Morning (09:00)", "Midday (12:00)", "Afternoon (15:00)", "Keep 11:00"]
 VEHICLE_CHIPS = ["On foot", "Open rover", "Pressurized rover", "Scout bike"]
-AFTER_PLAN_CHIPS = ["Show the route in 3D", "Walker's view", "Show radiation", "Try the afternoon"]
+AFTER_PLAN_CHIPS = ["Walker's view", "Play route", "Show radiation", "Try the afternoon"]
 
 
 def _hhmm(h):
@@ -133,7 +131,6 @@ def rules(messages, state, memo):
     ls = _find(SEASON_WORDS, low)
     place = _place(low, state.get("places")) if not re.search(SCIENCE, low) or re.search(
         r"\b(go|fly|take me|show me|jump|zoom)\b.*\bto\b|\bgo to\b", low) else None
-    wants_3d = re.search(r"\b3d\b|3-d|three[- ]d|topo|terrain|hills|relief|visuali[sz]e|tilt", low)
     wants_walk = re.search(r"walker|eye[- ]?(level|height)|ground view|first[- ]person|\bpov\b|point of view|"
                            r"what (would i|i would|i'?d|will i|the astronaut would) see|stand on|from the ground|"
                            r"walk (it|the route|along)|on the ground|street view", low)
@@ -146,13 +143,13 @@ def rules(messages, state, memo):
         layer = ""
     just_plan = re.search(r"just plan|go ahead|plan it|plan now|skip|use defaults?|whatever|sounds good|^yes\b|"
                           r"^ok\b|^okay\b|^sure\b|do it", low)
-    science = re.search(SCIENCE, low) and not wants_3d and not wants_walk and layer is None
+    science = re.search(SCIENCE, low) and not wants_walk and layer is None
     asked = memo.get("asked")
 
     if re.search(r"^(hi|hey|hello|help|what can you do|how does this work)\b", low) and not science:
         return dict(reply="Hi! Tell me what you want to do on Mars, like \"find clay where water once flowed\", and "
-                          "I'll plan a safe Marswalk. I can also fly somewhere, show layers like radiation, or show "
-                          "your route in 3D.",
+                          "I'll plan a safe Marswalk. I can also fly somewhere, show layers like radiation, or play "
+                          "your route.",
                     chips=["Find clay where water once flowed", "Go to Gale crater", "Show radiation", "How to use this map"],
                     actions=[], memo=memo, source="rules")
     if re.search(r"how to use|manual|instructions", low):
@@ -214,13 +211,6 @@ def rules(messages, state, memo):
         n = int(option.group(2)) if option.group(2) else {"first": 1, "second": 2, "third": 3}[option.group(3)]
         actions.append({"type": "select_option", "n": n})
         said.append(f"show option {n}")
-    if wants_3d:
-        if has_mission:
-            actions.append({"type": "show_route_3d"})
-            said.append("show your route over the 3D terrain (right-drag to turn it)")
-        else:
-            actions.append({"type": "show_3d"})
-            said.append("switch on the 3D terrain and tilt the view")
     if wants_walk:
         if has_mission:
             actions.append({"type": "walker_view"})
@@ -248,7 +238,7 @@ def rules(messages, state, memo):
             return dict(reply="On foot, or which rover?", chips=VEHICLE_CHIPS, actions=[], memo=memo, source="rules")
         return None
     memo["asked"] = None
-    chips = AFTER_PLAN_CHIPS if has_mission or replan else ["Find clay where water once flowed", "Show in 3D"]
+    chips = AFTER_PLAN_CHIPS if has_mission or replan else ["Find clay where water once flowed", "Go to Gale crater"]
     reply = "Okay, I'll " + ", ".join(said) + "." if said else "Done."
     return dict(reply=reply, chips=chips, actions=actions, memo=memo, source="rules", wait_for_mission=bool(replan))
 
@@ -310,7 +300,7 @@ def reply(messages, state=None, memo=None):
         out = ai(messages, state, memo)
     if out is None:
         out = dict(reply="I didn't catch that. Try a goal (\"find carbonates near the crater rim\"), a place "
-                         "(\"go to Olympus Mons\"), or \"show the route in 3D\".",
+                         "(\"go to Olympus Mons\"), or \"show radiation\".",
                    chips=["Find clay where water once flowed", "Go to Gale crater", "Show radiation",
                           "How to use this map"],
                    actions=[], memo=dict(memo or {}), source="rules")
