@@ -15,7 +15,7 @@
     ["start", "Quick start", `
       <h3>Plan a Marswalk in four steps</h3>
       <p><b>Easiest:</b> type a sentence in the search bar, like <i>I want to find clay</i>. The assistant asks what
-        it needs (time of day, how you travel), plans the mission and can then show the route in 3D or put you on the
+        it needs (time of day, how you travel), plans the mission and can then play the route or put you on the
         ground. Or do it yourself:</p>
       <ol>
         <li><b>Find a place.</b> Type a name in the search bar at the top of the map (try <i>Jezero</i> or
@@ -32,9 +32,9 @@
       <ul>
         <li><b>Left bar:</b> Plan, Results, Layers, Area data, Time and Point info each open their part of the panel;
           Menu shows everything.</li>
-        <li><b>Chips next to the search bar:</b> one tap for 3D terrain, radiation, temperature, wind, minerals,
+        <li><b>Chips next to the search bar:</b> one tap for radiation, temperature, wind, minerals,
           sunlight, sharp photos or rover tracks; tap again to turn off.</li>
-        <li><b>Buttons at the bottom right:</b> point north, 3D view, whole Mars, zoom in and out.</li>
+        <li><b>Buttons at the bottom right:</b> point north, whole Mars, zoom in and out.</li>
       </ul>
       <h4>Moving the map</h4>
       <ul>
@@ -57,9 +57,6 @@
         <dt>Jump to a place</dt>
         <dd>Flies to famous places (rover landing sites, Olympus Mons, Valles Marineris…) to look around.
           It moves the view only; pick the place in Region to plan there.</dd>
-        <dt>3D terrain when zoomed in on a key site</dt>
-        <dd>When ticked, the hills and craters appear in 3D as you zoom in on a key site, and the view tilts once so you
-          can see them. Untick it for a flat map.</dd>
       </dl>`],
     ["mission", "Plan a mission", `
       <h3>Plan a mission</h3>
@@ -251,7 +248,6 @@
     wholeMars: "Zoom out to see the whole planet.",
     zoomRegion: "Fly back to the area you are planning in.",
     jumpTo: "Fly to a famous place to look around.",
-    auto3d: "Show hills and craters in 3D when you zoom in on a key site.",
     goal: "What you want to do, in plain words, e.g. 'sample clay where water once flowed'.",
     mVehicle: "How the crew travels. Each vehicle has its own speed, range and slope limit.",
     mPriority: "What matters most when the planner compares routes.",

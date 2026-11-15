@@ -280,8 +280,6 @@
     <button id="zoomRegion" class="secondary" type="button">Zoom to region</button>
   </div>
   <label>Jump to a place <select id="jumpTo"><option value="">Famous places (Murray Lab CTX viewer list)…</option></select></label>
-  <label class="check"><input type="checkbox" id="auto3d" checked> 3D terrain when zoomed in on a key site</label>
-  <div class="small" id="auto3dStatus" role="status"></div>
 
   <details id="missionSetup" class="panel-section" name="workspace" open>
     <summary>Plan a mission</summary>
@@ -500,9 +498,6 @@ const routePlayback = createRoutePlayback({ viewer, ellipsoid: MARS, controls: {
   panel: $("routePlayback"), button: $("playRoute"), status: $("routePlaybackStatus"),
   walk: $("walkerView"), walkNav: $("walkerNav"), walkPrev: $("walkerPrev"), walkNext: $("walkerNext"),
   walkExit: $("walkerExit"), walkStatus: $("walkerStatus"),
-  // Walker's view needs the 3D ground: switch it on while walking, back to the user's choice afterwards.
-  beforeWalk: async () => { terrainNeeds.walker = true; await syncTerrain(); return terrainProvider(); },
-  afterWalk: () => { terrainNeeds.walker = false; syncTerrain(); },
 } });
 $("globeLighting").onchange = () => globeLighting.setEnabled($("globeLighting").checked);
 globeLighting.setEnabled($("globeLighting").checked);
@@ -797,7 +792,7 @@ $("pauseWind").onclick = () => {
 // --------------------------------------------------------------- picking ----
 function pickLatLon(pos) {
   const cart = (tileset && viewer.scene.pickPositionSupported && viewer.scene.pickPosition(pos))
-            || (terrainShown() && viewer.scene.globe.pick(viewer.camera.getPickRay(pos), viewer.scene))
+            || (murrayOn("terrain") && viewer.scene.globe.pick(viewer.camera.getPickRay(pos), viewer.scene))
             || viewer.camera.pickEllipsoid(pos, MARS);
   if (!cart) return null;
   const c = Cesium.Cartographic.fromCartesian(cart, MARS);
@@ -1872,9 +1867,21 @@ async function murrayToggle(def, on) {
       }
       if (!on && st.layer) { coll.remove(st.layer, true); st.layer = null; }
     } else if (def.kind === "terrain") {
-      if (on && !st.provider) await terrainProvider();
+      if (on && !st.provider) {
+        st.loading ||= Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(API + def.url, { ellipsoid: MARS })
+          .then(provider => {
+            provider.errorEvent.addEventListener(error => {
+              error.retry = false;
+              if (st.on) murrayStatus(def.id, "Some 3D terrain tiles could not load. Zoom out or toggle terrain to retry.");
+            });
+            return st.provider = limitTerrainLevels(provider, def.max_level);
+          }).finally(() => { st.loading = null; });
+        await st.loading;
+      }
       if (!latest()) return;
-      await syncTerrain();
+      const provider = on ? st.provider : flatTerrain;
+      if (viewer.terrainProvider !== provider) viewer.terrainProvider = provider;
+      viewer.scene.globe.depthTestAgainstTerrain = on;
     } else if (def.kind === "geojson") {
       if (on) {
         if (!st.ds) {
@@ -1945,102 +1952,6 @@ async function murrayPointLinks(p, request) {
   } catch (e) { /* the panel already shows the pixel values */ }
 }
 
-// ------------------------------------------------ 3D terrain: chosen, near key sites, or for Walker's view ----
-// The MOLA/HRSC 200 m terrain is on when it is picked as the global map, while Walker's view is open, or (with
-// "3D terrain when zoomed in on a key site" ticked) when the middle of the view is on a key site and the camera is
-// close enough. Key sites = loaded areas, the named sites in the Region menu and the Jump-to places. The first time
-// the 3D ground comes on over a site, a straight-down view tilts once so the relief can be seen.
-const terrainNeeds = { walker: false, manual3d: false, route3d: false };   // anything here true = 3D ground on
-let terrainSync = 0, auto3dArea = null;
-const auto3dTilted = new Set();
-const DEG_KM = Math.PI / 180 * 3396.19;
-function terrainShown() { return viewer.terrainProvider !== flatTerrain; }
-async function terrainProvider() {
-  const def = murray.defs.find(d => d.kind === "terrain");
-  if (!def) throw new Error("the 3D terrain service is not available");
-  const st = murray.state[def.id] || (murray.state[def.id] = {});
-  if (!st.provider) {
-    st.loading ||= Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(API + def.url, { ellipsoid: MARS })
-      .then(provider => {
-        provider.errorEvent.addEventListener(error => {
-          error.retry = false;
-          if (st.on) murrayStatus(def.id, "Some 3D terrain tiles could not load. Zoom out or toggle terrain to retry.");
-        });
-        return st.provider = limitTerrainLevels(provider, def.max_level);
-      }).finally(() => { st.loading = null; });
-    await st.loading;
-  }
-  return { provider: st.provider, level: def.max_level };
-}
-function keyAreas() {
-  const box = (name, lat, lon, halfDeg, maxHeight) => {
-    const halfLon = halfDeg / Math.max(0.2, Math.cos(lat * Math.PI / 180));
-    return { name, south: lat - halfDeg, north: lat + halfDeg, west: lon - halfLon, east: lon + halfLon, maxHeight };
-  };
-  const out = regions.filter(r => r.rect).map(r => ({ name: r.label || r.region, ...r.rect, maxHeight: 300e3 }));
-  for (const s of namedSites) out.push(box(s.label, s.lat, s.lon, 0.6, 300e3));
-  for (const [name, lat, lon, view] of JUMP_PLACES) {
-    out.push(box(name, lat, lon, Math.max(0.6, view / 2 / 1000 / DEG_KM), Math.max(300e3, view * 1.5)));
-  }
-  return out;
-}
-function viewCentreXYZ() {
-  const c = viewer.scene.canvas;
-  if (c.clientWidth < 2 || c.clientHeight < 2) return null;
-  const p = new Cesium.Cartesian2(c.clientWidth / 2, c.clientHeight / 2);
-  return (terrainShown() && viewer.scene.globe.pick(viewer.camera.getPickRay(p), viewer.scene))
-      || viewer.camera.pickEllipsoid(p, MARS) || null;
-}
-function areaInView() {
-  const center = viewCentreXYZ();
-  if (!center) return null;
-  const g = Cesium.Cartographic.fromCartesian(center, MARS);
-  const lat = Cesium.Math.toDegrees(g.latitude), lon = Cesium.Math.toDegrees(g.longitude);
-  const height = viewer.camera.positionCartographic.height;
-  let best = null;
-  for (const a of keyAreas()) {
-    const span = a.east - a.west, east = ((lon - a.west) % 360 + 360) % 360;
-    if (lat < a.south || lat > a.north || east > span || height > a.maxHeight) continue;
-    if (!best || span * (a.north - a.south) < (best.east - best.west) * (best.north - best.south)) best = a;
-  }
-  return best;
-}
-function tiltToShowRelief(name) {
-  if (auto3dTilted.has(name) || routePlayback.walking()) return;
-  auto3dTilted.add(name);
-  const camera = viewer.camera;
-  if (Cesium.Math.toDegrees(camera.pitch) > -70) return;           // already looking at an angle
-  const center = viewCentreXYZ();
-  if (!center) return;
-  const range = Cesium.Cartesian3.distance(camera.positionWC, center);
-  camera.flyToBoundingSphere(new Cesium.BoundingSphere(center, 0), {
-    offset: new Cesium.HeadingPitchRange(camera.heading, Cesium.Math.toRadians(-40), range * 1.1),
-    duration: matchMedia("(prefers-reduced-motion: reduce)").matches ? 0 : 1.5 });
-}
-async function syncTerrain() {
-  if (!murray.defs.length) return;                // global map list not loaded yet; it calls applyGlobalMap()
-  const request = ++terrainSync;
-  const area = $("auto3d").checked ? areaInView() : null;
-  const want = murrayOn("terrain") || Object.values(terrainNeeds).some(Boolean) || !!area;
-  let provider = flatTerrain, failed = null;
-  if (want) {
-    try { provider = (await terrainProvider()).provider; } catch (e) { failed = e; }
-  }
-  if (request !== terrainSync) return;
-  if (viewer.terrainProvider !== provider) viewer.terrainProvider = provider;
-  viewer.scene.globe.depthTestAgainstTerrain = provider !== flatTerrain;
-  const name = area && provider !== flatTerrain ? area.name : null;
-  $("auto3dStatus").textContent = failed ? "3D terrain could not load (the elevation service didn't answer). " +
-      "It retries when you move the map."
-    : name && !murrayOn("terrain") ? `3D terrain on near ${name}: NASA MOLA/HRSC heights, 200 m. ` +
-      "Ctrl-drag or right-drag to tilt." : "";
-  if (name && name !== auto3dArea && !murrayOn("terrain")) tiltToShowRelief(name);
-  auto3dArea = name;
-  viewer.scene.requestRender();
-}
-viewer.camera.moveEnd.addEventListener(() => syncTerrain());
-$("auto3d").onchange = () => syncTerrain();
-
 // One surface view at a time; annotation overlays remain independent.
 const MURRAY_PLAIN = { ctx: "Detailed photos (black and white)", mola: "Height map (coloured by height)",
   viking: "Colour photos", terrain: "3D hills and craters", m2020: "Perseverance rover's path",
@@ -2088,7 +1999,6 @@ api("/api/murray/layers").then((d) => {
   }
   box.append(el("div", { className: "small", textContent: "The photo tile grid follows the published mosaic index: 88°S–88°N. It does not include the poles." }));
   applyGlobalMap();
-  syncTerrain();
 }).catch((e) => { $("murrayInfo").textContent = "Global maps unavailable: " + e.message; });
 
 

@@ -30,7 +30,6 @@ def test_everything_in_one_sentence_plans_straight_away():
 
 def test_follow_ups_after_a_plan():
     memo = {"goal": "find clay", "hour": 9.0, "vehicle": "on_foot", "planned": True}
-    assert types(say("i want to see the 3d topological map of that path", memo, has_mission=True)) == ["show_route_3d"]
     assert types(say("what would i see from the ground", memo, has_mission=True)) == ["walker_view"]
     assert say("show radiation", memo, has_mission=True)["actions"] == [{"type": "show_layer", "layer": "radiation_dose"}]
     again = say("try the afternoon", memo, has_mission=True)

@@ -1,5 +1,5 @@
 // Map-first layout, like a street map: the map fills the window; an icon rail on the left opens the planner's
-// panel as a slide-out drawer at the right section; round buttons on the map (zoom, 3D, north, whole planet);
+// panel as a slide-out drawer at the right section; round buttons on the map (zoom, north, whole planet);
 // one-tap layer chips under the search bar; and a chat assistant (POST /api/assistant) that asks what it needs and
 // drives the map. Loaded after index.html's main script and map_help.js; it only presses the planner's own controls.
 (() => {
@@ -20,7 +20,6 @@
     plus: '<path d="M12 5v14M5 12h14"/>', minus: '<path d="M5 12h14"/>',
     compass: '<path d="M12 3 15 12h-6z" fill="#e0703a" stroke="#e0703a"/><path d="M12 21 9 12h6z"/>',
     globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.4 2.6 14.6 0 17M12 3.5c-2.6 2.4-2.6 14.6 0 17"/>',
-    mountain: '<path d="m2.5 19 6.5-11 4 6.5 2.5-3.5 6 8z"/>',
     radiation: '<circle cx="12" cy="12" r="1.8"/><path d="M12 4a8 8 0 0 1 6.9 4l-4.3 2.5M5.1 8A8 8 0 0 1 12 4v5M8.6 19.4l2.5-4.4M15.4 19.4 12.9 15"/>',
     thermo: '<path d="M10 14.5V5a2 2 0 0 1 4 0v9.5a4 4 0 1 1-4 0z"/>',
     wind: '<path d="M3 9h11a2.5 2.5 0 1 0-2.5-2.5M3 15h14a2.5 2.5 0 1 1-2.5 2.5M3 12h7"/>',
@@ -93,31 +92,9 @@
     return b;
   };
   const height = () => camera().positionCartographic.height;
-  function viewCentre() {
-    const c = viewer.scene.canvas, p = new Cesium.Cartesian2(c.clientWidth / 2, c.clientHeight / 2);
-    return viewer.scene.globe.pick(camera().getPickRay(p), viewer.scene) || camera().pickEllipsoid(p, MARS);
-  }
-  function tilt(pitchDeg) {
-    const centre = viewCentre();
-    if (!centre) return;
-    const range = Cesium.Cartesian3.distance(camera().positionWC, centre);
-    camera().flyToBoundingSphere(new Cesium.BoundingSphere(centre, 0), {
-      offset: new Cesium.HeadingPitchRange(camera().heading, Cesium.Math.toRadians(pitchDeg), range),
-      duration: reduced() ? 0 : 1.2 });
-  }
-  const is3d = () => Cesium.Math.toDegrees(camera().pitch) > -75;
-  const b3d = btn("mountain", "3D view: tilt and show hills", () => set3d(!is3d()), "solo");
-  function set3d(on) {
-    terrainNeeds.manual3d = on;
-    syncTerrain();
-    tilt(on ? -35 : -90);
-    b3d.classList.toggle("on", on);
-  }
-  camera().moveEnd.addEventListener(() => b3d.classList.toggle("on", is3d()));
   ctl.append(
     btn("compass", "Point north", () => camera().flyTo({ destination: camera().positionWC.clone(),
       orientation: { heading: 0, pitch: camera().pitch, roll: 0 }, duration: reduced() ? 0 : 0.8 }), "solo"),
-    b3d,
     btn("globe", "Whole Mars", () => $("wholeMars").click(), "solo"),
     el("div", { className: "stack" },
       btn("plus", "Zoom in", () => camera().zoomIn(height() * 0.5)),
@@ -143,7 +120,6 @@
   const currentLayer = () => plannerLayout.globalChoice() || $("layer").value;
   const chipsBar = el("div", { id: "gmChips" });
   const CHIPS = [
-    ["mountain", "3D terrain", () => set3d(!is3d()), () => is3d()],
     ["radiation", "Radiation", "radiation_dose"], ["thermo", "Temperature", "global_temperature"],
     ["wind", "Wind", "wind_direction"], ["gem", "Minerals", "science"], ["sun", "Sunlight", "illumination"],
     ["photo", "Sharp photos", "map:ctx"],
@@ -200,18 +176,6 @@
   }
   const setInput = (id, v) => { const n = $(id); n.value = v; n.dispatchEvent(new Event("input", { bubbles: true }));
                                 n.dispatchEvent(new Event("change", { bubbles: true })); };
-  function routePoints() { return mission?.candidates?.[selected]?.route?.points; }
-  function showRoute3d() {
-    const pts = routePoints();
-    if (!pts?.length) return false;
-    terrainNeeds.route3d = true;
-    syncTerrain();
-    const sphere = Cesium.BoundingSphere.fromPoints(pts.map(p => Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS)));
-    camera().flyToBoundingSphere(sphere, { duration: reduced() ? 0 : 1.8,
-      offset: new Cesium.HeadingPitchRange(Cesium.Math.toRadians(25), Cesium.Math.toRadians(-28), Math.max(1500, sphere.radius * 3.2)) });
-    b3d.classList.add("on");
-    return true;
-  }
   async function act(a) {
     switch (a.type) {
       case "set_goal": $("goal").value = a.goal || ""; break;
@@ -227,8 +191,6 @@
         break;
       }
       case "plan_mission": $("runMission").click(); break;
-      case "show_route_3d": if (!showRoute3d()) set3d(true); break;
-      case "show_3d": set3d(true); break;
       case "walker_view": if (!$("walkerView").hidden) $("walkerView").click(); break;
       case "play_route": if (!$("playRoute").disabled) $("playRoute").click(); break;
       case "select_option": if (mission?.candidates?.[a.n - 1]) selectRoute(a.n - 1); break;
@@ -262,9 +224,9 @@
                    `${r.round_trip_h} h there and back.`];
     if (s.shelter_text) lines.push(`Storm shelter: ${s.shelter_text}.`);
     if (s.walkback_text) lines.push(`If the vehicle breaks: ${s.walkback_text}.`);
-    lines.push("Want to see it in 3D, or stand on the ground with Walker's view?");
+    lines.push("Want to play the route, or stand on the ground with Walker's view?");
     add("bot", lines.join("\n"));
-    setChips(["Show the route in 3D", "Walker's view", "Play route", "Try the afternoon"]);
+    setChips(["Walker's view", "Play route", "Show radiation", "Try the afternoon"]);
   }
 
   const chat = {
@@ -274,7 +236,7 @@
       if (on) {
         if (!log.children.length) {
           add("bot", "Hi! Tell me what you want to do on Mars, like \"find clay where water once flowed\", and I'll " +
-                     "plan a safe Marswalk. Ask me to fly somewhere, show radiation, or show your route in 3D.");
+                     "plan a safe Marswalk. Ask me to fly somewhere, show radiation, or play your route.");
           setChips(["Find clay where water once flowed", "Go to Gale crater", "Show radiation", "How to use this map"]);
         }
         replyIn.focus();
