@@ -16,6 +16,7 @@
 <script src="/game-launch.js" defer></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
 <link href="/map_help.css" rel="stylesheet" />
+<link href="/maps_ui.css" rel="stylesheet" />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap" rel="stylesheet" />
 <style>
@@ -1946,7 +1947,7 @@ async function murrayPointLinks(p, request) {
 // "3D terrain when zoomed in on a key site" ticked) when the middle of the view is on a key site and the camera is
 // close enough. Key sites = loaded areas, the named sites in the Region menu and the Jump-to places. The first time
 // the 3D ground comes on over a site, a straight-down view tilts once so the relief can be seen.
-const terrainNeeds = { walker: false };
+const terrainNeeds = { walker: false, manual3d: false, route3d: false };   // anything here true = 3D ground on
 let terrainSync = 0, auto3dArea = null;
 const auto3dTilted = new Set();
 const DEG_KM = Math.PI / 180 * 3396.19;
@@ -1980,7 +1981,7 @@ function keyAreas() {
   }
   return out;
 }
-function viewCenter() {
+function viewCentreXYZ() {
   const c = viewer.scene.canvas;
   if (c.clientWidth < 2 || c.clientHeight < 2) return null;
   const p = new Cesium.Cartesian2(c.clientWidth / 2, c.clientHeight / 2);
@@ -1988,7 +1989,7 @@ function viewCenter() {
       || viewer.camera.pickEllipsoid(p, MARS) || null;
 }
 function areaInView() {
-  const center = viewCenter();
+  const center = viewCentreXYZ();
   if (!center) return null;
   const g = Cesium.Cartographic.fromCartesian(center, MARS);
   const lat = Cesium.Math.toDegrees(g.latitude), lon = Cesium.Math.toDegrees(g.longitude);
@@ -2006,7 +2007,7 @@ function tiltToShowRelief(name) {
   auto3dTilted.add(name);
   const camera = viewer.camera;
   if (Cesium.Math.toDegrees(camera.pitch) > -70) return;           // already looking at an angle
-  const center = viewCenter();
+  const center = viewCentreXYZ();
   if (!center) return;
   const range = Cesium.Cartesian3.distance(camera.positionWC, center);
   camera.flyToBoundingSphere(new Cesium.BoundingSphere(center, 0), {
@@ -2017,7 +2018,7 @@ async function syncTerrain() {
   if (!murray.defs.length) return;                // global map list not loaded yet; it calls applyGlobalMap()
   const request = ++terrainSync;
   const area = $("auto3d").checked ? areaInView() : null;
-  const want = murrayOn("terrain") || terrainNeeds.walker || !!area;
+  const want = murrayOn("terrain") || Object.values(terrainNeeds).some(Boolean) || !!area;
   let provider = flatTerrain, failed = null;
   if (want) {
     try { provider = (await terrainProvider()).provider; } catch (e) { failed = e; }
@@ -2562,5 +2563,6 @@ api("/api/weather/calendar").then(calendar => {
 })();
 </script>
 <script src="/map_help.js"></script>
+<script src="/maps_ui.js"></script>
 </body>
 </html>
