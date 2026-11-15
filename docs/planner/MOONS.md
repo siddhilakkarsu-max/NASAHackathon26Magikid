@@ -18,6 +18,12 @@ reference date; Set moon time or Now resets the link. Conversion uses
 [NAIF lspcn](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/lspcn_c.html)
 and geometric subsolar longitude; tests independently check the hour with
 [NAIF et2lst](https://naif.jpl.nasa.gov/pub/naif/toolkit_docs/C/cspice/et2lst_c.html).
+When settings change, the previous view remains visible while data loads, then
+the moons ease along an arc to the new positions over 1.2 seconds. This is
+explicitly labeled a visual transition, not an ephemeris trajectory between
+the two dates. Radii interpolate separately so the path cannot cut through Mars;
+the final positions and orientations come from the real ephemeris. New input
+retargets from the current displayed positions. Reduced motion skips the effect.
 No guessed orbit is substituted if conversion fails. During the opening overview, surface
 lighting uses the Sun position on this same UTC clock. Leaving the overview
 for planning restores lighting from the planning settings.
@@ -33,7 +39,8 @@ globe and the +/− zoom buttons keep rotation running and do not reset the idle
 timer. Scrolling inside a panel still counts as interaction.
 After seven seconds without interaction the
 overview resumes at the same camera position, including after time/season edits.
-Holding a drag prevents resumption until release; further input resets the wait.
+Holding a drag prevents resumption until release; further actions reset the wait.
+Moving the mouse without pressing a button does not reset the timer.
 Map/region selection, moon tracking and planning tasks cancel automatic resume.
 Hidden tabs, source failures and reduced-motion preferences do not auto-resume.
 **Play overview** returns to the planner background

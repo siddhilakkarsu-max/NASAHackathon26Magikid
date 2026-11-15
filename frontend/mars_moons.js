@@ -1,5 +1,25 @@
 "use strict";
 
+// A labeled display transition, not a predicted trajectory between two dates.
+// Interpolate directions along an arc and radii separately, never through Mars.
+function marsMoonTransitionPosition(C, from, to, t, result) {
+  if (t <= 0) return C.Cartesian3.clone(from, result);
+  if (t >= 1) return C.Cartesian3.clone(to, result);
+  const a = C.Cartesian3.normalize(from, new C.Cartesian3());
+  const b = C.Cartesian3.normalize(to, new C.Cartesian3());
+  const dot = C.Math.clamp(C.Cartesian3.dot(a, b), -1, 1);
+  const axis = C.Cartesian3.cross(a, b, new C.Cartesian3());
+  if (C.Cartesian3.magnitudeSquared(axis) < 1e-16) {
+    if (dot > 0) return C.Cartesian3.lerp(from, to, t, result);
+    C.Cartesian3.cross(a, C.Cartesian3.mostOrthogonalAxis(a, new C.Cartesian3()), axis);
+  }
+  C.Cartesian3.normalize(axis, axis);
+  const rotation = C.Matrix3.fromQuaternion(C.Quaternion.fromAxisAngle(axis, Math.acos(dot) * t));
+  C.Matrix3.multiplyByVector(rotation, a, result);
+  return C.Cartesian3.multiplyByScalar(result,
+    C.Math.lerp(C.Cartesian3.magnitude(from), C.Cartesian3.magnitude(to), t), result);
+}
+
 function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Cesium.JulianDate.now() }) {
   const C = Cesium, { scene, camera } = viewer;
   const dataSource = new C.CustomDataSource('NASA/JPL Mars moons');
@@ -10,6 +30,8 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
   let prefetchController = null, prefetchedDay = null;
   let planningReference = null, planningKey = '', planningTimer = null, planningController = null;
   let planningGeneration = 0, planningPending = false, planningError = '', planningResult = null, lastPlan = null;
+  let transition = null;
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const cache = new Map(), records = new Map();
   const system = { time: current, speed, available: false, error: '', sunPosition: new C.Cartesian3() };
   const dateOf = time => C.JulianDate.toIso8601(time).slice(0, 10);
@@ -22,7 +44,8 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
   // The longest/shortest axes are approximately aligned, not feature-calibrated.
   for (const id of ['phobos', 'deimos']) {
     const position = new C.Cartesian3(), orientation = new C.Quaternion();
-    const record = { id, position, orientation, valid: false, radius: id === 'phobos' ? 15000 : 8500 };
+    const record = { id, position, orientation, targetPosition: new C.Cartesian3(), targetOrientation: new C.Quaternion(),
+      valid: false, radius: id === 'phobos' ? 15000 : 8500 };
     const positionProperty = new C.CallbackPositionProperty(() => record.valid ? position : undefined, false);
     const visible = () => enabled && record.valid && marsPointVisible(camera.positionWC, position, ellipsoid.radii);
     record.entity = dataSource.entities.add({ id: 'mars-moon-' + id,
@@ -55,13 +78,14 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     if (!controls) return;
     const iso = C.JulianDate.toIso8601(current, 0);
     if (document.activeElement !== controls.date) controls.date.value = iso.slice(0, 19);
-    controls.readout.textContent = iso.replace('T', ' ').replace('Z', ' UTC') +
+    controls.readout.textContent = (transition && !planningPending ? 'Target: ' : '') + iso.replace('T', ' ').replace('Z', ' UTC') +
       (speed === 0 ? ' · paused' : ` · ${speed}× speed`);
     if (controls.syncNote) controls.syncNote.textContent = planningResult
       ? `Linked to region center ${planningResult.longitude.toFixed(2)}°E · resolved Ls ${planningResult.actual_ls.toFixed(3)}° · reference date ${planningResult.reference_date}.`
       : 'Time/season edits choose the nearest season to the displayed moon date, then the nearest matching local solar time at the region center. The resolved UTC and season are shown; this is a dated scenario.';
-    controls.status.textContent = !enabled ? 'Moons hidden.' : planningPending ? 'Matching season and local time with NASA/JPL…' : planningError || lastError || (pendingDay
+    controls.status.textContent = !enabled ? 'Moons hidden.' : planningPending ? 'Matching season and local time with NASA/JPL… Holding the previous view.' : planningError || lastError || (pendingDay
       ? 'Loading NASA/JPL moon positions… First use downloads about 65 MB of orbital data.'
+      : transition ? 'Moving to the selected date · visual transition, not the actual orbital path between dates.'
       : 'Real sizes and distances. Small dots locate moons when they are too small to see.');
     for (const [id, button] of [['phobos', controls.phobos], ['deimos', controls.deimos]]) {
       button.disabled = !enabled || !records.get(id).valid;
@@ -143,7 +167,12 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     if (enabled && (!currentTable || currentTable.date !== day)) void load(day);
     const available = enabled && !planningPending && !planningError && currentTable && C.JulianDate.compare(current, currentTable.start) >= 0 &&
       C.JulianDate.compare(current, currentTable.end) <= 0;
-    system.available = !!(available && currentTable.sun?.getValue(current, system.sunPosition));
+    const hadTransition = !!transition;
+    if (planningError || lastError || !enabled) transition = null;
+    if (transition && available && transition.start === null) transition.start = performance.now();
+    const progress = transition && available ? (reduced.matches ? 1 : Math.min(1, (performance.now() - transition.start) / 1200)) : 0;
+    const eased = progress * progress * (3 - 2 * progress);
+    system.available = !!(available && currentTable.sun?.getValue(current, system.sunPosition) && (!transition || progress === 1));
     system.speed = speed;
     system.error = planningError || lastError;
     if (available && speed >= 600 && C.JulianDate.secondsDifference(currentTable.end, current) < speed * 5) {
@@ -151,15 +180,30 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     }
     for (const record of records.values()) {
       const sample = available && currentTable.moons.get(record.id);
-      record.valid = !!(sample && sample.positions.getValue(current, record.position) &&
-        sample.orientations.getValue(current, record.orientation));
+      const source = transition?.from.get(record.id);
+      const targetValid = !!(sample && sample.positions.getValue(current, record.targetPosition) &&
+        sample.orientations.getValue(current, record.targetOrientation));
+      record.valid = targetValid || !!(source && enabled);
+      if (targetValid && source) {
+        marsMoonTransitionPosition(C, source.position, record.targetPosition, eased, record.position);
+        C.Quaternion.slerp(source.orientation, record.targetOrientation, eased, record.orientation);
+      } else if (targetValid) {
+        C.Cartesian3.clone(record.targetPosition, record.position);
+        C.Quaternion.clone(record.targetOrientation, record.orientation);
+      } else if (source) {
+        C.Cartesian3.clone(source.position, record.position);
+        C.Quaternion.clone(source.orientation, record.orientation);
+      }
     }
+    if (transition && progress === 1) transition = null;
+    if (hadTransition && !transition) report();
     if (!available) stopTracking();
     if (performance.now() - lastReadout > 1000) { lastReadout = performance.now(); report(); }
   }
   function cancelPlanning() {
     planningGeneration++; clearTimeout(planningTimer); planningController?.abort();
     planningPending = false; planningError = ''; planningResult = null; planningReference = null; planningKey = ''; lastPlan = null;
+    transition = null;
   }
   function syncPlanning(values) {
     const key = JSON.stringify(values);
@@ -168,7 +212,11 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     planningReference ||= dateOf(current);
     const request = ++planningGeneration;
     clearTimeout(planningTimer); planningController?.abort();
-    setSpeed(0); planningPending = true; planningError = ''; planningResult = null; update(); report();
+    setSpeed(0);
+    const from = new Map([...records.values()].filter(r => r.valid).map(r => [r.id,
+      { position: C.Cartesian3.clone(r.position), orientation: C.Quaternion.clone(r.orientation) }]));
+    transition = from.size && !reduced.matches ? {from, start:null} : null;
+    planningPending = true; planningError = ''; planningResult = null; update(); report();
     // Debounce slider scrubbing, cancel superseded work, and never display an
     // old date's moon positions as though they match a new planning scenario.
     planningTimer = setTimeout(async () => {
@@ -245,7 +293,7 @@ function createMarsMoons({ viewer, ellipsoid, api = '', controls, now = () => Ce
     // Read-only live frame, updated before the overview's scene listener.
     systemFrame: () => system,
     state: () => ({ enabled, speed, utc: C.JulianDate.toIso8601(current), pendingDay, error: planningError || lastError,
-      planningPending, planningResult,
+      planningPending, planningResult, transitioning: !!transition,
       moons: [...records.values()].map(r => ({ id: r.id, valid: r.valid, position: C.Cartesian3.clone(r.position),
         markerVisible: r.entity.label.show.getValue(viewer.clock.currentTime), scale: 1000 })) }),
     destroy() {

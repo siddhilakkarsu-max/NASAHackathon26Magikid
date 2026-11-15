@@ -61,19 +61,42 @@ try {
   pass('Zooming during a pause does not extend the seven-second inactivity deadline');
   await page.mouse.move(1000,650); await page.mouse.down();
   await sleep(7500); assert.equal((await state()).mode,'paused');
-  await page.mouse.up(); await sleep(4200); await page.mouse.move(1010,650);
-  await sleep(4200); assert.equal((await state()).mode,'paused');
-  await page.waitForFunction(() => marsOverview.state().mode === 'playing');
-  pass('Held drag blocks auto-resume and new activity restarts the seven-second wait');
+  await page.mouse.up();
+  // Keep hovering throughout the deadline; only button-held dragging is active.
+  for (let i=0;i<8;i++) { await sleep(1000); await page.mouse.move(1000+i*3,650); }
+  assert.equal((await state()).mode,'playing');
+  pass('Held drag blocks auto-resume, but continuous hover movement does not delay it');
   // Stop automatic motion while comparing the two resolved epochs.
   await page.evaluate(() => { marsOverview.leave(); marsMoons.setTime('2026-11-15T12:00:00Z'); });
   await edit('ls',90); await edit('hour',11);
   await page.waitForFunction(() => marsMoons.state().planningResult && !marsMoons.state().planningPending && marsMoons.systemFrame().available);
   const first = (await state()).moons;
   assert(Math.abs(first.planningResult.local_hour-11)<1e-6);
+  await page.evaluate(() => {
+    window.moonTransitionFrames=[];
+    window.stopMoonTransitionCapture=viewer.scene.preUpdate.addEventListener(() => {
+      const s=marsMoons.state(); moonTransitionFrames.push({transitioning:s.transitioning,moons:s.moons});
+    });
+  });
   await edit('hour',18);
   await page.waitForFunction(() => !marsMoons.state().planningPending && Math.abs((marsMoons.state().planningResult?.local_hour ?? 0)-18)<1e-6 && marsMoons.systemFrame().available);
   const second = (await state()).moons;
+  const frames=await page.evaluate(() => { stopMoonTransitionCapture(); return moonTransitionFrames; });
+  assert(frames.filter(f=>f.transitioning).length>5, 'Must render intermediate transition frames');
+  assert(frames.every(f=>f.moons.every(m=>m.valid)), 'Moons stay visible while loading and transitioning');
+  const separation=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
+  for(let i=0;i<2;i++) {
+    const start=first.moons[i].position, end=second.moons[i].position;
+    assert(frames.some(f=>separation(f.moons[i].position,start)>1000 && separation(f.moons[i].position,end)>1000));
+    const minimum=Math.min(Math.hypot(start.x,start.y,start.z),Math.hypot(end.x,end.y,end.z));
+    assert(frames.every(f=>Math.hypot(...Object.values(f.moons[i].position))>=minimum-1));
+  }
+  const extremes=await page.evaluate(() => [0,.25,.5,.75,1].map(t=>{
+    const p=marsMoonTransitionPosition(Cesium,new Cesium.Cartesian3(9000000,0,0),new Cesium.Cartesian3(-9000000,0,0),t,new Cesium.Cartesian3());
+    return Cesium.Cartesian3.magnitude(p);
+  }));
+  assert(extremes.every(r=>Number.isFinite(r)&&Math.abs(r-9000000)<.001));
+  pass('Time edits render a continuous arc with no disappearance or path through Mars, including opposite endpoints');
   assert.notEqual(first.utc,second.utc);
   assert(second.moons.every((m,i) => Math.hypot(m.position.x-first.moons[i].position.x,m.position.y-first.moons[i].position.y,m.position.z-first.moons[i].position.z)>100000));
   pass('Local solar time changes the dated JPL moon positions at the selected region longitude');

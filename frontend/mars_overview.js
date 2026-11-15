@@ -148,7 +148,8 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
   for (const type of ['pointerup', 'pointercancel']) {
     listen(document, type, event => { if (heldPointers.delete(event.pointerId)) scheduleResume(); }, true);
   }
-  for (const type of ['pointermove', 'wheel', 'keydown', 'input']) listen(document, type, event => {
+  // Hovering is inspection, not an action. Held drags are tracked separately.
+  for (const type of ['wheel', 'keydown', 'input']) listen(document, type, event => {
     if (!passiveZoom(event)) scheduleResume();
   }, { capture: true, passive: true });
   listen(window, 'blur', () => { heldPointers.clear(); cancelResume(); });
