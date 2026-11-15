@@ -79,6 +79,9 @@
              background: linear-gradient(90deg, #8f4526, var(--accent)); transition: width .3s ease; }
   .crow.over .nm, .crow.over .val { color: #ff8f78; }
   .crow.over .bar > i { background: linear-gradient(90deg, #b03a2e, #ff6b52); }
+  .cons .bar { position: relative; }
+  .cons .bar > .tick { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--fg); opacity: .75; }
+  .cons .crow .cons-spec { margin-top: 3px; }
   .cons-foot { display: flex; justify-content: space-between; align-items: center; gap: 8px;
                margin-top: 10px; color: var(--muted); font-size: 11px; }
   .chip { display: inline-block; padding: 2px 7px; border-radius: 999px; background: #4a3a33;
@@ -699,15 +702,48 @@ function specLine(spec) {
 
 function pctLabel(pct) { return pct >= 999 ? "999+%" : `${Math.round(pct)}%`; }
 
-function barRow(name, used, max, unit, pct) {
+const POWER = { battery: "Battery, recharged", solar: "Solar", nuclear: "Nuclear (MMRTG)",
+                primary: "Non-rechargeable battery" };
+
+function barRow(name, used, max, unit, pct, usable, reservePct) {
   const over = pct > 100;
   const width = Math.min(100, Math.max(1.5, pct));
+  const hasReserve = usable != null && max > 0;
+  const tick = hasReserve ? `<span class="tick" style="left:${Math.min(100, 100 * usable / max)}%" aria-hidden="true"></span>` : "";
+  const intoReserve = hasReserve && !over && used > usable;
+  const reserve = !hasReserve ? "" :
+    `<div class="cons-spec${intoReserve ? " bad" : ""}">Usable after ${reservePct}% reserve: ${usable.toFixed(2)} ${unit}` +
+    `${intoReserve ? " - route cuts into it" : ""}</div>`;
   return `<div class="crow${over ? " over" : ""}">
       <div class="top"><span class="nm">${name}</span>
         <span class="val">${used.toFixed(2)} / ${max.toFixed(2)} ${unit} <b>${pctLabel(pct)}</b></span></div>
       <div class="bar" role="progressbar" aria-label="${name} used" aria-valuemin="0" aria-valuemax="100"
-           aria-valuenow="${Math.min(100, Math.round(pct))}"><i style="width:${width}%"></i></div>
+           aria-valuenow="${Math.min(100, Math.round(pct))}"><i style="width:${width}%"></i>${tick}</div>
+      ${reserve}
     </div>`;
+}
+
+function whyLines(s) {                   // why the totals are what they are: terrain, climb, power and dust
+  const lines = [];
+  if (s.terrain_o2_factor != null) {
+    const parts = [];
+    if (s.slope_o2_factor != null) parts.push(`slope ×${s.slope_o2_factor.toFixed(2)}`);
+    if (s.slope_o2_factor) parts.push(`ground ×${(s.terrain_o2_factor / s.slope_o2_factor).toFixed(2)}`);
+    lines.push(`O2 ×${s.terrain_o2_factor.toFixed(2)} vs flat firm ground` + (parts.length ? `: ${parts.join(", ")}` : ""));
+  }
+  const climb = [];
+  if (s.elevation_gain_m != null) climb.push(`outbound ${s.elevation_gain_m} m up, ${s.elevation_loss_m ?? 0} m down`);
+  if (s.climb_kwh != null) climb.push(`climbing ${s.climb_kwh.toFixed(2)} kWh`);
+  if (climb.length) lines.push(climb.join(" · ").replace(/^./, (c) => c.toUpperCase()));
+  if (s.power_source && s.power_source !== "suit") {
+    const bits = [POWER[s.power_source] || s.power_source];
+    if (s.sunlight_pct != null) bits.push(`sunlight ${s.sunlight_pct}%` +
+      (s.dust_opacity != null ? ` (dust opacity ${s.dust_opacity.toFixed(2)})` : ""));
+    if (s.recharge_sols != null) bits.push(`recharge ${s.recharge_sols.toFixed(1)} sols`);
+    else if (s.recharge_h != null) bits.push(`recharge ${s.recharge_h.toFixed(1)} h`);
+    lines.push(bits.join(" · "));
+  }
+  return lines.map((l) => `<div class="cons-spec">${l}</div>`).join("");
 }
 
 function renderConsumables() {
@@ -723,17 +759,21 @@ function renderConsumables() {
     return;
   }
   let rows = "";
-  if (s.o2_used_kg != null) rows += barRow("O2", s.o2_used_kg, s.o2_max_kg, "kg", s.o2_pct);
-  if (s.energy_used_kwh != null) rows += barRow("Energy", s.energy_used_kwh, s.energy_max_kwh, "kWh", s.energy_pct);
+  if (s.o2_used_kg != null) rows += barRow("O2", s.o2_used_kg, s.o2_max_kg, "kg", s.o2_pct, s.o2_usable_kg, s.reserve_pct);
+  if (s.energy_used_kwh != null) rows += barRow("Energy", s.energy_used_kwh, s.energy_max_kwh, "kWh", s.energy_pct,
+                                                s.energy_usable_kwh, s.reserve_pct);
   const overCap = (s.o2_pct || 0) > 100 || (s.energy_pct || 0) > 100;
   const overTime = s.within_budget === false;
+  const intoReserve = (s.o2_usable_kg != null && s.o2_used_kg > s.o2_usable_kg) ||
+                      (s.energy_usable_kwh != null && s.energy_used_kwh > s.energy_usable_kwh);
   const range = s.max_range_km != null ? `max ${s.max_range_km.toFixed(1)} km out and back` : "";
   const chip = overCap ? "over capacity"
     : overTime ? "over time budget"
+    : intoReserve ? "into the reserve"
     : `${BINDING[s.limiting_factor] || s.limiting_factor || "limit"} binds`;
-  box.innerHTML = head + rows +
+  box.innerHTML = head + rows + whyLines(s) +
     `<div class="cons-foot"><span>${range}</span>` +
-    `<span class="chip${overCap || overTime ? " over" : ""}">${chip}</span></div>` +
+    `<span class="chip${overCap || overTime || intoReserve ? " over" : ""}">${chip}</span></div>` +
     '<div class="cons-spec">Amounts are the round trip.</div>';
 }
 
