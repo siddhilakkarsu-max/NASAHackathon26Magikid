@@ -59,4 +59,5 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#53](PR-053-feat-siddhi.md) | UI polish: planning progress, "routes ready" card, point details card… | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
 | [#54](PR-054-feat-gk.md) | Game: complete vehicle models, the same riding and parked | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | none |
 | [#55](PR-055-feat-siddhi.md) | Feat/siddhi | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
+| [#56](PR-056-aisearch.md) | Fix floating 3D terrain patches; AWS Lightsail deploy; Plan opens Results | `siddhilakkarsu-max/aisearch` | 2026-11-15 | 2 file(s) |
 | [#57](PR-057-feat-gk.md) | Helmut: a pixel astronaut mascot that reacts beside the planner assistant | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | none |
