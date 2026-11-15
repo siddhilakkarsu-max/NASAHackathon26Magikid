@@ -44,6 +44,19 @@ SITES = {
     "holden": dict(label="Holden crater", lat=-26.4, lon=-34.0),
     "melas": dict(label="Melas Chasma (Valles Marineris)", lat=-9.8, lon=-76.5),
     "arcadia": dict(label="Arcadia Planitia (shallow ice)", lat=40.0, lon=-160.0),
+    # The shortcuts in Caltech Murray Lab's Global CTX Mosaic viewer that aren't above (Jezero, Gale, Gusev,
+    # Meridiani and Eberswalde are). Box centres are on each feature; ~0.05 deg.
+    "olympus_mons": dict(label="Olympus Mons (summit caldera)", lat=18.65, lon=-133.8),
+    "capri": dict(label="Capri Chasma", lat=-7.39, lon=-44.83),
+    "coloe": dict(label="Coloe Fossae", lat=42.18, lon=55.13),
+    "shalbatana": dict(label="Shalbatana Vallis", lat=5.95, lon=-42.75),
+    "valles": dict(label="Valles Marineris (Coprates / Eos)", lat=-15.12, lon=-50.95),
+    "cavi_angusti": dict(label="Cavi Angusti (south polar)", lat=-77.01, lon=-79.04),
+    "medusae": dict(label="Medusae Fossae", lat=-0.78, lon=175.94),
+    "nicholson": dict(label="Nicholson crater", lat=-0.44, lon=-164.61),
+    "zunil": dict(label="Zunil crater", lat=7.43, lon=166.47),
+    "milankovic": dict(label="Milankovič crater (ice scarps)", lat=54.34, lon=-147.69),
+    "terra_sirenum": dict(label="Terra Sirenum (gullies)", lat=-39.47, lon=-157.36),
 }
 _SITE_ID = r"site_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)"
 

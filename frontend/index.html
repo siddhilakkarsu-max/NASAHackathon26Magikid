@@ -2153,11 +2153,41 @@ document.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key ===
 $("startExploring").focus();
 
 // ------------------------------------------------ plan anywhere on Mars ----
+let namedSites = [];             // /api/sites: famous places, loaded on demand (about a minute the first time)
 function fillRegions(selected = $("region").value) {
+  const loaded = new Set(regions.map((r) => r.region));
+  const more = namedSites.filter((s) => !loaded.has(s.site));
   $("region").innerHTML = `<option value="${ANYWHERE}">Anywhere on Mars (where you're looking)</option>` +
     '<optgroup label="Loaded areas">' +
-    regions.map((r) => `<option value="${r.region}">${r.label || r.region}</option>`).join("") + "</optgroup>";
+    regions.map((r) => `<option value="${r.region}">${r.label || r.region}</option>`).join("") + "</optgroup>" +
+    (more.length ? '<optgroup label="More places (load in about a minute)">' +
+      more.map((s) => `<option value="site:${s.site}">${s.label}</option>`).join("") + "</optgroup>" : "");
   if (selected && regions.some((r) => r.region === selected)) $("region").value = selected;
+}
+async function loadNamedSite(key) {            // build a named site's data cube, then switch to it
+  const s = namedSites.find((x) => x.site === key);
+  if (!s) return;
+  viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(s.lon - 0.4, s.lat - 0.4, s.lon + 0.4, s.lat + 0.4) });
+  const t0 = Date.now();
+  try {
+    let st = await api("/api/sites/build", { site: key });
+    while (!st.ready) {
+      if (st.status === "failed") throw new Error((st.log || []).slice(-1).join(" "));
+      setMsg($("areaStatus"), `Loading ${s.label}… ${Math.round((Date.now() - t0) / 1000)} s | 3D terrain, THEMIS, ` +
+        "TES albedo; CRISM minerals follow");
+      await sleep(2000);
+      st = await api(`/api/sites/build/${st.region}`);
+    }
+    namedSites = (await api("/api/sites")).sites;
+    await useArea(st.region);
+    $("region").value = st.region;
+    $("region").onchange();
+    setMsg($("areaStatus"), `${s.label} is loaded.`);
+    if (st.status !== "done") watchArea(st.region);
+  } catch (e) {
+    setMsg($("areaStatus"), `Couldn't load ${s.label}. | ${e.message}`);
+    fillRegions();
+  }
 }
 // ------------------------------------------- advanced (technical) details ----
 // Everything technical has class "adv" and shows only after pressing A. Server messages are "plain | detail":
@@ -2352,6 +2382,7 @@ $("layer").onchange = () => {
 };
 ["budget", "region"].forEach((id) => $(id).addEventListener("change", invalidatePlan));
 $("region").onchange = () => {
+  if ($("region").value.startsWith("site:")) { loadNamedSite($("region").value.slice(5)); return; }
   setMsg($("areaStatus"), anywhere() ? "Zoom in anywhere on Mars and plan: the plan uses the place in the middle " +
     `of the map. Zoomed out, it uses ${current ? current.label : "the current area"}. | New areas load from the ` +
     "3D terrain (MDEM200M) in seconds; CRISM minerals follow." : "");
@@ -2410,6 +2441,7 @@ api("/api/weather/calendar").then(calendar => {
     fill("mPriority", opts.priorities, "safety");
     const meta = await api("/api/regions");
     regions = meta.regions;
+    try { namedSites = (await api("/api/sites")).sites; } catch (e) { namedSites = []; }
     Object.assign(SPECS, meta.vehicle_specs || {});
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
     fillRegions(ANYWHERE);
