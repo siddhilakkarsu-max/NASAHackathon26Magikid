@@ -111,6 +111,23 @@ Rover tracks: `python fetch_tracks.py jezero` downloads Perseverance's real trav
 All vehicle, suit, tool and landing numbers live in `config.py` (`MISSION_VEHICLES`, `SUIT`, `TOOLS`,
 `LANDING_RULES`, `SEASONS`, `PRIORITIES`) and are first-order assumptions; tune them there.
 
+### Planning anywhere on Mars
+The region menu starts on **Anywhere on Mars (where you're looking)**: move the globe anywhere and press **Plan
+mission**, **Find** or **Plan route**. If no loaded area covers the centre of the view (or the route's midpoint),
+the server builds one, a 0.8° box (~47 km at the equator, ~115 m/px), in a few seconds:
+- **elevation from the globe's own 3D terrain** (Esri MDEM200M, MOLA + HRSC 200 m, decoded from its LERC tiles), so
+  routes are planned on the surface you see; checked at Jezero against the CTX 20 m model: median difference 0 m,
+  typical difference 14 m, correlation 0.997;
+- THEMIS night/day IR, TES albedo, and thermal inertia from the THEMIS tile of that Mars Chart quadrangle (35° S–45° N);
+- **CRISM minerals** follow in the background (a few minutes); the panel says when mineral goals work there.
+Loaded areas are kept (`cubes/site_<lat>_<lon>.npz`) and listed under *Loaded areas*. NASA landing sites and
+science targets are matched by location, so Curiosity's landing site counts as a NASA candidate in any area around
+Gale. Build one from the command line with `python build_cube.py site_-4.59_137.44` (or a name in `config.SITES`).
+
+Landing rules split into ground rules (slope, roughness, firm ground, Special Regions), which always apply, and
+lander rules (elevation below -500 m for a parachute, latitude within 50°). Where no spot in an area meets the
+lander rules (the highlands, the poles), spots are chosen on the ground rules and the plan says so.
+
 ## 6. Find a target by description (manual planning)
 Type e.g. **valley with clay**, **flat firm ground near a cliff**, **sunny ridge close to base** or
 **shelter without sand** into "describe the target" and press Enter. `search.py` scores every pixel for
@@ -159,6 +176,9 @@ from within the EVA budget rank first.
 | `POST /api/mission/stream` | the same plan as server-sent events with the AI's thinking live: `status`, `ai` (`phase`: goal / explain, `kind`: reasoning / content, `text`), `result` (the full plan), `explanation`, `done` |
 | `POST /api/mission/{id}/explain` | the AI-written explanation for that plan (slower; falls back to the template) |
 | `GET /api/tracks?region=&vehicle=` | rover drive segments classed green / yellow, km of each, red off-limits PNG for the vehicle |
+| `POST /api/sites/build` | `{"lat", "lon"}` (or `{"site": "gale"}`): load the area there (reuses a loaded one that covers it) → `region`, `status` (terrain / minerals / done / failed), `ready` |
+| `GET /api/sites/build/{region}` | build progress: `status`, `ready`, seconds, CRISM observations done / total |
+| `GET /api/sites` | named places in `config.SITES` and whether each is loaded |
 | `GET /api/point?lat=&lon=` | live lookup anywhere on Mars (global elevation, slope, albedo, THEMIS), no cube needed |
 | `GET /api/imagery/{region}` | hi-res photo overlay made by `build_cube.py <region> --imagery`, if present |
 | `GET /ctxtiles/{z}/{y}/{x}.jpg` | 5 m CTX mosaic tile coloured with Viking colours (cached in `cubes/tilecache/`) |
@@ -245,6 +265,9 @@ at the top of the `<script>` in `frontend/index.html`.
 - **Simulated surface temperature** uses TES broadband albedo and apparent thermal inertia. The overview uses 0.5° cells, with finer 0.125° TES inputs when zoomed in on the global layer. Unavailable thermal inertia is transparent.
 - The model uses the selected Mars local solar hour and solar longitude (`Ls`) to compute diurnal solar heating. It approximates thermal emission and subsurface conduction, including heat retained after sunset. It uses spatially and seasonally varying OpenMARS visible column dust opacity. The calculation assumes level terrain, emissivity 0.95, and fixed downwelling longwave flux of 25 W/m². It has no seasonal frost model, and its absolute temperature has not been calibrated to Jezero observations.
 - Primary grid sources are [NASA PDS TES albedo](https://pds-geosciences.wustl.edu/missions/mgs/tesspecial.html) and [NASA PDS TES apparent thermal inertia](https://pds-geosciences.wustl.edu/missions/mgs/tes-timap.html). The thermal grid uses observation-backed TES nighttime values where available, with observation-backed TES daytime values filling remaining supported cells.
+- Areas loaded outside Jezero use the 200 m terrain (Jezero uses the CTX 20 m model), so slopes there are smoother
+  than reality at the ~100 m scale. THEMIS stops near ±60° latitude: beyond it ground firmness is unknown (assumed
+  medium, and the plan says so).
 - Walk-back and consumables estimates assume the return trip costs the same as the way out.
 - O₂ is modeled at a flat rate. Uphill terrain increases time and therefore oxygen use.
 - The oxygen budget applies to the astronaut’s suit supply. The crew rover’s cabin oxygen is outside the model.

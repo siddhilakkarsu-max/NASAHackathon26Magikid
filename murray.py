@@ -284,15 +284,22 @@ def murray_elevation_meta():
     return _elev_meta
 
 
-@router.get("/murray/elevation/tile/{z}/{y}/{x}")
-def murray_elevation_tile(z: int, y: int, x: int):
+def elevation_tile_bytes(z, y, x):
+    """One LERC tile of the 3D terrain (MDEM200M), cached on disk. Shared by the globe and the cube builder."""
     path = CACHE / "elevation" / f"{z}_{y}_{x}.lerc"
     if not path.exists():
-        try:
-            data = _fetch(f"{ESRI}/MDEM200M/ImageServer/tile/{z}/{y}/{x}", timeout=60)
-        except Exception:
-            raise HTTPException(404, "no elevation tile")
+        data = _fetch(f"{ESRI}/MDEM200M/ImageServer/tile/{z}/{y}/{x}", timeout=60)
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(data)
-    return Response(path.read_bytes(), media_type="application/octet-stream",
-                    headers={"Cache-Control": "public, max-age=604800"})
+        tmp = path.with_suffix(f".{threading.get_ident()}.part")
+        tmp.write_bytes(data)
+        tmp.replace(path)
+    return path.read_bytes()
+
+
+@router.get("/murray/elevation/tile/{z}/{y}/{x}")
+def murray_elevation_tile(z: int, y: int, x: int):
+    try:
+        data = elevation_tile_bytes(z, y, x)
+    except Exception:
+        raise HTTPException(404, "no elevation tile")
+    return Response(data, media_type="application/octet-stream", headers={"Cache-Control": "public, max-age=604800"})
