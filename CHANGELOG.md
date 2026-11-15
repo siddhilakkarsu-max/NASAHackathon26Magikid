@@ -3,6 +3,121 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+Every PR that changes behaviour adds its entry here, newest first, with the PR number and author. How to write
+one: `README.md`, section "Keeping the docs current". Authors by first name; git author `Gk` is Gia.
+
+## [Unreleased] - 2026-11-14, docs rule and team docs
+
+### Added
+
+- **Docs rule for every teammate and agent:** README section "Keeping the docs current" (what to update, how to
+  write a changelog entry, which doc covers what, a PR checklist) and a matching section in `AGENTS.md` (this PR,
+  Gia).
+- `docs/ARCHITECTURE.md` (pipeline, request flows, module map, `config.py` layout, pages, tests), `docs/API.md`
+  (every route) and `docs/DATA_SOURCES.md` (every dataset and published figure; our "NASA data used" list)
+  (this PR, Gia).
+- Changelog entries for every merged PR that had none: #2, #4, #6, #7, #13, #17 to #27 and #29 (this PR, Gia).
+
+### Fixed
+
+- README drift: "Who owns what" (no `physics.endurance`; gear, mission, weather and radiation owners), the honest
+  limits on oxygen and the return leg, the crew rover's numbers, the opening view, the season slider and the
+  sharp-imagery box; the README API table now points to `docs/API.md` (this PR, Gia).
+
+## [Unreleased] - 2026-11-14, radiation layer
+
+PR #29 (Jason).
+
+### Added
+
+- **Radiation map, "Radiation · modeled GCR effective dose".** The published AtRIS surface effective dose
+  (Zhang and Guo 2022) interpolated at OpenMARS surface pressure, in µSv/h, for a 400, 700 or 1000 MV solar
+  scenario, with per-scenario or shared (12-30 µSv/h) colours. Hover shows the dose, pressure and dust context.
+  Open it directly with `?layer=radiation_dose` (#29, Jason).
+- `mars_radiation.py`, `radiation_data/` (source table, extraction notes, checksums) and `GET /api/radiation/method`
+  for the method and its limits; `tests/test_radiation.py`, 11 tests (#29, Jason).
+
+### Fixed
+
+- The globe waits until its panel is visible before placing the camera, so a page opened in a hidden panel no
+  longer starts with a broken view (#29, Jason).
+
+## [Unreleased] - 2026-11-14, one resource model, plan anywhere, plain language
+
+PRs #21 to #27.
+
+### Added
+
+- **Plan anywhere on Mars (#25, Darren).** The region menu starts on "Anywhere on Mars": planning loads a 0.8°
+  box around the view in seconds, with elevation from the globe's own 3D terrain (MDEM200M, decoded from LERC
+  tiles; `lerc` added to `requirements.txt`), THEMIS, TES albedo and the quadrangle's thermal inertia; CRISM
+  minerals follow in the background. New `GET /api/sites`, `POST /api/sites/build`, `GET /api/sites/build/{region}`;
+  `tests/test_sites.py`.
+- **No landing spot? It says why (#25, Darren)** (fine dust everywhere, too steep, ...) and, for dust, points to the
+  nearest firm ground with a "Go there and plan" button.
+- **"Gear for this mission" link on each mission card (#21, Gia).** Opens `kit.html` with the candidate's route,
+  vehicle and season; `tests/test_mission_gear_link.py`.
+- **Consumables panel shows the full model (#22, Gia):** the reserve and usable amount, O2 slope and ground factors,
+  climb energy, power source, sunlight and recharge time; `tests/test_cons_panel.py`.
+- **Plain language by default (#27, Darren).** Technical details sit behind the A key; server messages are
+  `"plain | detail"`. Plain names for minerals, tools, vehicles and seasons; `tests/test_plain_text.py`.
+
+### Changed
+
+- **Mission resources use the route planner's model (#23, Gia).** Out and back costed separately: Minetti slope cost
+  for walkers with the return leg reversed, carried tool mass, m g h for vehicle climbs, a reserve never below
+  15 % (20 % in dust season) and a recharge time for the buggy. The on-foot route cost uses the same up-and-back
+  oxygen; `tests/test_mission_resources.py`.
+- **Walk-back zone limited by suit O2 and battery as well as time (#24, Gia).** `/api/plan` adds
+  `walkback_basis`, `walkback_area_km2`, `walkback_reserve_pct`, `walkback_o2_usable_kg` and
+  `walkback_energy_usable_kwh`; `tests/test_walkback_o2.py`.
+- **One source for crewed vehicles (#26, Gia).** The mission planner's `on_foot`, `four_wheel` and `buggy` now read
+  `VEHICLES` (on foot: max slope 18° instead of 15°; open rover: Apollo LRV 8.71 kWh). The crew rover uses NASA's
+  Mars pressurized rover study (5,193 kg, 60 kWh, 1.85 kW idle, 0.80 kWh/km) instead of the 20 kWh estimate, and
+  mission ranges fit their batteries after a 25 % reserve (buggy 100 → 20 km, scout bike 15 → 14 km);
+  `tests/test_vehicle_lists.py`.
+- **Season slider drives missions (#27, Darren):** the season menu is gone; `POST /api/mission` takes `ls`
+  (`config.season_for_ls`). The weather timeline's own slider is hidden and the season slider shows the sol.
+- The page opens with no weather layer; "Whole Mars" only zooms out (#27, Darren).
+- Murray Lab background maps are radio buttons, one at a time (#27, Darren).
+- The sharp-imagery box shows the Murray Lab black-and-white CTX map instead of the coloured `/ctxtiles` copy
+  (#27, Darren).
+- Zoomed out over the whole planet, planning stays in the current area (#27, Darren).
+
+### Fixed
+
+- `build_cube.read_raster_into_grid` stretched a source covering only part of the grid over all of it. Jezero's
+  mineral class map covered 67 % of the box instead of its real 14 %; `cubes/jezero.npz` rebuilt (#25, Darren).
+
+## [Unreleased] - 2026-11-14, Murray Lab maps, route hover and cleanup
+
+PRs #17 to #20.
+
+### Added
+
+- **MarsMap features in the main app (#17, Darren):** calibrated Jezero thermal inertia (Zenodo 4931348), the
+  CRISM dominant-mineral map (Zenodo 5575824), TES albedo, the `air_column_vs_gale` shielding band, the "Mission
+  suitability" layer, `GET /api/point` (live lookup anywhere), `/ctxtiles` with a sharp-imagery box and
+  `/api/prefetch`, `GET /api/imagery/{region}`, and the `jezero_hirise` cube (1 m HiRISE DEM, built locally).
+- **Murray Lab maps (#17, Darren):** `murray.py` serves every layer of the Murray Lab CTX viewer: CTX 5 m, MOLA
+  colour, Viking, 3D terrain relay, Mars 2020 and MSL traverses, IAU names, craters, the CTX tile map and HiRISE
+  footprints. `certs/` holds the intermediate certificate Caltech's server omits.
+- **Hover over a route (#17, Darren):** a 3D model matching the vehicle stands at that point with a card of distance,
+  time, terrain and supplies used so far. `/api/plan` and mission routes carry per-point profiles; models made by
+  `tools/make_rover_glb.py`.
+- **New look (#17, Darren):** Mars landing page ("Start exploring"), Inter font, orange pill controls, card panel
+  (`tools/make_mars_disk.py`).
+
+### Changed
+
+- Firmness is rated on the log thermal-inertia scale again, keeping the gear oxygen scenario valid (#17, Darren).
+- `run.bat` / `run.sh` start `app:app` instead of `gear_server`; gear tests use a temporary state folder
+  (`tests/_gear_state.py`) instead of the real published kit (#19, Gia).
+- Gear page MER scenarios drive about one pixel (~110 m) from the landing site, a realistic one-sol drive, instead of
+  a 0.59 km trip at 222 % of a sol's energy; `tests/test_mer_demo.py` (#20, Gia).
+- Gear features, run scripts and app hookup documented in the README, `gear/README.md` and this changelog
+  (#18, Gia).
+
 ## [Unreleased] - 2026-11-14, gear page, app hookup and run scripts
 
 PRs #9 to #16 (merged just after midnight UTC, 2026-11-15).
@@ -40,10 +155,13 @@ PRs #9 to #16 (merged just after midnight UTC, 2026-11-15).
   `spirit`, `cave`, `long-base`), shareable as `?preset=<id>`. A Season (Ls) input sent as `route_request.ls`,
   also `?ls=`. `frontend/kit-presets.js`, `kit-presets.css`.
 - 28 tests (78 total).
+- **Mars sunlight on the globe (#13, Jason):** atmosphere and solar lighting that follow the selected region's
+  local time ("Sunlight and atmosphere" toggle), with a cursor spotlight that reveals the night side
+  (`frontend/mars_lighting.js`).
 
 ## [Unreleased] - 2026-11-14, terrain, load and battery realism
 
-From the team's resource research (Gia's section of the planning doc).
+PR #8 (Gia). From the team's resource research (Gia's section of the planning doc).
 
 ### Changed
 
@@ -84,7 +202,26 @@ From the team's resource research (Gia's section of the planning doc).
 - Body mass (80 kg) is an assumption; the reserve and 2:1 recharge ratio are team research figures, not NASA ones.
 - Sunlight counts direct light only, so dust effects are the pessimistic end.
 
+## [Unreleased] - 2026-11-14, AI reasoning stream and MarsMap snapshot
+
+PRs #6 and #7.
+
+### Added
+
+- **Watch the AI think (#6, Darren).** `POST /api/mission/stream` sends the plan as server-sent events with the
+  model's reasoning and answer live, for reading the goal and for explaining the choice; the mission panel fills
+  "AI reasoning" boxes while the template summary shows. `AI_REASONING` and `AI_THINK_SECONDS` (default 40) control
+  the thinking. The non-streaming routes are unchanged.
+- **`marsmap/` (#7, Jason):** a snapshot of Jason's standalone MarsMap project (its own app, cube builder and page),
+  kept for reference; its features were ported into the main app in #17.
+
+### Changed
+
+- The mission summary shows the decision-matrix total unrounded (#6, Darren).
+
 ## [Unreleased] - 2026-11-14, more vehicles
+
+PR #5 (Gia).
 
 ### Added
 
@@ -111,9 +248,33 @@ From the team's resource research (Gia's section of the planning doc).
 - Ingenuity and other helicopters: the planner routes over ground slope, so a flying vehicle cannot be costed
   properly. Ingenuity stays in the gear catalog as an aerial scout.
 
+## [Unreleased] - 2026-11-14, mission planner, AI search, surface temperature and weather
+
+PRs #2 and #4.
+
+### Added
+
+- **Find a target by description (#2, Darren).** `search.py` and `POST /api/find`: "valley with clay" becomes
+  per-pixel criteria; words the keyword parser doesn't know go to a free OpenRouter model or any
+  OpenAI-compatible server such as Ollama.
+- **Mission planner (#2, Darren).** `mission.py` and `POST /api/mission`, `GET /api/mission/options`,
+  `POST /api/mission/{id}/explain`, `GET /api/tracks`: goal, vehicle, season and priority to 3 destinations with
+  safe landing spots, routes on a cost map with Perseverance's real drives as green / yellow tracks, a round-trip
+  oxygen / battery check, a decision matrix and an explanation. `fetch_tracks.py` downloads the traverse.
+- **Minerals and ground firmness (#2, Darren):** CRISM mineral bands (clay, carbonate, olivine, pyroxene, sulfate,
+  hydrated silica, water-bearing) from targeted observations and the map tile via PDS ODE, and THEMIS thermal
+  inertia (Zenodo 23527756) for firmness. The Jezero cube was rebuilt at 512 px/deg on the CTX 20 m DEM.
+- **Simulated surface temperature (#4, Jason)** from TES albedo and thermal inertia (`surface_temperature.py`),
+  shown on a full Mars globe, with 0.125° detail for the visible area (`thermal_detail.py`,
+  `POST /api/weather/temperature-detail`).
+- **Global weather (#4, Jason):** OpenMARS air temperature, pressure, winds and ground-temperature reference, LMD
+  dust opacity (`mars_weather.py`, `build_weather.py`), animated wind arrows, a weather timeline by sol
+  (`GET /api/weather/calendar`), hover values (`POST /api/layer/{name}/sample`), a Jezero check against MEDA and the
+  reviewed source list (`weather_sources.csv`, `GET /api/weather/sources`). CesiumJS 1.147.0 is now bundled.
+
 ## [Unreleased] - 2026-11-14, gear system
 
-Branch `feat/Gk`. Builds on `MISSION_EQUIPMENT_RESEARCH.md`.
+PR #3 (Gia). Branch `feat/Gk`. Builds on `MISSION_EQUIPMENT_RESEARCH.md`.
 
 ### Added
 
@@ -237,3 +398,14 @@ At 23 km out with an 8 h budget: astronaut 374 % of O2, crew rover 101 % of ener
   syncing with the team.
 - Local `.venv`, gitignored: numpy 2.5.4, scipy 1.18.1, scikit-image 0.26.0, fastapi 0.163.0,
   uvicorn 0.54.0, pillow 13.0.0, matplotlib 3.11.2, httpx 0.28.1.
+
+## 2026-11-14, starting point
+
+Direct commits to `main`, before the PR workflow.
+
+### Added
+
+- The project scaffold: `app.py` (FastAPI back end), `build_cube.py`, `config.py`, `physics.py`,
+  `make_demo_cube.py`, `frontend/index.html` (Cesium globe), the first `cubes/jezero.npz` and the README
+  (Ashwin-P23).
+- `AGENTS.md`, the team's git workflow for AI agents (Siddhi).
