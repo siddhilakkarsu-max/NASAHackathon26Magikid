@@ -12,6 +12,8 @@
 <script src="/temperature_view.js"></script>
 <script src="/mars_lighting.js"></script>
 <link href="/vendor/Cesium/Widgets/widgets.css" rel="stylesheet" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600&display=swap" rel="stylesheet" />
 <style>
   /* Designers: restyle freely. Everything visual lives in this file. */
   :root { --bg: rgba(18, 12, 10, 0.88); --fg: #f3e7dd; --accent: #e0703a; --muted: #b9a79a; }
@@ -60,6 +62,11 @@
                   padding: 7px 9px; background: #131520ed; color: #fff; font-size: 12px;
                   line-height: 1.45; border: 1px solid #ffffff48; border-radius: 5px; }
   .small { color: var(--muted); font-size: 11px; }
+  #routeHover { position: absolute; z-index: 6; pointer-events: none; max-width: 300px; padding: 7px 9px;
+                background: #131520f0; color: #fff; font-size: 12px; line-height: 1.45;
+                border: 1px solid #e0703a99; border-radius: 5px; }
+  #routeHover .title { font-weight: 600; color: #ffb27f; }
+  #routeHover .warn { color: #ff9a85; }
   @media (max-width: 600px) {
     body { grid-template-columns: minmax(0, 1fr); grid-template-rows: 55% minmax(0, 1fr); }
     #map { grid-area: 1 / 1; }
@@ -110,16 +117,95 @@
   pre.thinking.answer { color: var(--fg); }
   .live::after { content: " ▍"; animation: blink 1s steps(2) infinite; color: var(--accent); }
   @keyframes blink { 50% { opacity: 0; } }
+  #murrayLayers label.check { margin: 3px 0; } #panel a { color: var(--accent); }
+  #infoLinks a { display: block; }
   .legendkey span { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin: 0 3px 0 8px; }
+
+  /* ===== Design (Figma "mars - home page"): landing page + panel restyle. Overrides the styles above. ===== */
+  :root { --bg: #1c1d22; --fg: #ebebeb; --accent: #f7943a; --muted: #8e9097; --line: #8e909766;
+          --page: #131318; --navy: #111820; }
+  html, body { font-family: Inter, system-ui, sans-serif; background: var(--page); }
+  #panel { background: var(--bg); margin: 12px; padding: 18px 16px; border-radius: 14px;
+           font-size: 12px; letter-spacing: .02em; }
+  h1 { font-size: 12px; font-weight: 500; color: var(--fg); text-transform: uppercase; letter-spacing: .12em;
+       margin: 6px 0 8px; }
+  #status { padding-bottom: 12px; margin-bottom: 6px; border-bottom: 1px solid #d9d9d9; line-height: 1.35; }
+  h2 { font-size: 12px; font-weight: 500; color: var(--fg); letter-spacing: .1em; margin: 18px 0 6px; }
+  label { font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: .1em; color: var(--fg);
+          margin: 10px 0 4px; }
+  label.check { text-transform: none; letter-spacing: .03em; font-size: 11px; }
+  .small { color: var(--muted); font-size: 10.5px; }
+  select, input[type=text], input[type=number] {
+    box-sizing: border-box; width: 100%; padding: 7px 34px 7px 12px; margin-top: 4px; font: inherit; font-size: 11.5px;
+    letter-spacing: .04em; color: var(--fg); background-color: transparent; border: 1px solid var(--line);
+    border-radius: 999px; appearance: none; -webkit-appearance: none; }
+  input[type=text], input[type=number] { padding-right: 12px; }
+  select { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='10' viewBox='0 0 12 10'%3E%3Cpath d='M1 1l5 8 5-8' fill='none' stroke='%23ebebeb' stroke-width='1.6'/%3E%3C/svg%3E");
+           background-repeat: no-repeat; background-position: right 13px center; cursor: pointer; }
+  select option, select optgroup { background: var(--bg); color: var(--fg); }
+  select:focus, input[type=text]:focus, input[type=number]:focus { outline: none; border-color: var(--accent); }
+  button { margin-top: 10px; padding: 9px 12px; border-radius: 7px; background: var(--accent); color: #fff;
+           font: inherit; font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .12em; }
+  button:hover { filter: brightness(1.07); }
+  button:disabled { opacity: .55; cursor: wait; }
+  button.secondary { background: transparent; border: 1px solid var(--line); border-radius: 999px; color: var(--fg); }
+  button.secondary:hover { border-color: var(--fg); }
+  button.active { outline: 1px solid var(--accent); }
+  input[type=range] { -webkit-appearance: none; appearance: none; height: 18px; background: transparent; margin: 6px 0 2px; }
+  input[type=range]::-webkit-slider-runnable-track { height: 3px; background: #f2f2f2; border-radius: 2px; }
+  input[type=range]::-moz-range-track { height: 3px; background: #f2f2f2; border-radius: 2px; }
+  input[type=range]::-webkit-slider-thumb { -webkit-appearance: none; width: 15px; height: 15px; margin-top: -6px;
+                                            border-radius: 50%; background: var(--accent); border: 0; }
+  input[type=range]::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: var(--accent); border: 0; }
+  input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; flex: 0 0 15px;
+                         border: 1.5px solid var(--accent); border-radius: 3px; background: transparent; cursor: pointer;
+                         display: inline-grid; place-content: center; }
+  input[type=checkbox]:checked { background: var(--accent); }
+  input[type=checkbox]:checked::after { content: ""; width: 8px; height: 4px; border: 2px solid #fff; border-top: 0;
+                                        border-right: 0; transform: translateY(-1px) rotate(-45deg); }
+  details > summary { font-size: 11px; font-weight: 500; color: var(--fg); letter-spacing: .1em; }
+  .card { border-color: #ffffff22; border-radius: 10px; } .card.sel { border-color: var(--accent); }
+  table.matrix th, table.matrix td { border-bottom-color: #ffffff1a; }
+  #mResult h3 { color: var(--accent); font-weight: 500; letter-spacing: .06em; }
+  .chip { background: #ffffff1a; }
+  #routeHover, #weatherHover { font-family: Inter, system-ui, sans-serif; border-radius: 8px; }
+
+  /* landing page */
+  #landing { position: fixed; inset: 0; z-index: 1000; background: var(--navy); display: grid; place-items: center;
+             transition: opacity .6s ease, visibility .6s; font-family: Inter, system-ui, sans-serif; }
+  #landing.gone { opacity: 0; visibility: hidden; }
+  #landing .globe { position: relative; width: min(72vmin, 620px); aspect-ratio: 1; }
+  #landing img { width: 100%; height: 100%; display: block; filter: drop-shadow(0 0 60px #f7943a22); }
+  #landing .hero { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center;
+                   justify-content: center; color: #fff; text-align: center; }
+  #landing .title { font-size: clamp(44px, 11vmin, 92px); font-weight: 200; letter-spacing: .14em; line-height: 1;
+                    margin-left: .14em; text-shadow: 0 2px 18px #0007; }
+  #landing .sub { margin: 14px 0 26px; font-size: clamp(11px, 1.7vmin, 15px); letter-spacing: .12em;
+                  text-shadow: 0 1px 8px #000a; }
+  #landing button { width: auto; margin: 0; padding: 10px 26px; background: #fff; color: #111; border-radius: 999px;
+                    font-size: clamp(10px, 1.5vmin, 13px); font-weight: 500; letter-spacing: .12em; }
+  #landing button:hover { background: #ffe9d6; }
+  #landing button:focus { outline: none; } #landing button:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
 </style>
 </head>
 <body>
+<div id="landing" role="dialog" aria-label="Mars">
+  <div class="globe">
+    <img src="mars-disk.webp" alt="Mars, seen from space (NASA Viking colour mosaic)" />
+    <div class="hero">
+      <div class="title">MARS</div>
+      <div class="sub">Explore Plan Navigate</div>
+      <button id="startExploring" type="button">Start exploring</button>
+    </div>
+  </div>
+</div>
 <div id="map">
   <div id="marsSun" aria-hidden="true" hidden></div>
   <div id="weatherHover" aria-hidden="true" hidden></div>
+  <div id="routeHover" aria-hidden="true" hidden></div>
 </div>
 <div id="panel">
-  <h1>Marswalk Planner</h1>
+  <h1>Mars Walk Planner</h1>
   <div class="small" id="status">Connecting to back end…</div>
 
   <label>Region <select id="region"></select></label>
@@ -152,9 +238,10 @@
   <div class="small" id="lightingNote">Move your mouse over the night side to reveal the map. Globe lighting follows the selected region’s solar time.</div>
   <select id="layer">
     <option value="">(none)</option>
+    <option value="suitability">★ Mission suitability (safety + science + shielding)</option>
     <option value="imagery">CTX image (6 m, sharp)</option>
     <option value="slope">Slope</option>
-    <option value="firmness">Ground firmness (THEMIS night)</option>
+    <option value="firmness">Ground firmness (thermal inertia + night IR)</option>
     <option value="thermal_inertia">Thermal inertia (THEMIS)</option>
     <option value="cost">Travel cost</option>
     <option value="illumination">Sunlight on slopes</option>
@@ -169,7 +256,11 @@
       <option value="dust_opacity">Atmospheric dust optical depth</option>
     </optgroup>
     <option value="shelter">Minutes to shelter</option>
-    <option value="elevation">Elevation</option>
+    <option value="elevation">Elevation (topography)</option>
+    <option value="science">Science targets (CRISM minerals)</option>
+    <option value="minerals">CRISM dominant mineral (class map)</option>
+    <option value="air_column_vs_gale">Radiation shielding (air column)</option>
+    <option value="albedo">Albedo (brightness)</option>
     <optgroup id="mineralLayers" label="Minerals (CRISM)"></optgroup>
   </select>
   <div id="legend" hidden></div><div class="small" id="legendText"></div>
@@ -178,6 +269,19 @@
   <input id="mapOpacity" type="range" min="0" max="100" value="100" step="5" disabled>
   <div class="small" id="layerStatus" role="status"></div>
   <button id="retryLayer" class="secondary" type="button" hidden>Retry layer</button>
+
+  <h2>Sharp imagery (5 m)</h2>
+  <div class="row">
+    <button id="boxBtn" class="secondary" type="button">Box a sharp area</button>
+    <button id="clearBox" class="secondary" type="button">Clear</button>
+  </div>
+  <button id="prefetchBtn" class="secondary" type="button">Pre-load box (for demos)</button>
+  <div class="small" id="boxInfo">Click "Box a sharp area", then click two corners on the map.</div>
+
+  <h2>Murray Lab maps</h2>
+  <div id="murrayLayers"></div>
+  <div class="small" id="murrayInfo">All maps from the
+    <a href="https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html" target="_blank" rel="noopener">Murray Lab CTX viewer</a>.</div>
   <button id="pauseWind" class="secondary" type="button" hidden>Pause wind motion</button>
   <section id="timeline" hidden aria-label="Weather timeline">
     <h2>Weather timeline</h2>
@@ -224,6 +328,7 @@
 
   <h2>Clicked point</h2>
   <div id="info" class="small">Click the map to see every value stored in that pixel.</div>
+  <div id="infoLinks" class="small"></div>
 </div>
 
 <script>
@@ -268,6 +373,57 @@ viewer.scene.backgroundColor = Cesium.Color.BLACK;
 const globeLighting = createMarsLighting(viewer, MARS, $("marsSun"));
 $("globeLighting").onchange = () => globeLighting.setEnabled($("globeLighting").checked);
 globeLighting.setEnabled($("globeLighting").checked);
+
+// Sharp 5 m CTX imagery (Murray Lab, Caltech), coloured by our back end, loaded ONLY inside a chosen box
+// (keeps the globe fast). Selecting a Jezero region boxes it automatically.
+let ctxLayer = null, boxEntity = null, sharpBox = null;
+function setSharpBox(r) {                       // r = {west, south, east, north} in degrees, or null
+  if (ctxLayer) { viewer.imageryLayers.remove(ctxLayer, true); ctxLayer = null; }
+  if (boxEntity) { viewer.entities.remove(boxEntity); boxEntity = null; }
+  sharpBox = r;
+  if (!r) { viewer.scene.requestRender(); return; }
+  const rect = Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north);
+  ctxLayer = viewer.imageryLayers.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+    url: API + "/ctxtiles/{z}/{y}/{x}.jpg",
+    tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
+    tileWidth: 512, tileHeight: 512, minimumLevel: 8, maximumLevel: 12, rectangle: rect,
+    credit: "Global CTX Mosaic of Mars, Murray Lab/Caltech (NASA/JPL/MSSS)",
+  }), 1);
+  boxEntity = viewer.entities.add({ rectangle: { coordinates: rect, fill: false, outline: true,
+    outlineColor: Cesium.Color.ORANGE.withAlpha(0.8), height: 0 } });
+  fadePhoto();
+  viewer.scene.requestRender();
+}
+const USE_GLOBAL_CTX = true;   // false = only the regional Jezero photo
+
+// ------------------------------------------------- hi-res photo base ----
+let photoLayer = null;
+async function loadHiresPhoto(region) {
+  const coll = tileset ? tileset.imageryLayers : viewer.imageryLayers;
+  if (photoLayer) { coll.remove(photoLayer, true); photoLayer = null; }
+  try {
+    const m = await api(`/api/imagery/${region}`);
+    if (!m.available) return;
+    const provider = await Cesium.SingleTileImageryProvider.fromUrl(API + m.url, {
+      rectangle: Cesium.Rectangle.fromDegrees(m.west, m.south, m.east, m.north) });
+    photoLayer = new Cesium.ImageryLayer(provider);
+    coll.add(photoLayer, 1);                      // just above the global Viking map, below data layers
+    fadePhoto();
+    $("status").textContent += `  ·  photo: ${m.meters_per_px} m/px (${m.source})`;
+  } catch (e) { console.warn("hi-res photo", e); }
+}
+
+// Photo fades in as you zoom toward the surface (invisible from far away)
+const PHOTO_FULL_KM = 120, PHOTO_HIDDEN_KM = 600;
+function fadePhoto() {
+  const km = viewer.camera.positionCartographic.height / 1000;
+  const t = Math.max(0, Math.min(1, (PHOTO_HIDDEN_KM - km) / (PHOTO_HIDDEN_KM - PHOTO_FULL_KM)));
+  if (photoLayer) photoLayer.alpha = t;
+  if (ctxLayer && ctxLayer.alpha !== t) { ctxLayer.alpha = t; viewer.scene.requestRender(); }
+}
+viewer.camera.percentageChanged = 0.05;
+viewer.camera.changed.addEventListener(fadePhoto);
+viewer.camera.moveEnd.addEventListener(fadePhoto);
 
 let tileset = null;
 (async () => {
@@ -473,6 +629,7 @@ $("pauseWind").onclick = () => {
 // --------------------------------------------------------------- picking ----
 function pickLatLon(pos) {
   const cart = (tileset && viewer.scene.pickPositionSupported && viewer.scene.pickPosition(pos))
+            || (murrayOn("terrain") && viewer.scene.globe.pick(viewer.camera.getPickRay(pos), viewer.scene))
             || viewer.camera.pickEllipsoid(pos, MARS);
   if (!cart) return null;
   const c = Cesium.Cartographic.fromCartesian(cart, MARS);
@@ -583,6 +740,15 @@ function pin(id, p, color, text) {
 new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e) => {
   const p = pickLatLon(e.position); if (!p) return;
   const request = ++pointRequest;
+  if (mode === "box1") { boxCorner = p; mode = "box2"; $("boxInfo").textContent = "Now click the opposite corner."; return; }
+  if (mode === "box2") {
+    mode = null; $("boxBtn").classList.remove("active");
+    const b = { west: Math.min(boxCorner.lon, p.lon), east: Math.max(boxCorner.lon, p.lon),
+                south: Math.min(boxCorner.lat, p.lat), north: Math.max(boxCorner.lat, p.lat) };
+    setSharpBox(b);
+    $("boxInfo").textContent = `Sharp area: ${(b.east - b.west).toFixed(2)}° x ${(b.north - b.south).toFixed(2)}°. Zoom in to see 5 m detail.`;
+    return;
+  }
   if (!mode && shownConditions && hoverLayers.has(displayedLayer)) {
     const layer = displayedLayer, snapshot = shownConditions;
     $("info").textContent = pointLabel(p);
@@ -603,11 +769,30 @@ new Cesium.ScreenSpaceEventHandler(viewer.scene.canvas).setInputAction(async (e)
     if (request !== pointRequest) return;
     const lines = Object.entries(px.values).map(([k, v]) => `${k.padEnd(13)} ${v ?? "no data"}`);
     const minerals = px.minerals && px.minerals.length ? `minerals: ${px.minerals.join("; ")}\n` : "";
-    $("info").textContent = `${pointLabel(p)}\n` +
-      (px.ground ? `ground: ${px.ground}\n` : "") + minerals + `confidence: ${px.confidence}\n\n` + lines.join("\n");
+    $("info").textContent = `${pointLabel(p)}` +
+      (px.source === "global" ? "  (live lookup)\n" : `  (${px.source} map)\n`) +
+      (px.ground ? `ground: ${px.ground}\n` : "") + minerals + (px.notes || []).map((n) => "• " + n + "\n").join("") +
+      `confidence: ${px.confidence}\n\n` + lines.join("\n");
+    murrayPointLinks(p, request);
   } catch (err) { if (request === pointRequest) $("info").textContent = `${pointLabel(p)}: ${err.message}`; }
 }, Cesium.ScreenSpaceEventType.LEFT_CLICK);
 
+let boxCorner = null;
+$("boxBtn").onclick = () => { mode = "box1"; $("boxBtn").classList.add("active");
+  $("boxInfo").textContent = "Click the first corner of the area."; };
+$("clearBox").onclick = () => { setSharpBox(null); $("boxInfo").textContent = "Sharp imagery off (fast mode)."; };
+$("prefetchBtn").onclick = async () => {
+  if (!sharpBox) { $("boxInfo").textContent = "Box an area first."; return; }
+  try {
+    const r = await api("/api/prefetch", sharpBox);
+    $("boxInfo").textContent = `Pre-loading ${r.tiles} tiles…`;
+    const timer = setInterval(async () => {
+      const s = await api("/api/prefetch");
+      $("boxInfo").textContent = s.running ? `Pre-loading… ${s.done}/${s.total} tiles` : `Pre-loaded ${s.total} tiles ✓ (instant now)`;
+      if (!s.running) clearInterval(timer);
+    }, 1500);
+  } catch (e) { $("boxInfo").textContent = e.message; }
+};
 $("setBase").onclick = () => { mode = "base"; $("setBase").classList.add("active"); };
 $("setTarget").onclick = () => { mode = "target"; $("setTarget").classList.add("active"); };
 $("gearLink").onclick = () => {
@@ -787,7 +972,8 @@ $("plan").onclick = async () => {
     $("explain").textContent = res.explanation +
       (res.stats ? `\n\nMax slope ${res.stats.max_slope_deg}°, mean ${res.stats.mean_slope_deg}°` : "") +
       "\nGreen area = places you can reach and still return within the budget.";
-    lastPlan = { stats: res.stats || null };
+    lastPlan = { stats: res.stats || null, route: res.route || null,               // route: for the hover readout
+                 vehicle: $("vehicle").selectedOptions[0]?.textContent || "", vehicleKey: $("vehicle").value };
     replanHint = "";
     renderConsumables();
   } catch (e) {
@@ -1104,6 +1290,329 @@ $("goal").addEventListener("keydown", (e) => { if (e.key === "Enter") runMission
 $("showTracks").onchange = () => showTracks($("showTracks").checked);
 $("mVehicle").addEventListener("change", () => { if ($("showTracks").checked) showTracks(true); });
 
+
+// ------------------------------------------------------- Murray Lab maps ----
+// Every map from the Murray Lab CTX viewer (murray.py on the server). Tiles come straight from Esri's OnMars
+// services; terrain, traverses, names, craters, the CTX tile index and HiRISE footprints come via our server.
+const murray = { defs: [], state: {} };
+const flatTerrain = new Cesium.EllipsoidTerrainProvider({ ellipsoid: MARS });
+const murrayOn = (id) => !!(murray.state[id] && murray.state[id].on);
+
+function murrayLine(ds, ring, color, width, maxDist) {
+  if (ring.length < 2) return;
+  ds.entities.add({ polyline: { positions: Cesium.Cartesian3.fromDegreesArray(ring.flat(), MARS), width,
+    material: color, clampToGround: true,
+    distanceDisplayCondition: maxDist ? new Cesium.DistanceDisplayCondition(0, maxDist) : undefined } });
+}
+function murrayLabel(ds, lon, lat, text, maxDist, color = Cesium.Color.WHITE) {
+  ds.entities.add({ position: Cesium.Cartesian3.fromDegrees(lon, lat, 0, MARS), label: { text,
+    font: "12px sans-serif", fillColor: color, outlineColor: Cesium.Color.BLACK, outlineWidth: 3,
+    style: Cesium.LabelStyle.FILL_AND_OUTLINE, disableDepthTestDistance: 1e9,
+    distanceDisplayCondition: new Cesium.DistanceDisplayCondition(0, maxDist) } });
+}
+const sizeDist = (km) => Math.min(9e6, Math.max(2.5e5, (km || 10) * 1.5e4));   // big features show from farther
+
+// Traverses are drawn whole. Names, craters and the tile map have thousands of features: they are kept in memory
+// and only the ones in view are drawn (biggest first, capped), refreshed when the camera stops.
+const VIEW_CAP = { names: 250, craters: 250, quads: 200 };
+function viewBoxes() {
+  const r = viewer.camera.computeViewRectangle(MARS);
+  if (!r) return null;
+  const [w, s, e, n] = [r.west, r.south, r.east, r.north].map(Cesium.Math.toDegrees);
+  return w <= e ? [[w, s, e, n]] : [[w, s, 180, n], [-180, s, e, n]];       // split at the antimeridian
+}
+const inView = (boxes, b) => boxes.some(([w, s, e, n]) => b[0] <= e && b[2] >= w && b[1] <= n && b[3] >= s);
+
+async function murrayGeojson(def) {
+  const data = await api(def.url), ds = new Cesium.CustomDataSource(def.id);
+  const color = def.color ? C(def.color) : Cesium.Color.WHITE.withAlpha(0.7);
+  const items = [];
+  for (const f of data.features) {
+    const g = f.geometry, p = f.properties || {};
+    if (g.type === "LineString") murrayLine(ds, g.coordinates, color, 3);
+    else if (g.type === "Polygon") {
+      const ring = g.coordinates[0], xs = ring.map((c) => c[0]), ys = ring.map((c) => c[1]);
+      items.push({ ring, name: p.name, size: def.id === "quads" ? 1 : p.diameter_km || 1,
+                   box: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)],
+                   lon: xs.reduce((a, b) => a + b, 0) / xs.length, lat: ys.reduce((a, b) => a + b, 0) / ys.length });
+    } else if (g.type === "Point" && p.name) {
+      const [lon, lat] = g.coordinates;
+      items.push({ name: p.name, size: p.diameter_km || 1, box: [lon, lat, lon, lat], lon, lat });
+    }
+  }
+  if (items.length) murray.state[def.id].items = items.sort((a, b) => b.size - a.size);
+  return ds;
+}
+
+function refreshViewLayers() {
+  const boxes = viewBoxes();
+  for (const id of Object.keys(VIEW_CAP)) {
+    const st = murray.state[id];
+    if (!st || !st.on || !st.ds || !st.items) continue;
+    st.ds.entities.removeAll();
+    if (!boxes) continue;
+    const color = id === "quads" ? C("#ffd27a").withAlpha(0.6) : Cesium.Color.WHITE.withAlpha(0.75);
+    const shown = st.items.filter((it) => inView(boxes, it.box)).slice(0, VIEW_CAP[id]);
+    for (const it of shown) {
+      if (it.ring) murrayLine(st.ds, it.ring, color, id === "quads" ? 1.5 : 2);
+      if (it.name) murrayLabel(st.ds, it.lon, it.lat, it.name, id === "quads" ? 2e6 : sizeDist(it.size),
+                               id === "names" ? C("#ffe9c7") : Cesium.Color.WHITE);
+    }
+  }
+  viewer.scene.requestRender();
+}
+viewer.camera.moveEnd.addEventListener(refreshViewLayers);
+
+let hiriseRequest = 0;
+async function refreshHirise() {
+  const st = murray.state.hirise;
+  if (!st || !st.on) return;
+  const id = ++hiriseRequest, r = viewer.camera.computeViewRectangle(MARS);
+  st.ds.entities.removeAll();
+  if (!r) return;
+  const box = [r.west, r.south, r.east, r.north].map(Cesium.Math.toDegrees);
+  if (box[2] - box[0] > 25 || box[3] - box[1] > 25) {
+    $("murrayInfo").textContent = "HiRISE footprints: zoom in closer (view under ~25°) to load them."; return;
+  }
+  try {
+    const d = await api(`/murray/hirise?west=${box[0]}&south=${box[1]}&east=${box[2]}&north=${box[3]}`);
+    if (id !== hiriseRequest || !st.on) return;
+    for (const f of d.features) murrayLine(st.ds, f.geometry.coordinates[0], C("#7ad7ff").withAlpha(0.75), 1.5);
+    $("murrayInfo").textContent = `HiRISE footprints in view: ${d.total}` + (d.truncated ? ` (showing ${d.features.length}; zoom in for all)` : "");
+  } catch (e) { if (id === hiriseRequest) $("murrayInfo").textContent = e.message; }
+  viewer.scene.requestRender();
+}
+viewer.camera.moveEnd.addEventListener(refreshHirise);
+
+async function murrayToggle(def, on) {
+  const st = murray.state[def.id] || (murray.state[def.id] = {});
+  st.on = on;
+  const coll = tileset ? tileset.imageryLayers : viewer.imageryLayers;
+  $("murrayInfo").textContent = on ? `Loading ${def.title}…` : "";
+  try {
+    if (def.kind === "tiles") {
+      if (on && !st.layer) {                                   // above every base map, below the data overlays
+        st.layer = coll.addImageryProvider(new Cesium.UrlTemplateImageryProvider({
+          url: def.url, tilingScheme: new Cesium.GeographicTilingScheme({ ellipsoid: MARS }),
+          tileWidth: 512, tileHeight: 512, maximumLevel: def.max_level, credit: def.credit }));
+        for (const l of overlay) if (coll.contains(l)) coll.raiseToTop(l);
+      }
+      if (!on && st.layer) { coll.remove(st.layer, true); st.layer = null; }
+    } else if (def.kind === "terrain") {
+      if (on && !st.provider) st.provider = await Cesium.ArcGISTiledElevationTerrainProvider.fromUrl(API + def.url, { ellipsoid: MARS });
+      viewer.terrainProvider = murrayOn("terrain") ? st.provider : flatTerrain;
+    } else if (def.kind === "geojson") {
+      if (on) {
+        if (!st.ds) st.ds = await murrayGeojson(def);
+        if (st.on && !viewer.dataSources.contains(st.ds)) viewer.dataSources.add(st.ds);
+        refreshViewLayers();
+      }
+      else if (st.ds) viewer.dataSources.remove(st.ds, false);
+    } else if (def.kind === "bbox") {
+      if (!st.ds) st.ds = new Cesium.CustomDataSource(def.id);
+      if (on) { viewer.dataSources.add(st.ds); await refreshHirise(); } else viewer.dataSources.remove(st.ds, false);
+    }
+    if (on && def.kind !== "bbox") $("murrayInfo").textContent = `${def.title}: ${def.credit}`;
+  } catch (e) {
+    st.on = false; $(`murray_${def.id}`).checked = false;
+    $("murrayInfo").textContent = `${def.title} could not load: ${e.message || e}`;
+  }
+  viewer.scene.requestRender();
+}
+
+async function murrayPointLinks(p, request) {
+  const box = $("infoLinks");
+  box.innerHTML = "";
+  const add = (text, href) => box.append(href ? el("a", { href, textContent: text, target: "_blank", rel: "noopener" })
+                                              : el("div", { textContent: text }));
+  try {
+    if (murrayOn("quads")) {
+      const q = await api(`/murray/quad/at?lat=${p.lat}&lon=${p.lon}`);
+      if (request === pointRequest && q.name) add(`CTX mosaic tile ${q.name}: download page`, q.link);
+    }
+    if (murrayOn("hirise")) {
+      const h = await api(`/murray/hirise/at?lat=${p.lat}&lon=${p.lon}`);
+      if (request !== pointRequest) return;
+      if (!h.total) add("No HiRISE image covers this point.");
+      for (const o of h.observations.slice(0, 6)) add(`HiRISE ${o.name}`, o.link);
+      if (h.total > 6) add(`…and ${h.total - 6} more HiRISE images here`);
+    }
+  } catch (e) { /* the panel already shows the pixel values */ }
+}
+
+api("/api/murray/layers").then((d) => {
+  murray.defs = d.layers;
+  for (const def of d.layers) {
+    const box = el("input", { type: "checkbox", id: `murray_${def.id}` });
+    box.onchange = () => murrayToggle(def, box.checked);
+    $("murrayLayers").append(el("label", { className: "check", title: def.credit }, box, def.title));
+  }
+}).catch((e) => { $("murrayInfo").textContent = "Murray Lab maps unavailable: " + e.message; });
+
+
+// ------------------------------------------------------ route hover + rover ----
+// Hover over a route (mission candidates, the manual route, Perseverance's tracks): a 3D rover (rover.glb, made by
+// tools/make_rover_glb.py; one per vehicle) stands at that point facing along the route, and a card shows what it would see there.
+const DEG_M = Math.PI / 180 * 3396190;
+const ROVER_HEADING_OFFSET = 0;                   // the model faces +X, which Cesium points north at heading 0 (clockwise)
+const roverEntity = viewer.entities.add({ id: "hoverRover", show: false,
+  position: Cesium.Cartesian3.fromDegrees(0, 0, 0, MARS),
+  model: { uri: "rover.glb", minimumPixelSize: 64, maximumScale: 20000,
+           heightReference: Cesium.HeightReference.CLAMP_TO_GROUND,
+           silhouetteColor: Cesium.Color.fromCssColorString("#e0703a"), silhouetteSize: 1.5 } });
+
+// which 3D model stands in for each vehicle (models made by tools/make_rover_glb.py)
+const VEHICLE_MODEL = { on_foot: "astronaut", two_wheel: "bike", four_wheel: "lrv", buggy: "buggy",
+                        astronaut: "astronaut", pressurized_rover: "buggy", small_rover: "rover" };
+function modelFor(path) {
+  if (path.kind === "mission") return VEHICLE_MODEL[mission.settings.vehicle.key] || "rover";
+  if (path.kind === "manual") return VEHICLE_MODEL[path.plan.vehicleKey] || "rover";
+  return "rover";                                    // Perseverance's own tracks
+}
+let roverModel = "rover";
+
+function hoverPaths() {
+  const paths = [];
+  if (mission) mission.candidates.forEach((c, i) => paths.push({ kind: "mission", c, selected: i === selected, pts: c.route.points }));
+  if (lastPlan && lastPlan.route) paths.push({ kind: "manual", plan: lastPlan, pts: lastPlan.route });
+  if ($("showTracks").checked && tracksData && tracksData.segments)
+    for (const sg of tracksData.segments) paths.push({ kind: "track", seg: sg, pts: sg._pts || (sg._pts = sg.coords.map(([lon, lat]) => ({ lon, lat }))) });
+  return paths;
+}
+
+function nearestOnPaths(lat, lon, maxM) {          // closest point on any route segment, within maxM metres
+  const kx = Math.cos(lat * Math.PI / 180) * DEG_M, ky = DEG_M;
+  let best = null;
+  for (const path of hoverPaths()) {
+    const p = path.pts;
+    for (let i = 0; i + 1 < p.length; i++) {
+      const ax = (p[i].lon - lon) * kx, ay = (p[i].lat - lat) * ky;
+      const dx = (p[i + 1].lon - p[i].lon) * kx, dy = (p[i + 1].lat - p[i].lat) * ky, l2 = dx * dx + dy * dy;
+      const t = l2 > 0 ? Math.max(0, Math.min(1, -(ax * dx + ay * dy) / l2)) : 0;
+      const qx = ax + t * dx, qy = ay + t * dy, d2 = qx * qx + qy * qy;
+      if (d2 > maxM * maxM) continue;
+      const score = path.selected ? d2 / 4 : d2;   // prefer the route being shown
+      if (!best || score < best.score) best = { path, i, t, score };
+    }
+  }
+  return best;
+}
+
+function lerpPoint(a, b, t) {
+  const out = {};
+  for (const k of Object.keys(a)) {
+    const x = a[k], y = b[k];
+    if (typeof x === "number" && typeof y === "number") out[k] = x + (y - x) * t;
+    else if (k === "used" && x && y) { out.used = {}; for (const n of Object.keys(x)) out.used[n] = x[n] == null || y[n] == null ? x[n] : x[n] + (y[n] - x[n]) * t; }
+    else out[k] = t < 0.5 ? x : y;
+  }
+  return out;
+}
+
+const fmt = (x, d = 1) => (x == null || Number.isNaN(x) ? "–" : (+x).toFixed(d));
+const hm = (h) => (h == null ? "–" : h < 1 ? `${Math.round(h * 60)} min` : `${Math.floor(h)} h ${String(Math.round((h % 1) * 60)).padStart(2, "0")} min`);
+function groundText(p) {
+  if (p.ti != null) {
+    const cls = p.ti < 150 ? "fine dust" : p.ti < 300 ? "sand" : p.ti < 600 ? "coarse sand / crusted" : "bedrock";
+    return `Ground: ${cls} (thermal inertia ${fmt(p.ti, 0)})` + (p.firm != null ? `, firmness ${fmt(p.firm, 2)}` : "");
+  }
+  return p.firm != null ? `Ground firmness ${fmt(p.firm, 2)}` : "";
+}
+
+function roverCard(path, p) {
+  const lines = [];                                  // [text, className]
+  if (path.kind === "mission") {
+    const c = path.c, r = c.route;
+    lines.push([`Route #${c.rank}${path.selected ? "" : " (backup)"} · ${mission.settings.vehicle.label}`, "title"]);
+    lines.push([`${fmt(p.d, 2)} of ${r.distance_km} km · ${hm(p.t)} of ${hm(r.one_way_h)} out`]);
+    lines.push([`Elevation ${fmt(p.elev, 0)} m · slope ${fmt(p.slope)}°`]);
+    lines.push([groundText(p)]);
+    lines.push([`Risk: ${["low", "moderate", "high"][Math.round(p.risk)] || "–"}` +
+                (p.green ? " · on green rover-verified track" : p.yellow ? " · on high-strain (yellow) track" : ""),
+                p.risk >= 1.5 ? "warn" : ""]);
+    lines.push([`Sunlight cos(i) ${fmt(p.sun, 2)} · surface ~${fmt(p.temp, 0)} K at ${mission.settings.local_hour}:00`]);
+    for (const it of c.resources.items) {
+      const used = p.used && p.used[it.name];
+      if (used == null) continue;
+      const left = 100 * (1 - used / it.capacity), back = 100 * (1 - 2 * used / it.capacity);
+      const name = it.name[0].toUpperCase() + it.name.slice(1);
+      lines.push([`${name}: ${fmt(used, it.unit === "Wh" ? 0 : 2)} ${it.unit} used so far (${fmt(left, 0)}% left)`]);
+      lines.push([`  turning back here: ${fmt(back, 0)}% left at base`, back < c.resources.reserve_pct ? "warn" : ""]);
+    }
+  } else if (path.kind === "manual") {
+    const s = path.plan.stats || {};
+    lines.push([`Planned route · ${path.plan.vehicle}`, "title"]);
+    lines.push([`${fmt(p.d, 2)} of ${s.distance_km ?? "–"} km · ${hm(p.t)} of ${hm(s.one_way_h)} out`]);
+    lines.push([`Elevation ${fmt(p.elev, 0)} m · slope ${fmt(p.slope)}°`]);
+    lines.push([groundText(p)]);
+    if (p.o2_kg != null) lines.push([`O2: ≈${fmt(p.o2_kg, 2)} kg used so far` + (s.o2_max_kg ? ` of ${s.o2_max_kg} kg` : "")]);
+    if (p.energy_kwh != null) lines.push([`Energy: ≈${fmt(p.energy_kwh, 2)} kWh used so far` + (s.energy_max_kwh ? ` of ${s.energy_max_kwh} kWh` : "")]);
+  } else {
+    const sg = path.seg;
+    lines.push([`${tracksData.rover} · sol ${sg.sol}`, "title"]);
+    lines.push([`Drive of ${fmt(sg.length_m, 0)} m on this sol`]);
+    lines.push([sg.class === "green" ? "Green: drove without warning signs" : `Yellow, high strain: ${sg.why}`,
+                sg.class === "green" ? "" : "warn"]);
+  }
+  lines.push([`${Math.abs(p.lat).toFixed(4)}° ${p.lat < 0 ? "S" : "N"}, ${p.lon.toFixed(4)}° E`]);
+  return lines.filter(([t]) => t);
+}
+
+function hideRover() {
+  if (roverEntity.show) { roverEntity.show = false; viewer.scene.requestRender(); }
+  $("routeHover").hidden = true;
+}
+
+let roverFrame = 0, roverMove = null;
+function updateRoverHover() {
+  roverFrame = 0;
+  const e = roverMove;
+  if (!e) return;
+  const b = viewer.scene.canvas.getBoundingClientRect(), x = e.clientX - b.left, y = e.clientY - b.top;
+  const loc = pickLatLon(new Cesium.Cartesian2(x, y));
+  if (!loc) return hideRover();
+  const scene = viewer.scene;
+  const metresPerPx = viewer.camera.getPixelSize(new Cesium.BoundingSphere(Cesium.Cartesian3.fromDegrees(loc.lon, loc.lat, 0, MARS), 0),
+                                                scene.drawingBufferWidth, scene.drawingBufferHeight) * (scene.drawingBufferWidth / scene.canvas.clientWidth);
+  const hit = nearestOnPaths(loc.lat, loc.lon, 14 * metresPerPx);
+  if (!hit) return hideRover();
+  const p0 = hit.path.pts[hit.i], p1 = hit.path.pts[hit.i + 1], p = lerpPoint(p0, p1, hit.t);
+  const bearing = Math.atan2((p1.lon - p0.lon) * Math.cos(p.lat * Math.PI / 180), p1.lat - p0.lat);   // clockwise from north
+  const pos = Cesium.Cartesian3.fromDegrees(p.lon, p.lat, 0, MARS);
+  const model = modelFor(hit.path);
+  if (model !== roverModel) { roverModel = model; roverEntity.model.uri = `${model}.glb`; }
+  roverEntity.position = pos;
+  roverEntity.orientation = Cesium.Transforms.headingPitchRollQuaternion(pos, new Cesium.HeadingPitchRoll(bearing + ROVER_HEADING_OFFSET, 0, 0), MARS);
+  roverEntity.show = true;
+  const tip = $("routeHover");
+  tip.innerHTML = "";
+  for (const [text, cls] of roverCard(hit.path, p)) tip.append(el("div", { textContent: text, className: cls || "" }));
+  tip.hidden = false;
+  const map = $("map");
+  tip.style.left = Math.max(0, Math.min(x + 18, map.clientWidth - tip.offsetWidth - 5)) + "px";
+  tip.style.top = Math.max(0, Math.min(y + 18, map.clientHeight - tip.offsetHeight - 5)) + "px";
+  $("weatherHover").hidden = true;                  // one card at a time
+  scene.requestRender();
+}
+viewer.scene.canvas.addEventListener("pointermove", (event) => {
+  if (event.pointerType === "touch" || event.buttons) { hideRover(); return; }
+  roverMove = event;
+  if (!roverFrame) roverFrame = requestAnimationFrame(updateRoverHover);
+});
+$("map").addEventListener("pointerleave", () => { roverMove = null; hideRover(); });
+
+
+// ---------------------------------------------------------------- landing ----
+function startExploring() {
+  const l = $("landing");
+  if (l.classList.contains("gone")) return;
+  l.classList.add("gone");
+  setTimeout(() => viewer.resize(), 50);
+}
+$("startExploring").onclick = startExploring;
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") startExploring(); });
+$("startExploring").focus();
+
 // ------------------------------------------------------------------ boot ----
 function flyTo(r) {
   viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
@@ -1168,6 +1677,8 @@ $("region").onchange = () => {
   if (!globalLayerSelected()) flyTo(current.rect);
   $("status").textContent = `${current.size[0]}×${current.size[1]} px · ~${current.pixel_m[1]} m/px · ` +
     `bands: ${current.bands.join(", ")}`;
+  setSharpBox(current.rect);
+  if (!USE_GLOBAL_CTX) setTimeout(() => loadHiresPhoto(current.region), 0);
   refreshLayer();
 };
 labels();
@@ -1197,7 +1708,9 @@ api("/api/weather/calendar").then(calendar => {
     regions = meta.regions;
     Object.assign(SPECS, meta.vehicle_specs || {});
     $("vehicle").innerHTML = Object.entries(meta.vehicles).map(([k, v]) => `<option value="${k}">${v}</option>`).join("");
-    $("region").innerHTML = regions.map((r) => `<option>${r.region}</option>`).join("");
+    const regionName = (id) => ({ jezero: "Jezero", jezero_hirise: "Jezero close-up (HiRISE)" }[id]
+                                 || id.replace(/_/g, " ").replace(/^./, (c) => c.toUpperCase()));
+    $("region").innerHTML = regions.map((r) => `<option value="${r.region}">${regionName(r.region)}</option>`).join("");
     applyVehicleLimits();
     renderConsumables();
     if (regions.length) $("region").onchange();

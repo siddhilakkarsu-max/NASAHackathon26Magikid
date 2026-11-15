@@ -8,3 +8,7 @@ __pycache__/
 data/
 # GeoTIFF copies of the cubes (the .npz files are what the app uses)
 cubes/*.tif
+# sharp-imagery tile cache, Murray Lab map cache, and the close-up cube (100+ MB: rebuild with `python build_cube.py jezero_hirise`)
+cubes/tilecache/
+cubes/jezero_hirise.npz
+cubes/murraycache/
