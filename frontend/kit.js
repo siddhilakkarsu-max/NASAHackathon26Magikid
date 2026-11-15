@@ -74,6 +74,16 @@ function refreshTargets() {
   fillTargets($("#target"), $("#targetLat"), $("#targetLon"), ts, 1);
 }
 
+// Ls 0/90/180/270 start northern spring/summer/autumn/winter; Ls 180-330 is the dust-storm season
+function seasonHint() {
+  const ls = +$("#ls").value;
+  if (!Number.isFinite(ls) || ls < 0 || ls > 360) { $("#lsHint").textContent = "0 to 355"; return; }
+  const name = ["Northern spring", "Northern summer", "Northern autumn", "Northern winter"][Math.floor((ls % 360) / 90)];
+  $("#lsHint").textContent = name + (ls >= 180 && ls <= 330 ? ", dust-storm season" : "");
+}
+$("#ls").addEventListener("input", seasonHint);
+seasonHint();
+
 function readForm() {
   const ctx = {
     archetype: $("#archetype").value, crew: +$("#crew").value, stay_sols: +$("#stay").value, eva_hours: +$("#evaHours").value,
@@ -85,7 +95,7 @@ function readForm() {
       ctx.vehicle = $("#vehicle").value;
       ctx.region = $("#region").value;
       ctx.route_request = {
-        region: ctx.region, vehicle: ctx.vehicle, local_hour: +$("#hour").value, budget_hours: +$("#budget").value,
+        region: ctx.region, vehicle: ctx.vehicle, local_hour: +$("#hour").value, budget_hours: +$("#budget").value, ls: +$("#ls").value,
         base: { lat: lat("#baseLat"), lon: lat("#baseLon") }, target: { lat: lat("#targetLat"), lon: lat("#targetLon") },
       };
     }
@@ -118,6 +128,7 @@ function prefillFromURL() {
   setPt(q.get("target"), "#targetLat", "#targetLon", "#target");
   if (q.get("hour")) $("#hour").value = q.get("hour");
   if (q.get("budget")) $("#budget").value = q.get("budget");
+  if (q.get("ls")) { $("#ls").value = q.get("ls"); seasonHint(); }
   if (q.get("rule")) { state.filters.rule = q.get("rule").toUpperCase(); state.openFiltered = true; }
   return q.has("archetype") || q.has("base");
 }

@@ -8,6 +8,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans+Condensed:wght@500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" rel="stylesheet" />
 <link href="kit.css" rel="stylesheet" />
+<link href="kit-presets.css" rel="stylesheet" />
+<script src="kit-presets.js" defer></script>
 </head>
 <body>
 
@@ -63,6 +65,10 @@
           <div class="pair">
             <div><label for="hour">Local hour</label><input id="hour" type="number" min="0" max="24" step="0.25" value="11" /></div>
             <div><label for="budget">EVA budget (h)</label><input id="budget" type="number" min="1" max="12" step="0.5" value="8" /></div>
+          </div>
+          <div class="pair">
+            <div><label for="ls">Season (Ls)</label><input id="ls" type="number" min="0" max="355" step="5" value="90" aria-describedby="lsHint" /></div>
+            <p class="hint beside" id="lsHint"></p>
           </div>
         </div>
       </section>
