@@ -52,7 +52,7 @@ Datasets in the Jezero cube (all fetched automatically by `build_cube.py`; downl
   detection thresholds are in `config.MINERALS`; add a mineral there and rebuild. Targeted observations are used
   where they exist, the 180 m map tile fills the rest; places CRISM never imaged stay empty.
 - **Firmness** follows the thermal-inertia classes: <150 fine dust, 150–300 sand, 300–600 coarse/crusted,
-  >600 bedrock (TI 100 → 0 ... 600 → 1), plus local THEMIS night-IR detail; night IR alone where TI is missing.
+  >600 bedrock (log scale, 150 → 0 ... 600 → 1), plus local THEMIS night-IR detail; night IR alone where TI is missing.
 - **Mission suitability** layer = 0.45 × safety (slope + firmness) + 0.35 × science (CRISM detections)
   + 0.20 × radiation shielding (`suitability()` in `app.py`).
 - **Sharp imagery (5 m)**: the global CTX mosaic (Murray Lab, Caltech), coloured with the Viking colour mosaic

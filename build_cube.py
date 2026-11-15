@@ -391,15 +391,20 @@ def derive_terrain(elev, grid):
 
 
 def firmness_from_ti(ti, night, grid):
-    """Ground firmness 0..1 from calibrated thermal inertia (J m-2 K-1 s-1/2): <150 dust, 150-300 sand,
-    300-600 coarse/crusted, >600 bedrock. Map 100 -> 0 (loose) ... 600 -> 1 (firm), then add THEMIS
-    night-time detail for local variation. Where thermal inertia is missing, the night IR alone is used."""
-    ti_firm = np.clip((ti - 100) / 500, 0, 1)
-    if night is None:
-        return ti_firm.astype("float32")
-    n = normalize01(night)
-    firm = np.clip(ti_firm + (n - 0.5) * 0.35, 0, 1)
-    return np.where(np.isnan(firm), n, firm).astype("float32")
+    """Ground firmness 0..1 from thermal inertia on a log scale matching the classes
+    <150 fine dust (0) | 150-300 sand (0-0.5) | 300-600 coarse/crusted (0.5-1) | >600 bedrock (1).
+    Local contrast within ~1 km is borrowed from the 100 m night-IR picture; night IR alone fills TI gaps.
+    (A linear TI scale rated Jezero's sand looser and broke the gear tests' calibrated oxygen scenario.)"""
+    from scipy.ndimage import uniform_filter
+    firm = (np.log(np.maximum(ti, 1)) - np.log(150)) / (np.log(600) - np.log(150))
+    if night is not None:
+        n = normalize01(night)
+        dx, dy = pixel_size_m(grid)
+        k = max(3, int(round(1000 / math.sqrt(float(np.mean(dx)) * dy))) | 1)
+        filled = np.where(np.isnan(n), np.nanmean(n), n)
+        firm = firm + (filled - uniform_filter(filled, k))      # local night-IR anomaly
+        firm = np.where(np.isnan(firm), n, firm)                 # TI gaps: night IR alone
+    return np.clip(firm, 0, 1).astype("float32")
 
 
 def normalize01(a):
