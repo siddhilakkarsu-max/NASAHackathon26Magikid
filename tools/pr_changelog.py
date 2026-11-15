@@ -138,6 +138,8 @@ def main():
             cur = path.read_text()
             if BEGIN in cur and END in cur:
                 text = cur.split(BEGIN)[0] + text.rstrip("\n") + cur.split(END, 1)[1]
+            else:                                   # a hand-written summary from before the merge: keep it on top
+                text = cur.rstrip("\n") + "\n\n" + text
         path.write_text(text)
         n_files = sum(len(items) for _, items in found)
         index.append(f"| [#{pr['n']}]({path.name}) | {pr['title'] or '-'} | `{pr['branch']}` | {pr['date']} | "
