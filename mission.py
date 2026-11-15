@@ -227,7 +227,12 @@ def _route_layers(cube, v, season, priority, green_only):
     if v["battery_wh"]:
         energy = v["wh_per_km"] / 1000 * (1 + 0.05 * slope) * (1 + 0.5 * v["sand_penalty"] * (1 - firm) ** 2)
     else:                                                            # on foot: oxygen per metre walked
-        energy = SUIT["o2_walk_kg_h"] / 3600 * (1 + 0.04 * slope) / np.maximum(speed, 1e-3)
+        # flat-ground pace (the planner's slope slowdown taken back out) x Minetti's cost of going up and
+        # coming back down this slope, as the resource check charges it (a pixel has no direction)
+        s = np.minimum(slope, 60.0)
+        g = np.tan(np.radians(s))
+        updown = (physics.minetti_cw(g) + physics.minetti_cw(-g)) / (2 * physics.minetti_cw(0.0))
+        energy = SUIT["o2_walk_kg_h"] / 3600 * time * physics.walker_slope_slowdown(s) * updown
     risk = (slope / v["max_slope"]) ** 2 + (1 - firm) ** 2 + 0.3 * rough_n
     w = PRIORITIES[priority]["cost"]
     finite = np.isfinite(time)
