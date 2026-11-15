@@ -1,5 +1,8 @@
 # Changelog
 
+> **Frozen.** New changes go in `docs/changelog/`, one file per merged pull request (see `AGENTS.md`).
+> This file keeps the history up to PR #32.
+
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
