@@ -60,7 +60,7 @@
   #panel a { color: #b9daf0; }
   #weatherHover { position: absolute; z-index: 5; pointer-events: none; max-width: 210px;
                   padding: 7px 9px; background: #131520ed; color: #fff; font-size: 12px;
-                  line-height: 1.45; border: 1px solid #ffffff48; border-radius: 5px; }
+                  line-height: 1.45; white-space: pre-line; border: 1px solid #ffffff48; border-radius: 5px; }
   .small { color: var(--muted); font-size: 11px; }
   #routeHover { position: absolute; z-index: 6; pointer-events: none; max-width: 300px; padding: 7px 9px;
                 background: #131520f0; color: #fff; font-size: 12px; line-height: 1.45;
@@ -270,6 +270,7 @@
       <option value="wind_speed">Near-surface wind speed</option>
       <option value="wind_direction">Near-surface wind arrows</option>
       <option value="dust_opacity">Atmospheric dust optical depth</option>
+      <option value="radiation_dose">Radiation · modeled GCR effective dose</option>
     </optgroup>
     <option value="shelter">Minutes to shelter</option>
     <option value="elevation">Elevation (topography)</option>
@@ -279,6 +280,20 @@
     <option value="albedo">Albedo (brightness)</option>
     <optgroup id="mineralLayers" label="Minerals (CRISM)"></optgroup>
   </select>
+  <div id="radiationControls" hidden>
+    <label for="radiationSolar">Solar activity scenario</label>
+    <select id="radiationSolar">
+      <option value="400">Solar minimum (higher GCR)</option>
+      <option value="700" selected>Intermediate solar activity</option>
+      <option value="1000">Solar maximum (lower GCR)</option>
+    </select>
+    <label for="radiationScale">Color scale</label>
+    <select id="radiationScale">
+      <option value="spatial" selected>Show spatial differences</option>
+      <option value="shared">Compare solar scenarios</option>
+    </select>
+    <div class="small">Fixed solar scenarios; season and hour change modeled atmospheric pressure.</div>
+  </div>
   <div id="legend" hidden></div><div class="small" id="legendText"></div>
   <div id="mapDetail" class="small" role="status"></div>
   <label for="mapOpacity">Overlay opacity <output id="opacityValue" for="mapOpacity">100%</output></label>
@@ -503,7 +518,9 @@ let planRequest = 0, planBusy = false;
 
 function conditions() {
   return { region: regionId(), vehicle: $("vehicle").value || "astronaut", local_hour: +$("hour").value,
-           ls: +$("ls").value, budget_hours: +$("budget").value };
+           ls: +$("ls").value, budget_hours: +$("budget").value,
+           radiation_solar_mv: Number($("radiationSolar").value),
+           radiation_spatial_contrast: $("radiationScale").value === "spatial" };
 }
 let seasonCalendar = null;                        // {sols, ls}: one Mars year, sol by sol (from /api/weather/calendar)
 function solForLs(ls) {
@@ -565,6 +582,7 @@ function clearOverlay() {
   shownResponse = null;
   $("mapOpacity").disabled = true;
   $("mapDetail").textContent = "";
+  updateRadiationControl();
 }
 
 async function showAnalysisOverlay({ image, rect, name, label, requestAtStart, isCurrent }) {
@@ -587,9 +605,14 @@ async function showAnalysisOverlay({ image, rect, name, label, requestAtStart, i
   return true;
 }
 
+function updateRadiationControl() {
+  $("radiationControls").hidden = $("layer").value !== "radiation_dose";
+}
+
 async function refreshLayer() {
   const request = ++layerRequest;
   const name = $("layer").value;
+  updateRadiationControl();
   layerLoad?.abort();
   $("layerStatus").textContent = "";
   $("retryLayer").hidden = true;
@@ -649,6 +672,11 @@ async function refreshLayer() {
   }
 }
 $("retryLayer").onclick = refreshLayer;
+["radiationSolar", "radiationScale"].forEach(id => $(id).onchange = () => {
+  if ($("layer").value !== "radiation_dose") return;
+  timeline?.stop();
+  refreshLayer();
+});
 function updateWindControl(available = false) {
   $("pauseWind").hidden = !available;
   $("pauseWind").textContent = windPaused ? "Resume wind motion" : "Pause wind motion";
@@ -673,7 +701,7 @@ function pointLabel({lat, lon}) {
   return `${Math.abs(lat).toFixed(2)}° ${lat < 0 ? "S" : "N"}, ${Math.abs(lon).toFixed(2)}° ${lon < 0 ? "W" : "E"}`;
 }
 const hoverLayers = new Set(["temperature", "global_temperature", "openmars_surface_temperature", "air_temperature", "surface_pressure",
-                              "wind_speed", "wind_direction", "dust_opacity"]);
+                              "wind_speed", "wind_direction", "dust_opacity", "radiation_dose"]);
 function paintHover(point, detail = "") {
   const tip = $("weatherHover");
   tip.replaceChildren(document.createTextNode(pointLabel(point)));
@@ -710,6 +738,14 @@ function samplePoint(layer, snapshot, point, signal) {
   }, signal);
 }
 function sampleLabel(sample) {
+  if (sample.model_label && sample.unit === "µSv/h") {
+    const lines = [sample.value === null ? `Radiation: N/A${sample.reason ? " · " + sample.reason : ""}`
+      : `Estimated GCR effective dose: ${sample.value} µSv/h`];
+    if (Number.isFinite(sample.pressure_pa)) lines.push(`Pressure: ${sample.pressure_pa} Pa`);
+    lines.push(Number.isFinite(sample.dust_opacity)
+      ? `Dust τ: ${sample.dust_opacity} (context only)` : "Dust τ: N/A (context only)");
+    return lines.join("\n");
+  }
   const value = sample.value === null ? "unavailable" : `${sample.value} ${sample.unit}`;
   const direction = sample.toward_deg === undefined ? "" : ` · toward ${sample.toward_deg}°`;
   return `${sample.label} ${value}${direction}`;
@@ -1886,12 +1922,27 @@ async function watchArea(region) {                // CRISM minerals arrive a few
 let advStart = false;
 try { advStart = localStorage.getItem(ADV_KEY) === "1"; } catch (e) { /* storage blocked: start plain */ }
 setAdvanced(advStart);
+let wholeMarsResizeObserver = null;
 function flyTo(r) {
   viewer.camera.flyTo({ destination: Cesium.Rectangle.fromDegrees(r.west, r.south, r.east, r.north) });
 }
 function showWholeMars() {
   const canvas = viewer.scene.canvas;
-  const aspect = canvas.clientWidth / Math.max(1, canvas.clientHeight);
+  // In-app browser panels can begin hidden (0×0). An infinite camera position
+  // corrupts Cesium's frustum even after the panel becomes visible.
+  if (canvas.clientWidth < 2 || canvas.clientHeight < 2) {
+    if (!wholeMarsResizeObserver) {
+      wholeMarsResizeObserver = new ResizeObserver(() => {
+        if (canvas.clientWidth >= 2 && canvas.clientHeight >= 2) showWholeMars();
+      });
+      wholeMarsResizeObserver.observe($("map"));
+    }
+    return;
+  }
+  wholeMarsResizeObserver?.disconnect();
+  wholeMarsResizeObserver = null;
+  viewer.resize();
+  const aspect = canvas.clientWidth / canvas.clientHeight;
   const halfAngle = Math.atan(Math.tan(viewer.camera.frustum.fov / 2) * Math.min(aspect, 1 / aspect) * 0.80);
   const distance = MARS.maximumRadius * (1 / Math.sin(halfAngle) - 1);
   viewer.camera.setView({
@@ -1901,6 +1952,10 @@ function showWholeMars() {
 }
 function globalLayerSelected() {
   return $("layer").selectedOptions[0]?.parentElement.id === "globalWeather";
+}
+const initialLayer = new URLSearchParams(location.search).get("layer");
+if (initialLayer && [...$("layer").options].some(option => option.value === initialLayer && !option.disabled)) {
+  $("layer").value = initialLayer;
 }
 let wasGlobal = globalLayerSelected();
 showWholeMars();
