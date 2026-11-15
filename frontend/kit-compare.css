@@ -1,0 +1,54 @@
+/* Pinned-kit comparison on the gear page. Uses kit.css variables. */
+.sec.cmp { margin: 0 0 26px; padding-top: 12px; border-top: 1px solid var(--line-2); }
+.cmp > h2 .link { margin-left: auto; font: 400 12.5px var(--sans); letter-spacing: 0; text-transform: none; }
+
+.cmp-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); border-bottom: 1px solid var(--line); margin-top: 8px; }
+.cmp-pair > div { padding: 6px 16px 8px 0; min-width: 0; }
+.cmp-pair > div + div { padding-left: 16px; border-left: 1px solid var(--line); }
+.cmp-pair .k { display: block; font: 600 11px var(--cond); text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-3); }
+.cmp-pair .k .mono { font-weight: 400; letter-spacing: 0; margin-left: 4px; }
+.cmp-pair b { font-weight: 500; font-size: 13.5px; }
+
+.cmp-same { color: var(--text-2); margin: 10px 0 0; font-size: 13px; }
+
+.cmp-tbl { width: 100%; max-width: 640px; border-collapse: collapse; font-size: 13px; table-layout: fixed; margin-top: 4px; }
+.cmp-tbl th { font: 600 11px var(--cond); text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-3); text-align: right;
+              padding: 8px 0 4px 12px; border-bottom: 1px solid var(--line-2); width: 104px; }
+.cmp-tbl th:first-child { width: auto; padding-left: 0; }
+.cmp-tbl td { padding: 4px 0 4px 12px; border-bottom: 1px solid var(--line); vertical-align: baseline; }
+.cmp-tbl td.l { padding-left: 0; color: var(--text-2); }
+.cmp-tbl td.v { font: 500 13px var(--mono); font-variant-numeric: tabular-nums; text-align: right; white-space: nowrap; }
+.cmp-tbl td.v small { color: var(--text-3); font-weight: 400; margin-left: 3px; }
+.cmp-tbl td.d { color: var(--text); }
+.cmp-tbl td.d.worse { color: var(--rust); }
+.cmp-tbl td.d.worse small { color: var(--rust); opacity: 0.8; }
+.cmp-tbl tr.same td { color: var(--text-3); }
+.cmp-tbl tr.same td.v { font-weight: 400; }
+
+.cmp-lists { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px 28px; margin-top: 6px; }
+.cmp-list h3 { font: 600 11px var(--cond); text-transform: uppercase; letter-spacing: 0.09em; color: var(--text-2); margin: 14px 0 2px;
+               padding-bottom: 4px; border-bottom: 1px solid var(--line-2); display: flex; gap: 8px; align-items: baseline; }
+.cmp-list h3 .n { font: 400 12px var(--mono); color: var(--text-3); letter-spacing: 0; }
+.cmp-list ul { list-style: none; margin: 0; padding: 0; }
+.cmp-list li { display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; column-gap: 6px; align-items: baseline;
+               padding: 4px 0; border-bottom: 1px solid var(--line); font-size: 13px; }
+.cmp-list .mk { font: 12px var(--mono); color: var(--text-3); }
+.cmp-list .nm { min-width: 0; }
+.cmp-list .nm > span:not(.rid) { display: block; font-size: 11.5px; color: var(--text-3); }
+.cmp-list .rid { font: 500 12px var(--mono); color: var(--sand); }
+.cmp-list .q { font: 12px var(--mono); color: var(--text-2); white-space: nowrap; font-variant-numeric: tabular-nums; }
+.cmp-list .more summary { cursor: pointer; font-size: 12.5px; color: var(--sand); padding: 5px 0 0 18px; text-decoration: underline; text-underline-offset: 2px; }
+.cmp-list .more summary:hover { color: var(--text); }
+.cmp-list .more[open] summary { display: none; }
+
+@media (max-width: 1060px) {
+  .cmp-lists { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+}
+@media (max-width: 640px) {
+  .cmp-pair { grid-template-columns: minmax(0, 1fr); }
+  .cmp-pair > div + div { padding-left: 0; border-left: 0; border-top: 1px solid var(--line); }
+  .cmp-tbl th { width: 72px; }
+  .cmp-tbl td.v { font-size: 12px; }
+  .cmp-lists { grid-template-columns: minmax(0, 1fr); }
+}
+@media print { .cmp { display: none !important; } }
