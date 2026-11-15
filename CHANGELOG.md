@@ -3,6 +3,18 @@
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
+## [Unreleased] - 2026-11-14, planner controls and game integration
+
+- Use one global Map view selector for imagery, terrain, weather and radiation;
+  keep annotation overlays independent and remove the OpenMARS reference option.
+- Prevent selected page text from canceling time-slider drags after one step.
+- Show the full published CTX photo grid and correct dateline tiles and lookup.
+- Integrate the teammate game into a collapsed section and Mission results action.
+  Preserve the saved route, region and exact season when launching it.
+- Place game imagery using its actual regional bounds and prevent canceled planning
+  responses from replacing a newly chosen mission.
+- Add map-selection, native slider and game-handoff browser regression checks.
+
 ## [Unreleased] - 2026-11-14, survival game that plays the plan
 
 Branch `feat/Gk`.

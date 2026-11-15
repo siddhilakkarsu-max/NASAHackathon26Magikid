@@ -27,8 +27,10 @@ const weatherDisplay = (() => {
   const units = { elevation: "m", firmness: "", illumination: "" };
   const format = new Intl.NumberFormat("en", { maximumFractionDigits: 4 });
 
-  function renderLegend({ bar, text, name, response }) {
+  function renderLegend({ bar, text, name, response, sources }) {
     text.replaceChildren();
+    if (sources && sources !== text) sources.replaceChildren();
+    const sourceTarget = sources ?? text;
     bar.style.background = "";
     bar.hidden = !response;
     if (!response) return;
@@ -89,7 +91,7 @@ const weatherDisplay = (() => {
         source.textContent = title;
         assumptions.append(source);
       }
-      text.append(assumptions);
+      sourceTarget.append(assumptions);
     } else if (response.weather || "temperature_range" in response) {
       const source = document.createElement("a");
       const thermal = "temperature_range" in response;
@@ -100,7 +102,7 @@ const weatherDisplay = (() => {
       source.rel = "noopener";
       source.textContent = thermal ? "NASA PDS TES thermal inertia"
         : name === "dust_opacity" ? "LMD dust climatology" : "OpenMARS · Mars Year 29";
-      text.append(source);
+      sourceTarget.append(source);
     }
     bar.style.background = "linear-gradient(90deg, " + legend.colors.join(", ") + ")";
   }
