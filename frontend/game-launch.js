@@ -16,7 +16,7 @@
     if (typeof window === "undefined" || typeof document === "undefined") return;
     if (window.MarswalkGameLaunch) return;                       // already loaded on this page
 
-    var VERSION = "1.1.0";
+    var VERSION = "1.3.0";
     var GAME = "game.html";
     var STORE_KEY = "marswalk.game.mission";                     // read by game.html when the URL has ?src=planner
     var MAX_WITH_IMAGES = 1500000;                               // characters of JSON; above this the two PNGs are left out
@@ -70,7 +70,8 @@
       return { goal: text(s.goal) || value("goal").trim(), vehicle: text(s.vehicle && s.vehicle.key) || value("mVehicle"),
                season: text(season.key) || seasonFromLs(ls), ls: ls,
                priority: text(s.priority && s.priority.key) || value("mPriority"),
-               green_only: typeof s.green_only === "boolean" ? s.green_only : isChecked("greenOnly") };
+               green_only: typeof s.green_only === "boolean" ? s.green_only : isChecked("greenOnly"),
+               local_hour: typeof s.local_hour === "number" && isFinite(s.local_hour) ? s.local_hour : number("hour") };
     }
 
     // The hand-off object, shape fixed by the game spec. null when there is no plan with candidates.
@@ -89,7 +90,7 @@
       var g = m.goal_ai || {}, x = m.explain_ai || {};
       return {
         v: 1, savedAt: Date.now(), region: plannerRegion(m), selected: currentSelected(m), request: req,
-        hour: number("hour"), ls: number("ls"),
+        hour: req.local_hour, ls: req.ls,
         ai: { goal: { reasoning: text(g.reasoning), content: text(g.content) },
               explain: { reasoning: text(x.reasoning), content: text(x.content) } },
         mission: copy
@@ -120,7 +121,7 @@
       if (store(plannerPayload(false))) return GAME + "?src=planner";
       var r = plannerRequest(m);
       if (!r.goal && m.settings && typeof m.settings.goal === "string") r.goal = m.settings.goal;
-      return GAME + query([["goal", r.goal], ["vehicle", r.vehicle], ["season", r.season], ["ls", r.ls], ["priority", r.priority],
+      return GAME + query([["plan", text(m.id)], ["goal", r.goal], ["vehicle", r.vehicle], ["season", r.season], ["ls", r.ls], ["local_hour", r.local_hour], ["priority", r.priority],
                            ["green_only", r.green_only ? 1 : 0], ["region", plannerRegion(m)], ["cand", currentSelected(m)]]);
     }
 
