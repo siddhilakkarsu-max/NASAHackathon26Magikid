@@ -16,6 +16,40 @@
   if (window.marsJuice) return;
   const $ = (id) => document.getElementById(id);
   const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n; };
+  // Line icons in the same style as the menu's (maps_ui.js): 24×24, stroked in the text colour, no emoji.
+  const ICONS = {
+    storm: '<path d="M4 7h11a3 3 0 1 0-3-3"/><path d="M3 11h15a3 3 0 1 1-3 3"/><path d="M6 15h6"/><path d="M8 19h7"/>',
+    sprout: '<path d="M12 21v-9"/><path d="M12 12C12 8 9 5.5 4.5 5.5 4.5 10 7.5 12 12 12z"/><path d="M12 14c0-3.5 2.5-6 7-6 0 4-2.5 6-7 6z"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+    leaf: '<path d="M5 19c0-8 5-13 14-14 0 9-5 14-13 14z"/><path d="M5 19 13 11"/>',
+    snow: '<path d="M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9"/><path d="m9.5 4.5 2.5 2 2.5-2M9.5 19.5l2.5-2 2.5 2"/>',
+    moon: '<path d="M19.5 14.5A8 8 0 1 1 9.5 4.5a6.5 6.5 0 0 0 10 10z"/>',
+    sunrise: '<path d="M3 18h18M7 18a5 5 0 0 1 10 0"/><path d="M12 4v5M9.5 6.5 12 4l2.5 2.5"/><path d="M4.5 12.5l1.4 1.4M19.5 12.5l-1.4 1.4"/>',
+    sunset: '<path d="M3 18h18M7 18a5 5 0 0 1 10 0"/><path d="M12 9V4M9.5 6.5 12 9l2.5-2.5"/><path d="M4.5 12.5l1.4 1.4M19.5 12.5l-1.4 1.4"/>',
+    pack: '<path d="M7 8a5 5 0 0 1 10 0v11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2z"/><path d="M10 4.5V3h4v1.5"/><path d="M9.5 14h5v4h-5zM7 11h10"/>',
+    rocket: '<path d="M14.5 4.5c2.6-1.3 5-1.2 5-1.2s.1 2.4-1.2 5l-5.6 5.6-3.6-3.6z"/><path d="m9.1 10.3-3.4-.4-2.2 2.2 3.8 1.2M13.7 14.9l.4 3.4-2.2 2.2-1.2-3.8"/><circle cx="15.4" cy="8.6" r="1.4"/><path d="M6.5 17.5 4 20"/>',
+    antenna: '<path d="M5 11a7 7 0 0 1 7-7M5 11l8 8M5 11 3 21h10"/><circle cx="12.5" cy="11.5" r="1.3"/><path d="M15 4.5a5 5 0 0 1 4.5 4.5M15 1.8a8 8 0 0 1 7.2 7.2"/>',
+    map: '<path d="M3.5 6.5 9 4l6 2.5L20.5 4v13.5L15 20l-6-2.5-5.5 2.5z"/><path d="M9 4v13.5M15 6.5V20"/>',
+    compass: '<circle cx="12" cy="12" r="8.5"/><path d="m15.5 8.5-2 5-5 2 2-5z"/>',
+    radiation: '<circle cx="12" cy="12" r="1.8"/><path d="M12 4a8 8 0 0 1 6.9 4l-4.3 2.5M5.1 8A8 8 0 0 1 12 4v5M8.6 19.4l2.5-4.4M15.4 19.4 12.9 15"/>',
+    globe: '<circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.6 2.4 2.6 14.6 0 17M12 3.5c-2.6 2.4-2.6 14.6 0 17"/>',
+    rock: '<path d="M3 18 6.5 9.5 11 7l5 1.5 3.5 4.5L21 18z"/><path d="m11 7 1.5 5L16 8.5M12.5 12 9 18"/>',
+    flag: '<path d="M5 21V4"/><path d="M5 4h12l-2.5 4 2.5 4H5"/>',
+    satellite: '<rect x="9.5" y="9.5" width="5" height="5" rx="1" transform="rotate(45 12 12)"/><path d="m5 5 3.5 3.5M15.5 15.5 19 19"/><path d="m3 7 4-4 3 3-4 4zM14 17l3-3 4 4-3 3z"/><path d="M15 3.5a5.5 5.5 0 0 1 5.5 5.5"/>',
+    rover: '<path d="M4 15V11h16v4z"/><path d="M7 11V8h7l2 3"/><path d="M14 8V5h3"/><circle cx="6.5" cy="18" r="2"/><circle cx="12" cy="18" r="2"/><circle cx="17.5" cy="18" r="2"/>',
+    boot: '<path d="M7 3h5v8l6 2.5a2.5 2.5 0 0 1 1.5 2.3V19H4.5V14L7 11z"/><path d="M4.5 16.5h15M12 7h-2.5M12 9.5H9.5"/>',
+    robot: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 8V4.5"/><circle cx="12" cy="3.5" r="1"/><circle cx="9.5" cy="13" r="1.2"/><circle cx="14.5" cy="13" r="1.2"/><path d="M10 16.5h4M3 12v3M21 12v3"/>',
+    midnight: '<circle cx="12" cy="12" r="8.5"/><path d="M12 12V6.5"/><circle cx="12" cy="12" r=".8"/>',
+    question: '<circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.4a2.5 2.5 0 1 1 3.4 2.3c-.7.3-1 .8-1 1.5v.6"/><circle cx="12" cy="16.8" r=".6"/>',
+    soundOn: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>',
+    soundOff: '<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="m16 9.5 5 5M21 9.5l-5 5"/>',
+  };
+  const icon = (name) => {
+    const s = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("aria-hidden", "true"); s.setAttribute("class", "jz-icon");
+    s.innerHTML = ICONS[name] || ICONS.question;
+    return s;
+  };
   const reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
   const now = () => performance.now();
   const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -277,11 +311,11 @@
   const bubble = el("div", { id: "jzSlide" });
   bubble.setAttribute("aria-hidden", "true");
   document.body.append(bubble);
-  const SEASON = (ls) => (ls >= 180 && ls <= 330 ? "🌪️" : ls < 90 ? "🌱" : ls < 180 ? "☀️" : ls < 270 ? "🍂" : "❄️");
+  const SEASON = (ls) => (ls >= 180 && ls <= 330 ? "storm" : ls < 90 ? "sprout" : ls < 180 ? "sun" : ls < 270 ? "leaf" : "snow");
   const SLIDERS = {
-    hour: { step: 1, icon: (v) => (v < 5 || v >= 19.5 ? "🌙" : v < 7.5 ? "🌅" : v >= 17 ? "🌇" : "☀️"), label: (v) => `${Math.floor(v) % 24}:${String(Math.round((v % 1) * 60)).padStart(2, "0")}` },
+    hour: { step: 1, icon: (v) => (v < 5 || v >= 19.5 ? "moon" : v < 7.5 ? "sunrise" : v >= 17 ? "sunset" : "sun"), label: (v) => `${Math.floor(v) % 24}:${String(Math.round((v % 1) * 60)).padStart(2, "0")}` },
     ls: { step: 15, icon: SEASON, label: (v) => "Ls " + Math.round(v) + "°" },
-    budget: { step: 1, icon: () => "🎒", label: (v) => v + " h EVA" },
+    budget: { step: 1, icon: () => "pack", label: (v) => v + " h EVA" },
   };
   const fill = (r) => { const p = (r.value - r.min) / ((r.max - r.min) || 1) * 100; r.style.setProperty("--jz-fill", p.toFixed(1) + "%"); };
   const bucket = new WeakMap();
@@ -300,7 +334,7 @@
     const rect = r.getBoundingClientRect();
     if (!rect.width) return;
     const x = rect.left + 7.5 + (v - r.min) / ((r.max - r.min) || 1) * (rect.width - 15);
-    bubble.textContent = `${cfg.icon(v)} ${cfg.label(v)}`;
+    bubble.replaceChildren(icon(cfg.icon(v)), " " + cfg.label(v));
     bubble.style.transform = `translate(${x.toFixed(1)}px, ${(rect.top - 6).toFixed(1)}px) translate(-50%, -100%)`;
     bubble.classList.add("on");
     clearTimeout(slideTimer);
@@ -505,21 +539,21 @@
 
   // ----------------------------------------------------------------------------------------------- badges ----
   const BADGES = [
-    { id: "liftoff", icon: "🚀", name: "Liftoff", desc: "Start exploring Mars" },
-    { id: "comms", icon: "📡", name: "Comms Check", desc: "Talk to the planner assistant" },
-    { id: "layer", icon: "🗺️", name: "Map Nerd", desc: "Turn on a map layer" },
-    { id: "carto", icon: "🧭", name: "Cartographer", desc: "Try 5 different layers" },
-    { id: "rad", icon: "☢️", name: "Rad Aware", desc: "Check the radiation map" },
-    { id: "night", icon: "🌙", name: "Night Owl", desc: "Move the clock to night" },
-    { id: "storm", icon: "🌪️", name: "Storm Chaser", desc: "Visit dust-storm season (Ls 180–330)" },
-    { id: "globe", icon: "🌍", name: "Globetrotter", desc: "Visit 3 regions" },
-    { id: "rock", icon: "🪨", name: "Rock Hound", desc: "Inspect 5 spots on the map" },
-    { id: "trail", icon: "🚩", name: "Trailblazer", desc: "Plan your first mission" },
-    { id: "control", icon: "🛰️", name: "Mission Control", desc: "Plan 5 missions" },
-    { id: "road", icon: "🚙", name: "Road Trip", desc: "Play a route" },
-    { id: "boots", icon: "🥾", name: "Boots Down", desc: "Stand on Mars in Walker's view" },
-    { id: "boop", icon: "🤖", name: "Boop Master", desc: "Boop Helmut 10 times", secret: true },
-    { id: "midnight", icon: "🕛", name: "Witching Sol", desc: "Set the clock to exactly midnight", secret: true },
+    { id: "liftoff", icon: "rocket", name: "Liftoff", desc: "Start exploring Mars" },
+    { id: "comms", icon: "antenna", name: "Comms Check", desc: "Talk to the planner assistant" },
+    { id: "layer", icon: "map", name: "Map Nerd", desc: "Turn on a map layer" },
+    { id: "carto", icon: "compass", name: "Cartographer", desc: "Try 5 different layers" },
+    { id: "rad", icon: "radiation", name: "Rad Aware", desc: "Check the radiation map" },
+    { id: "night", icon: "moon", name: "Night Owl", desc: "Move the clock to night" },
+    { id: "storm", icon: "storm", name: "Storm Chaser", desc: "Visit dust-storm season (Ls 180–330)" },
+    { id: "globe", icon: "globe", name: "Globetrotter", desc: "Visit 3 regions" },
+    { id: "rock", icon: "rock", name: "Rock Hound", desc: "Inspect 5 spots on the map" },
+    { id: "trail", icon: "flag", name: "Trailblazer", desc: "Plan your first mission" },
+    { id: "control", icon: "satellite", name: "Mission Control", desc: "Plan 5 missions" },
+    { id: "road", icon: "rover", name: "Road Trip", desc: "Play a route" },
+    { id: "boots", icon: "boot", name: "Boots Down", desc: "Stand on Mars in Walker's view" },
+    { id: "boop", icon: "robot", name: "Boop Master", desc: "Boop Helmut 10 times", secret: true },
+    { id: "midnight", icon: "midnight", name: "Witching Sol", desc: "Set the clock to exactly midnight", secret: true },
   ];
   const queue = [];
   let toasting = false;
@@ -538,7 +572,7 @@
     if (!b) { toasting = false; return; }
     toasting = true;
     const t = el("div", { className: "jz-toast" + (b.secret ? " secret" : "") },
-      el("i", { textContent: b.icon }),
+      el("i", {}, icon(b.icon)),
       el("div", {}, el("small", { textContent: b.secret ? "Secret badge unlocked!" : "Badge unlocked" }),
         el("b", { textContent: b.name }), el("span", { textContent: b.desc })),
       el("em", { textContent: "+50 XP" }));
@@ -586,10 +620,11 @@
       const on = !!S.badges[b.id], hide = b.secret && !on;
       const tile = el("div", { className: "tile" + (on ? " on" : "") + (hide ? " secret" : ""),
                                title: hide ? "Secret badge: keep exploring" : `${b.name}: ${b.desc}` },
-        el("i", { textContent: hide ? "❔" : b.icon }), el("span", { textContent: hide ? "???" : b.name }));
+        el("i", {}, icon(hide ? "question" : b.icon)), el("span", { textContent: hide ? "???" : b.name }));
       return tile;
     });
-    const sound = el("button", { type: "button", className: "ghost", textContent: S.sound ? "🔊 Sound on" : "🔇 Sound off",
+    const sound = el("button", { type: "button", className: "ghost" }, icon(S.sound ? "soundOn" : "soundOff"), S.sound ? " Sound on" : " Sound off");
+    Object.assign(sound, {
       onclick: () => { S.sound = !S.sound; save(); if (S.sound) sfx("on"); panelSync(); } });
     const reset = el("button", { type: "button", className: "ghost", textContent: "Reset progress",
       onclick: () => {
