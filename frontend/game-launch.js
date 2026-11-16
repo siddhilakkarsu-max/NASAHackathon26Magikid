@@ -205,6 +205,8 @@
         "@keyframes playFabPulse{0%{box-shadow:0 6px 22px rgba(0,0,0,.45),0 0 0 0 rgba(34,180,85,.75)}100%{box-shadow:0 6px 22px rgba(0,0,0,.45),0 0 0 22px rgba(34,180,85,0)}}" +
         "@keyframes playFabIn{0%{transform:translateY(-24px) scale(.6);opacity:0}100%{transform:none;opacity:1}}" +
         "@media (prefers-reduced-motion:reduce){#playFab{animation:none}}" +
+        // narrower screens put the layer chips on a second row (top 64px): sit below them
+        "@media (max-width:1100px) and (min-width:761px){#playFab{top:108px}}" +
         // phones: bottom left above "Play overview", clear of the zoom buttons; not over the open panel
         "@media (max-width:760px){#playFab{top:auto;bottom:128px;left:86px;right:auto;padding:10px 16px 10px 13px;font-size:13px;max-width:calc(100vw - 150px)}#playFab small{display:none}" +
         "body.drawer #playFab{display:none}}";
