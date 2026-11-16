@@ -73,3 +73,16 @@ mission passed without rejected packets; server speed and clock checks were not 
 
 Source references: [Caltech Murray Lab CTX mosaic](https://murray-lab.caltech.edu/CTX/) and
 [USGS CTX terrain data](https://stac.astrogeology.usgs.gov/docs/data/mars/ctxdtms/).
+
+## Follow-up headless bug audit
+
+Updated the feature branch with `main` at `e22d98a` before checking the game again. The full Python suite
+passed (273 tests and 11 subtests), along with the launcher, browser integration, map editor, route tracking
+and live planner flow checks.
+
+Reproduced and fixed a delayed-start race: if the user opened the map, opened the leaderboard or paused
+while Start driving was awaiting a server response, that response could resume the game behind the popup.
+The game now records newer pause actions and preserves them on both successful and failed requests.
+`start_pause_test.mjs` covers 18 combinations of initial start, resume, server failure, open/closed map,
+open/closed leaderboard, Pause and window blur. It verifies frozen mission time, a paused server attempt,
+and successful explicit resume afterward. The test fails against the previous game and passes with the fix.

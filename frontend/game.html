@@ -4373,7 +4373,7 @@ function setPaused(p) {
   if (G.screen !== 'play' || !G.R || G.R.over) { p = false; }
   if(!p&&G.screen==='play'&&G.R&&!G.R.over&&G.paused&&(RouteFlight.attempt||G.driveReady)){GameTools.startDriving();return;}
   G.paused = !!p; setHidden($('pause'), !G.paused);
-  if(G.paused)RouteFlight.pause();GameTools.driveButton();
+  if(G.paused){GameTools.pauseIntent();RouteFlight.pause();}GameTools.driveButton();
   if (G.paused) { $('pSound').checked = !G.mute; $('pAuto').checked = G.autopilot; $('pFx').checked = G.reduced; $('pResume').focus(); }
 }
 function toggleDrawer() { if (G.screen !== 'play') return; G.drawer = !G.drawer; setHidden($('drawer'), !G.drawer); if (G.drawer && G.R) drawerLive(G.R); }
@@ -4528,13 +4528,14 @@ function frame(ts) {
 
 // Compact planning tools around the original game world and simulation.
 const GameTools={
-  references:new Map(),planLoads:new Map(),
+  references:new Map(),planLoads:new Map(),pauseRevision:0,
+  pauseIntent(){this.pauseRevision++;},
   key(N=G.N,ci=G.ci){return N?N.id+'|'+ci:'';},
   remember(N,ci){const key=this.key(N,ci);if(!this.references.has(key)){const c=N.cands[ci],points=c.route.points.length>=2?c.route.points:[c.A,c.B];this.references.set(key,points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));}},
   planData(N=G.N,ci=G.ci){return N?.planDataByCandidate?.[ci]||(N?.planData?.candidate===ci?N.planData:null);},
   async loadPlan(N,ci){if(!API.on||!N||N.src==='baked')return null;const key=this.key(N,ci);if(!this.planLoads.has(key))this.planLoads.set(key,apiJSON('/api/game/plans/'+encodeURIComponent(N.id)+'?candidate='+ci,undefined,12000));const pending=this.planLoads.get(key);let data;try{data=await pending;}catch(e){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);throw e;}if(!data){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);return null;}N.planDataByCandidate=N.planDataByCandidate||{};N.planDataByCandidate[ci]=data;if(N===G.N&&ci===G.ci)N.planData=data;if(data.reference&&data.reference.points)this.references.set(key,data.reference.points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));return data;},
   context(){if(!G.N)return null;this.remember(G.N,G.ci);return{N:G.N,C:G.N.cands[G.ci],W:G.W,R:G.R,region:G.N.region,referenceRoute:this.references.get(this.key()).map(p=>({...p})),imagery:G.imgs.imagery,imageryRect:G.imageryRect,planData:this.planData(),paused:G.paused};},
-  pauseForMap(){if(G.screen!=='play'||!G.R)return;G.modal='map';G.paused=true;clearKeys();setHidden($('pause'),true);if(D.pointerLockElement&&D.exitPointerLock)D.exitPointerLock();RouteFlight.pause();this.driveButton();},
+  pauseForMap(){if(G.screen!=='play'||!G.R)return;this.pauseIntent();G.modal='map';G.paused=true;clearKeys();setHidden($('pause'),true);if(D.pointerLockElement&&D.exitPointerLock)D.exitPointerLock();RouteFlight.pause();this.driveButton();},
   closeMap(){G.modal='';this.driveButton();},
   unrankedEvaluation(points,C,N){const rect=N.rect;if(!rect||points.some(p=>p.lon<rect.west||p.lon>rect.east||p.lat<rect.south||p.lat>rect.north))throw new Error('Keep the route inside the mission map boundary.');let distance=0;const radius=CFG.DEG_M/DEG;for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i],dl=(b.lat-a.lat)*DEG,dn=(b.lon-a.lon)*DEG,q=Math.sin(dl/2)**2+Math.cos(a.lat*DEG)*Math.cos(b.lat*DEG)*Math.sin(dn/2)**2;distance+=2*radius*Math.asin(Math.sqrt(clamp(q,0,1)));}if(distance<1||distance>Math.max(10000,Math.min(200000,C.route.distance_km*1000*4)))throw new Error('Keep the edited route within four times the original distance (maximum 200 km).');const ratio=distance/Math.max(1,C.route.distance_km*1000),oneWay=C.route.one_way_h*3600*ratio;return{unranked:true,points,metrics:{distance_m:distance,one_way_time_s:oneWay,round_trip_time_s:oneWay*2,science_time_s:Math.max(0,C.route.round_trip_h-C.route.one_way_h*2)*3600},distance_ratio:ratio};},
   async applyRoute(points,evaluation){
@@ -4549,12 +4550,13 @@ const GameTools={
     N.routeEvaluation=evaluation;N.selected=G.ci;startMission(N,G.ci,G.diffKey,{ready:true});if(evaluation.unranked){RouteFlight.unranked=true;RouteFlight.note='Route changed; comparison unavailable for this saved mission. Travel and energy are distance-scaled estimates.';suitSay(RouteFlight.note,false);}return{ok:true,context:this.context()};
   },
   driveButton(){const b=$('btnDrive');if(!b)return;b.disabled=!!(G.R&&G.R.over)||!!this.starting;setText(b,G.paused||G.driveReady?'Start driving':'Driving');},
-  async startDriving(){if(this.starting||G.screen!=='play'||!G.R||G.R.over||(!G.paused&&!G.driveReady))return;const run=G.R,generation=RouteFlight.generation;this.starting=true;this.driveButton();
-    try{if(W_.MarswalkRouteMap)W_.MarswalkRouteMap.close();this.closeBoard();if(G.cut)cutSkipAll();G.modal='';clearKeys();setHidden($('pause'),true);await RouteFlight.start();if(G.R!==run||RouteFlight.generation!==generation||G.screen!=='play')return;if(G.driveReady&&$('toast').textContent.startsWith('Ready at A.')){Radio.toastT=0;$('toast').classList.remove('on');}G.driveReady=false;G.paused=false;G.acc=0;}
-    catch(e){if(G.R===run&&RouteFlight.generation===generation&&G.screen==='play'){suitSay('Route comparison unavailable: '+e.message+'. You can continue the mission.',false);RouteFlight.unranked=true;RouteFlight.retire().catch(()=>{});G.driveReady=false;G.paused=false;}}
+  async startDriving(){if(this.starting||G.screen!=='play'||!G.R||G.R.over||(!G.paused&&!G.driveReady))return;const run=G.R,generation=RouteFlight.generation,pauseRevision=this.pauseRevision;this.starting=true;this.driveButton();
+    const canResume=()=>this.pauseRevision===pauseRevision&&!G.modal&&!D.hidden;
+    try{if(W_.MarswalkRouteMap)W_.MarswalkRouteMap.close();this.closeBoard();if(G.cut)cutSkipAll();G.modal='';clearKeys();setHidden($('pause'),true);await RouteFlight.start();if(G.R!==run||RouteFlight.generation!==generation||G.screen!=='play')return;if(!canResume()){G.paused=true;RouteFlight.pause();return;}if(G.driveReady&&$('toast').textContent.startsWith('Ready at A.')){Radio.toastT=0;$('toast').classList.remove('on');}G.driveReady=false;G.paused=false;G.acc=0;}
+    catch(e){if(G.R===run&&RouteFlight.generation===generation&&G.screen==='play'){suitSay('Route comparison unavailable: '+e.message+'. You can continue the mission.',false);RouteFlight.unranked=true;RouteFlight.retire().catch(()=>{});if(canResume()){G.driveReady=false;G.paused=false;}}}
     finally{this.starting=false;this.driveButton();}
   },
-  openBoard(){if(G.screen==='play'&&G.R){G.paused=true;RouteFlight.pause();clearKeys();if(D.pointerLockElement&&D.exitPointerLock)D.exitPointerLock();}G.modal='board';setHidden($('pause'),true);$('boardContent').appendChild($('lb'));this.boardTab(false);setHidden($('gameBoard'),false);$('boardClose').focus();lbRender();lbLoad();this.driveButton();},
+  openBoard(){if(G.screen==='play'&&G.R){this.pauseIntent();G.paused=true;RouteFlight.pause();clearKeys();if(D.pointerLockElement&&D.exitPointerLock)D.exitPointerLock();}G.modal='board';setHidden($('pause'),true);$('boardContent').appendChild($('lb'));this.boardTab(false);setHidden($('gameBoard'),false);$('boardClose').focus();lbRender();lbLoad();this.driveButton();},
   closeBoard(){if($('lb')&&$('lbHomeSlot'))$('lbHomeSlot').appendChild($('lb'));setHidden($('gameBoard'),true);if(G.modal==='board')G.modal='';this.driveButton();},
   boardTab(routes){setHidden($('boardContent'),routes);setHidden($('routeBoardContent'),!routes);$('boardSurvival').setAttribute('aria-pressed',String(!routes));$('boardRoutes').setAttribute('aria-pressed',String(routes));if(routes)RouteFlight.board();},
   async restorePlan(id,candidate){const data=await apiJSON('/api/game/plans/'+encodeURIComponent(id)+'?candidate='+candidate,undefined,12000);if(!data||!data.plan)return null;const N=normMission(data.plan,{src:'planner',region:data.region||data.plan.request_region||data.plan.settings?.region||'jezero',selected:data.candidate??candidate});if(!N||!N.cands.length)return null;N.planData=data;this.planLoads.set(this.key(N,N.selected),Promise.resolve(data));return N;}

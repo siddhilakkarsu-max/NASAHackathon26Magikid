@@ -235,6 +235,7 @@ node docs/game/smoke_test.js http://127.0.0.1:8000        # 14/14 routes, needs 
 node docs/game/integration_test.mjs                     # needs playwright; mocks app APIs, no server required
 node docs/game/map_editor_test.mjs                      # popup edits, dateline, async failures; no server required
 node docs/game/route_tracking_test.mjs                  # slow/lost movement acknowledgements; no server required
+node docs/game/start_pause_test.mjs                     # late start/resume cannot override a newer pause
 node docs/game/planner_flow_test.mjs                    # real assistant and game; isolated server at :8012
 ```
 
