@@ -116,3 +116,18 @@ Details, the `MissionContext` fields and the agent tools are in [gear/README.md]
 | `GET /api/gear/catalog` | Every catalog item | - | `categories`, `items`, `confidence`, `count` |
 | `GET /api/gear/archetypes` | Mission archetypes and defaults | - | `archetypes` |
 | `GET /api/gear/rules` | Every rule and threshold | - | the `list_gear_rules` tool result |
+
+
+## Game route results (`game_routes.py`, PR #73)
+
+- `GET /api/game/standalone-plans/{plan_id}?candidate=0`: saved built-in/planner result board metadata;
+  returns `key`, `submission_available`, `available` (terrain validation), and original `reference.points`.
+- `POST /api/game/route-results`: completed game submission without a pre-start tracked attempt. Body:
+  `name`, `token`, `plan_id`, `candidate`, `points[{lat,lon}]`, `position{lat,lon}`, `samples:1`,
+  `difficulty`, `driving_mode`, `idempotency_key`, `actual_driving_time_s`, integer `ai_drive_ticks`,
+  `benchmark_version:"ideal-path-drive-v3"`; optional `route_hash`. Returns the saved receipt including
+  `id`, `key`, `rank`, `source:"completed-game"`, `ai_driving_time_s`. Validates known mission, fixed
+  endpoints, final sample position and retry identity. Completion and AI timing are browser-reported.
+- Existing `/route-attempts/{id}/finish` now requires benchmark version `ideal-path-drive-v3`.
+  `/route-leaderboard?key=...` ranks AI ticks only. Completed-game boards are separate from tracked boards.
+  `/players` creates a callsign token; no login or email is required. Scores persist in SQLite.

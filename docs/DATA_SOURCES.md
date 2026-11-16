@@ -207,3 +207,13 @@ Every catalog item and rule on the gear page cites one of these (`gear/sources.p
 - [CesiumJS](https://cesium.com/platform/cesiumjs/) 1.147.0, bundled in `frontend/vendor/Cesium/` (Apache 2.0).
 - AI text: any OpenAI-compatible server, by default free models on [OpenRouter](https://openrouter.ai/) (README
   section 6). No data comes from the model; it only reads goals and words explanations.
+
+
+## Game driving envelopes (PR #73)
+
+The Apollo-class game vehicle uses 13 km/h, the observed Apollo 15 level-ground maximum documented in
+[NASA's LRV performance report](https://history.nasa.gov/wp-content/uploads/static/history/alsj/WOTM/WOTM-LRVPerformance.html).
+The pressurized vehicle uses the [NASA SEV concept's approximately 10 km/h](https://science.nasa.gov/3d-resources/space-exploration-vehicle/).
+These are lunar/concept analogies for the Mars game, not Mars crew-rover measurements. Scout-bike and
+walking envelopes remain game assumptions. Terrain reduces speed. AI timing is an ideal mathematical
+path benchmark without reaction or acceleration delay, not measured NASA autonomous driving.

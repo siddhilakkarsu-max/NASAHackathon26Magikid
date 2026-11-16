@@ -490,7 +490,7 @@ const CFG = {
   PIXEL_SAMPLES_MAX: 12,             // [G] max /api/pixel calls per mission
   // ---- world [G]
   STEP_M: 5,                         // [G] route resample spacing (m)
-  CHAIKIN_ITERS: 3,                  // [G] corner-cutting passes on the planner polyline
+  CHAIKIN_ITERS: 0,                  // Preserve the designed path for player and ideal AI alike.
   SPUR_M: 150,                       // [G] synthetic route length when A == B
   TILE_M: 128, TILE_PX: 256, TILE_GRID: 48, TILE_CACHE: 72, TILES_PER_FRAME: 1,   // [G] terrain tile cache
   GRID_CELLS_MAX: 360000, GRID_MARGIN_M: 340, GRID_CELL_MIN: 8,                  // [G] distance-to-route grid
@@ -978,6 +978,9 @@ function buildWorld(N, ci, diffKey, seed) {
     let d = CFG.STEP_M - carry;
     while (d <= seg) { const t = d / seg; sx.push(px[i] + dx * t); sy.push(py[i] + dy * t); sr.push(t < 0.5 ? pr[i] : pr[i + 1]); sg.push(t < 0.5 ? pg[i] : pg[i + 1]); ss.push(total + d); d += CFG.STEP_M; }
     carry = seg - (d - CFG.STEP_M); total += seg;
+    // Retain every designed vertex instead of cutting across short corners.
+    if(Math.hypot(sx[sx.length-1]-px[i+1],sy[sy.length-1]-py[i+1])>1e-6){sx.push(px[i+1]);sy.push(py[i+1]);sr.push(pr[i+1]);sg.push(pg[i+1]);ss.push(total);}
+    carry=0;
   }
   const lastI = px.length - 1;
   if (Math.hypot(sx[sx.length - 1] - px[lastI], sy[sy.length - 1] - py[lastI]) > 0.3) { sx.push(px[lastI]); sy.push(py[lastI]); sr.push(pr[lastI]); sg.push(pg[lastI]); ss.push(total); }

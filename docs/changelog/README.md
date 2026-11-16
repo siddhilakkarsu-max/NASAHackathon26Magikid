@@ -34,6 +34,7 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#26](PR-026-feat-gk-vehicles.md) | One vehicle list: mission planner reads the route planner's sourced vehicles (no ranking changes) | `anh-gl-nguyen1762/feat/Gk-vehicles` | 2026-11-14 | none |
 | [#27](PR-027-aisearch.md) | Plain language with technical details on the A key, one season slider, Murray map radios, sharp box | `siddhilakkarsu-max/aisearch` | 2026-11-14 | none |
 | [#29](PR-029-feat-radiation-layer-fixes.md) | Add modeled Mars radiation layer and fix hidden-panel startup | `siddhilakkarsu-max/feat/radiation-layer-fixes` | 2026-11-14 | none |
+| [#30](PR-030-feat-gk-team-docs.md) | Docs rule for every teammate and agent, docs/ folder, changelog for every merged PR | `anh-gl-nguyen1762/feat/Gk-team-docs` | 2026-11-15 | 2 file(s) |
 | [#31](PR-031-feat-gk.md) | Survival game that plays the planned route, with Play buttons on the planner and gear page | `anh-gl-nguyen1762/feat/Gk` | 2026-11-14 | none |
 | [#32](PR-032-feat-jason-chen10-marsmap.md) | Update planner UI, fix map controls, and integrate selected-route game | `siddhilakkarsu-max/feat/jason-chen10-marsmap` | 2026-11-14 | 4 file(s) |
 | [#33](PR-033-feat-siddhi.md) | Feat/siddhi | `siddhilakkarsu-max/feat/siddhi` | 2026-11-15 | none |
@@ -73,3 +74,4 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#68](PR-068-fix-pr67-declutter.md) | Fix/pr67 declutter | `siddhilakkarsu-max/fix/pr67-declutter` | 2026-11-15 | none |
 | [#69](PR-069-aisearch.md) | Fix the server running out of memory; plans never hang; plan errors in the AI chat | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
 | [#71](PR-071-feat-jason-chen10-marsmap.md) | Integrate planner missions with measured AI driving and persistent route rankings | `siddhilakkarsu-max/feat/jason-chen10-marsmap` | 2026-11-15 | none |
+| [#72](PR-072-aisearch.md) | Safari rendering fix for the Cloudflare site; favicon | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
