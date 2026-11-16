@@ -379,6 +379,11 @@
       }
     },
     say(text, chips) { chat.open(true); add("bot", text); if (chips) setChips(chips); },
+    // first visit: open the chat with a welcome instead of the generic greeting
+    welcome(text, chips) {
+      if (!log.children.length) { add("bot", text); if (chips) setChips(chips); }
+      chat.open(true);
+    },
     async send(text) {
       text = String(text || "").trim();
       if (!text || busy) return;
