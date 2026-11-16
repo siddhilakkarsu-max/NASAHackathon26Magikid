@@ -212,10 +212,13 @@ PRs #9 to #16 (merged just after midnight UTC, 2026-11-15).
   `spirit`, `cave`, `long-base`), shareable as `?preset=<id>`. A Season (Ls) input sent as `route_request.ls`,
   also `?ls=`. `frontend/kit-presets.js`, `kit-presets.css`.
 - 28 tests (78 total).
+- **Mars sunlight on the globe (#13, Jason):** atmosphere and solar lighting that follow the selected region's
+  local time ("Sunlight and atmosphere" toggle), with a cursor spotlight that reveals the night side
+  (`frontend/mars_lighting.js`).
 
 ## [Unreleased] - 2026-11-14, terrain, load and battery realism
 
-From the team's resource research (Gia's section of the planning doc).
+PR #8 (Gia). From the team's resource research (Gia's section of the planning doc).
 
 ### Changed
 
@@ -256,7 +259,26 @@ From the team's resource research (Gia's section of the planning doc).
 - Body mass (80 kg) is an assumption; the reserve and 2:1 recharge ratio are team research figures, not NASA ones.
 - Sunlight counts direct light only, so dust effects are the pessimistic end.
 
+## [Unreleased] - 2026-11-14, AI reasoning stream and MarsMap snapshot
+
+PRs #6 and #7.
+
+### Added
+
+- **Watch the AI think (#6, Darren).** `POST /api/mission/stream` sends the plan as server-sent events with the
+  model's reasoning and answer live, for reading the goal and for explaining the choice; the mission panel fills
+  "AI reasoning" boxes while the template summary shows. `AI_REASONING` and `AI_THINK_SECONDS` (default 40) control
+  the thinking. The non-streaming routes are unchanged.
+- **`marsmap/` (#7, Jason):** a snapshot of Jason's standalone MarsMap project (its own app, cube builder and page),
+  kept for reference; its features were ported into the main app in #17.
+
+### Changed
+
+- The mission summary shows the decision-matrix total unrounded (#6, Darren).
+
 ## [Unreleased] - 2026-11-14, more vehicles
+
+PR #5 (Gia).
 
 ### Added
 
@@ -283,9 +305,33 @@ From the team's resource research (Gia's section of the planning doc).
 - Ingenuity and other helicopters: the planner routes over ground slope, so a flying vehicle cannot be costed
   properly. Ingenuity stays in the gear catalog as an aerial scout.
 
+## [Unreleased] - 2026-11-14, mission planner, AI search, surface temperature and weather
+
+PRs #2 and #4.
+
+### Added
+
+- **Find a target by description (#2, Darren).** `search.py` and `POST /api/find`: "valley with clay" becomes
+  per-pixel criteria; words the keyword parser doesn't know go to a free OpenRouter model or any
+  OpenAI-compatible server such as Ollama.
+- **Mission planner (#2, Darren).** `mission.py` and `POST /api/mission`, `GET /api/mission/options`,
+  `POST /api/mission/{id}/explain`, `GET /api/tracks`: goal, vehicle, season and priority to 3 destinations with
+  safe landing spots, routes on a cost map with Perseverance's real drives as green / yellow tracks, a round-trip
+  oxygen / battery check, a decision matrix and an explanation. `fetch_tracks.py` downloads the traverse.
+- **Minerals and ground firmness (#2, Darren):** CRISM mineral bands (clay, carbonate, olivine, pyroxene, sulfate,
+  hydrated silica, water-bearing) from targeted observations and the map tile via PDS ODE, and THEMIS thermal
+  inertia (Zenodo 23527756) for firmness. The Jezero cube was rebuilt at 512 px/deg on the CTX 20 m DEM.
+- **Simulated surface temperature (#4, Jason)** from TES albedo and thermal inertia (`surface_temperature.py`),
+  shown on a full Mars globe, with 0.125° detail for the visible area (`thermal_detail.py`,
+  `POST /api/weather/temperature-detail`).
+- **Global weather (#4, Jason):** OpenMARS air temperature, pressure, winds and ground-temperature reference, LMD
+  dust opacity (`mars_weather.py`, `build_weather.py`), animated wind arrows, a weather timeline by sol
+  (`GET /api/weather/calendar`), hover values (`POST /api/layer/{name}/sample`), a Jezero check against MEDA and the
+  reviewed source list (`weather_sources.csv`, `GET /api/weather/sources`). CesiumJS 1.147.0 is now bundled.
+
 ## [Unreleased] - 2026-11-14, gear system
 
-Branch `feat/Gk`. Builds on `MISSION_EQUIPMENT_RESEARCH.md`.
+PR #3 (Gia). Branch `feat/Gk`. Builds on `MISSION_EQUIPMENT_RESEARCH.md`.
 
 ### Added
 
@@ -409,3 +455,14 @@ At 23 km out with an 8 h budget: astronaut 374 % of O2, crew rover 101 % of ener
   syncing with the team.
 - Local `.venv`, gitignored: numpy 2.5.4, scipy 1.18.1, scikit-image 0.26.0, fastapi 0.163.0,
   uvicorn 0.54.0, pillow 13.0.0, matplotlib 3.11.2, httpx 0.28.1.
+
+## 2026-11-14, starting point
+
+Direct commits to `main`, before the PR workflow.
+
+### Added
+
+- The project scaffold: `app.py` (FastAPI back end), `build_cube.py`, `config.py`, `physics.py`,
+  `make_demo_cube.py`, `frontend/index.html` (Cesium globe), the first `cubes/jezero.npz` and the README
+  (Ashwin-P23).
+- `AGENTS.md`, the team's git workflow for AI agents (Siddhi).
