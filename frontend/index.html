@@ -223,6 +223,12 @@
   #landing button { width: auto; margin: 0; padding: 10px 26px; background: #fff; color: #111; border-radius: 999px;
                     font-size: clamp(10px, 1.5vmin, 13px); font-weight: 500; letter-spacing: .12em; }
   #landing button:hover { background: #ffe9d6; }
+  #landing .github { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; padding: 8px 18px;
+                    border: 1px solid #ffffff8c; border-radius: 999px; color: #fff; text-decoration: none; background: #0006;
+                    font-size: clamp(10px, 1.4vmin, 12px); font-weight: 500; letter-spacing: .12em; text-shadow: none; }
+  #landing .github svg { width: 1.35em; height: 1.35em; fill: currentColor; }
+  #landing .github:hover { background: #fff; color: #111; }
+  #landing .github:focus { outline: none; } #landing .github:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
   /* Electrolize everywhere, also where other files set a font: the panel title, section headers, tour card,
      mascot speech and Play button (the section headers' "V" chevron keeps its own glyph font) */
   body #panel > h1, body #panel .panel-section > summary, body #panel #missionSettings > summary, body #sourcesButton,
@@ -300,6 +306,8 @@
       <div class="title">MARS</div>
       <div class="sub">Explore Plan Navigate</div>
       <button id="startExploring" type="button">Start exploring</button>
+      <a class="github" href="https://github.com/siddhilakkarsu-max/NASAHackathon26Magikid" target="_blank" rel="noopener"
+         aria-label="Source code on GitHub (opens in a new tab)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
     </div>
   </div>
 </div>
@@ -2672,7 +2680,9 @@ function startExploring() {
   setTimeout(() => viewer.resize(), 50);
 }
 $("startExploring").onclick = startExploring;
-document.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === "Escape") startExploring(); });
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" || (e.key === "Enter" && !e.target.closest?.("#landing .github"))) startExploring();
+});
 $("startExploring").focus();
 
 // ------------------------------------------------ plan anywhere on Mars ----
