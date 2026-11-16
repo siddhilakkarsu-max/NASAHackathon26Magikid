@@ -20,7 +20,7 @@ const weatherDisplay = (() => {
     imagery: "Grayscale CTX imagery.",
     suitability: "Safety, science value and radiation shielding combined. 0 = poor place to go, 1 = best. Green is better.",
     science: "Green marks where NASA's CRISM spectrometer detected at least one target mineral (clay, carbonate, olivine…).",
-    minerals: "Each colour is a different CRISM mineral class (a kind of mineral, not an amount).
+    minerals: "Each colour is a different CRISM mineral class (a kind of mineral, not an amount).",
     thermal_inertia: "How slowly the ground heats and cools (THEMIS). High: rock or firm ground. Low: loose dust.",
     air_column_vs_gale: "Air overhead compared with Gale crater. More air blocks more cosmic radiation: above 1 is better shielded.",
     albedo: "How much sunlight the ground reflects. Bright: dust. Dark: sand or bare rock.",

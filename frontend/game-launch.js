@@ -206,7 +206,7 @@
         "@keyframes playFabIn{0%{transform:translateY(-24px) scale(.6);opacity:0}100%{transform:none;opacity:1}}" +
         "@media (prefers-reduced-motion:reduce){#playFab{animation:none}}" +
         // phones: bottom left above "Play overview", clear of the zoom buttons; not over the open panel
-        "@media (max-width:760px){#playFab{top:auto;bottom:128px;left:86px;right:auto;padding:10px 16px 10px 13px;font-size:13px}" +
+        "@media (max-width:760px){#playFab{top:auto;bottom:128px;left:86px;right:auto;padding:10px 16px 10px 13px;font-size:13px;max-width:calc(100vw - 150px)}#playFab small{display:none}" +
         "body.drawer #playFab{display:none}}";
       document.head.appendChild(style);
       var actions = byId("gameMissionActions");
