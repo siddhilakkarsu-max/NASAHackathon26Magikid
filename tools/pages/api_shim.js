@@ -43,15 +43,26 @@
     window.EventSource.prototype = EventSource0.prototype;
   }
 
-  // images (map tiles drawn by Cesium, photos) set by property or attribute
+  // images (map tiles drawn by Cesium, photos) set by property or attribute. A moved image must be requested
+  // with CORS: Cesium thinks "/murray/…" is same-origin and doesn't ask for it, and Safari then refuses to
+  // upload the cross-origin pixels to WebGL ("SecurityError: The operation is insecure", rendering stops).
+  // The server answers CORS requests (allow_origins="*").
+  function corsFor(img) { if (!img.crossOrigin) img.crossOrigin = "anonymous"; }
   var src = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src");
   Object.defineProperty(HTMLImageElement.prototype, "src", {
     configurable: true, enumerable: src.enumerable, get: src.get,
-    set: function (value) { src.set.call(this, toServer(value) || value); },
+    set: function (value) {
+      var moved = toServer(value);
+      if (moved) corsFor(this);
+      src.set.call(this, moved || value);
+    },
   });
   var setAttribute0 = Element.prototype.setAttribute;
   Element.prototype.setAttribute = function (name, value) {
-    if (this instanceof HTMLImageElement && String(name).toLowerCase() === "src") value = toServer(value) || value;
+    if (this instanceof HTMLImageElement && String(name).toLowerCase() === "src") {
+      var moved = toServer(value);
+      if (moved) { corsFor(this); value = moved; }
+    }
     return setAttribute0.call(this, name, value);
   };
 

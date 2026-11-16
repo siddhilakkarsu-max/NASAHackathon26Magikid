@@ -55,6 +55,10 @@ WorkingDirectory=$APP
 ExecStart=/bin/bash -c 'source $APP/ai.env && exec $APP/.venv/bin/uvicorn app:app --host 127.0.0.1 --port 8000 --timeout-graceful-shutdown 5'
 Restart=always
 RestartSec=3
+# On the 2 GB plan: reclaim memory above 1.1 GB and restart the app (in seconds) above 1.5 GB, instead of
+# swapping for hours while plans stall.
+MemoryHigh=1100M
+MemoryMax=1500M
 
 [Install]
 WantedBy=multi-user.target
