@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased] - 2026-11-15, ideal AI driving and standalone scores
+
+### Fixed
+
+- PR #73, Jason Chen: exact-path ideal AI times, fixed original-route calibration, and standalone callsign leaderboard submission. Details: [PR #73](docs/changelog/PR-073-feat-jason-chen10-marsmap.md).
+
 > **Frozen.** New changes go in `docs/changelog/`, one file per merged pull request (see `AGENTS.md`).
 > This file keeps the history up to PR #32.
 

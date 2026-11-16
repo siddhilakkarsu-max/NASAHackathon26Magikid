@@ -5,9 +5,9 @@ const {chromium}=await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const base=process.env.MARSWALK_TEST_URL||'http://127.0.0.1:8014',request={goal:'find clay where water once flowed',vehicle:'buggy',season:'ls_90',ls:90,priority:'safety',green_only:false,local_hour:12};
 await fs.mkdir('game_state/single-site-audit',{recursive:true});
 const mission=await(await fetch(base+'/api/mission',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({...request,region:'jezero'})})).json();
-const player=await(await fetch(base+'/api/game/players',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name:'Drive'+Date.now().toString().slice(-7)})})).json();assert.ok(player.token);
+const callsign='Drive'+Date.now().toString().slice(-7);
 const browser=await chromium.launch({executablePath:process.env.CHROME || 'C:/Program Files/Google/Chrome/Application/chrome.exe',headless:true,args:['--use-gl=angle','--use-angle=swiftshader','--enable-unsafe-swiftshader']});
-const context=await browser.newContext({viewport:{width:1280,height:900}});await context.addInitScript(p=>localStorage.setItem('marswalk.game.player',JSON.stringify(p)),player);
+const context=await browser.newContext({viewport:{width:1280,height:900}});
 const page=await context.newPage(),errors=[],packets=[];page.on('pageerror',e=>errors.push(e.message));page.on('response',async r=>{if(r.url().includes('route-attempts')&&r.status()>=400){const entry={url:r.url(),status:r.status(),detail:await r.text(),request:r.request().postDataJSON()};packets.push(entry);console.log('API ERROR',JSON.stringify(entry));}});
 const held=new Set();async function keys(want){for(const k of [...held])if(!want.includes(k)){await page.keyboard.up(k);held.delete(k);}for(const k of want)if(!held.has(k)){await page.keyboard.down(k);held.add(k);}}
 const snap=()=>page.evaluate(()=>{const R=__MW.state.R;return{...__MW.getSnapshot(),siteState:R.site?{i:R.site.i,mode:R.site.mg?.mode}:null,atB:R.arrivedB,rank:__MW.routeTracking()};});
@@ -37,5 +37,24 @@ try{
  assert.ok(times.elapsed>times.drive);assert.ok(times.energy>0);
  console.log('Objective sampled at B',JSON.stringify({...times,ai:comparisons}));
  s=await snap();assert.equal(s.outcome,'success');assert.equal(s.rank.attempt.status,'active','completion must not submit automatically');assert.equal(await page.locator('#submitRouteScore').isVisible(),true);await page.screenshot({path:'game_state/single-site-audit/keyboard-complete-before-submit.png'});
- await page.locator('#submitRouteScore').click();await page.waitForFunction(()=>__MW.routeTracking().attempt?.status==='finished',{},{timeout:20000});s=await snap();assert.ok(s.rank.attempt.rank);assert.deepEqual(errors,[]);assert.deepEqual(packets,[]);console.log('PASS normal keyboard B/full sample, no return and explicit Submit',JSON.stringify({name:player.name,rank:s.rank.attempt.rank,simulated:s.rank.attempt.metrics.simulated_time_s,active:s.rank.attempt.active_drive_s,storm:s.storm,tools:s.charges}));await page.screenshot({path:'game_state/single-site-audit/keyboard-complete-ranked.png'});
+ assert.equal(await page.evaluate(()=>localStorage.getItem('marswalk.game.player')),null,'No callsign was needed before playing');
+ await page.locator('#submitRouteScore').click();await page.locator('#routeCallsign').fill(callsign);
+ await page.locator('#routeJoinForm').screenshot({path:'game_state/single-site-audit/callsign-form.png'});
+ await page.setViewportSize({width:390,height:844});
+ const inputBox=await page.locator('#routeCallsign').boundingBox(),submitBox=await page.locator('#submitRouteScore').boundingBox();
+ assert.ok(inputBox.width>=200&&inputBox.x>=0&&inputBox.x+inputBox.width<=390,'Callsign stays readable on a phone');
+ assert.ok(submitBox.x>=0&&submitBox.x+submitBox.width<=390,'Join button fits a phone');
+ await page.locator('#routeJoinForm').screenshot({path:'game_state/single-site-audit/callsign-form-phone.png'});
+ await page.setViewportSize({width:1280,height:900});
+ // A taken name must keep the completed result available for a new callsign.
+ await context.request.post(base+'/api/game/players',{data:{name:callsign}});
+ await page.locator('#submitRouteScore').click();await page.waitForFunction(()=>__MW.state.R.routeReceiptError?.includes('taken'));
+ const submittedName=callsign+'X';await page.locator('#routeCallsign').fill(submittedName);await page.locator('#submitRouteScore').click();
+ await page.waitForFunction(()=>__MW.routeTracking().attempt?.status==='finished',{},{timeout:20000});s=await snap();assert.ok(s.rank.attempt.rank);
+ assert.equal(s.rank.attempt.ai_drive_ticks,comparisons.own.ticks);
+ const board=await(await context.request.get(base+'/api/game/route-leaderboard?key='+s.rank.attempt.key)).json();
+ const entry=board.board.find(row=>row.name===submittedName);assert.ok(entry);assert.equal(entry.ai_drive_ticks,comparisons.own.ticks);assert.ok(Math.abs(entry.ai_driving_time_s-comparisons.own.seconds)<.000001);
+ await page.getByRole('button',{name:'View leaderboard',exact:true}).click();await page.getByRole('cell',{name:submittedName,exact:true}).waitFor();
+ assert.ok((await page.locator('#routeBoardContent').textContent()).includes('AI driving time'));await page.locator('#boardClose').click();
+ assert.deepEqual(errors,[]);assert.deepEqual(packets,[]);console.log('PASS guest keyboard run, post-objective callsign, taken-name retry, AI-time ranking and visible leaderboard',JSON.stringify({name:submittedName,rank:s.rank.attempt.rank,ai:entry.ai_driving_time_s,active:s.rank.attempt.active_drive_s}));await page.screenshot({path:'game_state/single-site-audit/keyboard-complete-ranked.png'});
 }catch(e){await fs.writeFile('game_state/single-site-audit/keyboard-failure.json',JSON.stringify({error:e.message,state:await snap(),errors,packets},null,2));await page.screenshot({path:'game_state/single-site-audit/keyboard-failure.png'});throw e;}finally{await browser.close();}

@@ -34,18 +34,34 @@ Ground firmness uses thermal observations and the planner's derived firmness, wi
 Zoomed views request the local planner pixels before downsampling. Finer saved observations take precedence over coarser regional data; no detail is invented below the source resolution.
 The relief slider changes shading only. The game keeps its storms, shelters, rocks, vehicles, sampling and tools.
 
-**Leaderboard** is available beside the corner minimap. Survival scores remain available; the Route comparison
-tab ranks completed runs on the same saved mission and vehicle by modeled one-way travel time. Claim a
-callsign before starting a ranked run, reach B and complete its sample, then explicitly press **Submit
-route score**. Active driving time is shown separately. Missing source data disables route ranking, while the
-original game stays playable. Offline baked missions retain their original gameplay.
+**Leaderboard** is available beside the corner minimap. Complete the sample at B, then press **Join leaderboard**
+on the results screen and choose a callsign. No account login or pre-mission registration is required. An
+unnamed browser attempt tracks completion until it is attached to the chosen callsign. Taken names can be
+changed without losing the completed result. Submission is explicit and retry-safe.
 
-The large results board shows total gameplay time, driving time, and measured AI driving on your route and on
-the original route. Both AI runs use the same fixed 30 Hz simulation, vehicle handling, difficulty, seed and
-time compression as the player. Sampling is excluded from AI driving; pauses and menus are excluded from
-all four times. A failed simulation is shown as unavailable or unfinished, never replaced with a planner
-estimate or a forced faster time. Oxygen, electricity and distance follow, then cost. User price assumptions
-remain in the separate expandable cost model. The simulated surface clock remains internal to resource/cost calculations.
+The route board ranks the ideal AI driving time on each player's designed route, quantized to 30 Hz.
+Player driving time does not affect rank. Complete the sample at B, press the highlighted **Leaderboard**
+button, enter a callsign, and submit. Standalone built-in missions need no planner assistant or registration
+before playing. Their completed results are persisted in the same SQLite database on a separate board
+from server-tracked terrain-validated attempts. Completion and AI time in these game results are browser
+reported; they are not cheat-proof. A running backend is required to save a shared score. A connection
+failure keeps the completed result and callsign available for retry.
+
+AI follows every original route segment exactly, integrating terrain-limited speed in one-metre substeps.
+It models ideal driving without steering error, reaction delays, random incidents or acceleration delay.
+This is a best-case model benchmark, not a NASA autonomous-driver measurement. It never adjusts a time
+to force a win. A player taking a different, shorter actual path is not driving the same route.
+Both players and AI share the terrain speed model and physical speed envelope: 13 km/h for the Apollo-class
+rover (Apollo 15 observed level-ground maximum), 10 km/h for the pressurized rover (NASA SEV concept),
+and existing game assumptions for walking and the scout bike. Sources are linked in the results board.
+Gameplay time compression is fixed from the original mission and shared across edits and retries; its
+upper bound keeps the fastest rover within the server's movement allowance without a separate AI-only cap.
+
+The four times remain player total, player driving, ideal AI on the designed player route, and ideal AI on
+the original planner route. Editing the player path cannot recalibrate the original benchmark. Sampling
+is excluded from driving; pauses and menus are excluded from all four clocks. Oxygen, electricity,
+distance and the separate cost model are unchanged. Older benchmark versions remain stored but are
+excluded from the corrected version's boards. Boards separate mission, difficulty and 2D/3D handling.
 
 ### Persistent leaderboard database
 
@@ -262,6 +278,7 @@ node docs/game/start_pause_test.mjs                     # late start/resume cann
 node docs/game/mission_results_test.mjs                 # cost units, sources, unknown resources, mobile layout
 node docs/game/single_site_test.mjs                     # sampling, clocks, refills, cancel, retry and next objective
 node docs/game/ai_driver_test.mjs                       # actual AI driving on all 14 baked routes
+node docs/game/ai_baseline_test.mjs                     # original benchmark unchanged after edits and retries
 node docs/game/single_site_live_test.mjs                # normal keyboard drive + sample + ranking; isolated :8014
 node docs/game/planner_flow_test.mjs                    # real assistant and game; isolated server at :8012
 ```
@@ -323,12 +340,15 @@ mission's science raster bounds. Images without valid geographic bounds use the 
   for that. Rover tracks and backup routes are drawn as ground lines only.
 - The 3D view was checked in headless Chrome only: not on a phone, and mouse capture was not exercised by hand.
 - The hop is visual only: it does not clear obstacles or change the simulation.
-- Route comparison uses the saved planner cube's actual resolution and the existing planner travel model.
-  Display imagery can be finer than the scoring grid. The server verifies geographic progress and computes
-  the score and accepts new samples only near mission science locations, but the browser still reports
-  whether its sampling mini-game succeeded.
+- Route validation uses the saved planner cube's actual resolution and travel/resource model. Display imagery
+  can be finer than that grid. The server verifies geographic progress, sample location, attempt ownership,
+  route identity and bounded integer AI ticks. The actual AI simulation and sampling mini-game run in the
+  browser, which reports their results; Python does not independently replay the AI. Rankings are therefore
+  not cheat-proof. The recorded time is AI ticks / 30, never the planner estimate or the player's driving time.
 - Vehicle handling is a feel model (momentum, speed-dependent steering, grip from firmness), not vehicle dynamics.
   Top speed, energy and oxygen still come from the planner's numbers. Returning to A on foot without the
   vehicle still counts as a success.
 - Models (lander, science station, rover, bike, cabin, gloves) are built from flat-shaded boxes, beams and
   cylinders in code; they are recognisable, not detailed.
+
+Focused regression: `node docs/game/standalone_leaderboard_test.mjs` against an isolated test server/database on port 8012.

@@ -60,7 +60,8 @@ try {
  await game.waitForFunction(()=>!document.pointerLockElement);
  await game.locator('#btnLeaderboard').click();await game.locator('#gameBoard').waitFor({state:'visible'});
  await game.locator('#boardRoutes').click();await game.waitForFunction(()=>!document.getElementById('routeBoardContent').textContent.includes('Loading'));
- assert.match(await game.locator('#routeBoardContent').innerText(),/Simulated|simulated|No completed/);
+ assert.equal(await game.locator('#routeBoardContent').getByRole('columnheader',{name:'AI driving time',exact:true}).count(),1);
+ assert.match(await game.locator('#routeBoardContent').innerText(),/player driving time does not affect rank/);
  await game.locator('#boardClose').click();
  await game.locator('#btnEditMap').click();await game.locator('#routeMapDialog').waitFor({state:'visible'});
  assert.equal((await game.evaluate(()=>__MW.getSnapshot())).paused,true);
