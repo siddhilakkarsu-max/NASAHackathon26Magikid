@@ -86,3 +86,11 @@ The game now records newer pause actions and preserves them on both successful a
 `start_pause_test.mjs` covers 18 combinations of initial start, resume, server failure, open/closed map,
 open/closed leaderboard, Pause and window blur. It verifies frozen mission time, a paused server attempt,
 and successful explicit resume afterward. The test fails against the previous game and passes with the fix.
+
+After the fix, all 14 original routes completed in headless WebGL with three samples each, no NaNs or
+JavaScript errors, and no ranked attempts from autopilot. `baked_routes_test.mjs` makes this check repeatable
+with Playwright. A separate normal-speed keyboard mission completed B, the sampling mini-game and return
+to A during a storm, then explicitly submitted rank 1: 745.575 seconds simulated travel and 84.782 seconds
+active driving. Its 8.658-second sampling mini-game added only the 0.969-second closing movement heartbeat
+to active driving. There were no page errors or rejected game API requests. This follow-up used isolated
+state under `game_state/headless-bug-audit`; planner-flow screenshots are in `game_state/headless-current-flow`.

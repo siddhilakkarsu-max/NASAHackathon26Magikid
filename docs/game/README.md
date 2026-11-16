@@ -232,6 +232,7 @@ A wrong use wastes a charge.
 python -m unittest discover -s tests
 node docs/game/launcher_test.js                          # no dependencies
 node docs/game/smoke_test.js http://127.0.0.1:8000        # 14/14 routes, needs puppeteer-core and a running server
+node docs/game/baked_routes_test.mjs                    # Playwright alternative; 14 original WebGL routes at :8013
 node docs/game/integration_test.mjs                     # needs playwright; mocks app APIs, no server required
 node docs/game/map_editor_test.mjs                      # popup edits, dateline, async failures; no server required
 node docs/game/route_tracking_test.mjs                  # slow/lost movement acknowledgements; no server required
@@ -240,9 +241,10 @@ node docs/game/planner_flow_test.mjs                    # real assistant and gam
 ```
 
 For the browser integration checks, install `playwright` or set `PLAYWRIGHT_MODULE` to its importable module
-URL. Set `CHROME` if Chrome is not at the default Windows location. These checks use deterministic planner
-responses; the smoke test above exercises the served game separately.
-The live planner flow accepts `MARSWALK_TEST_URL` and writes screenshots under
+URL. Set `CHROME` if Chrome is not at the default Windows location. Integration, map editor, route tracking
+and start/pause checks use deterministic API responses. The smoke, baked-route and live planner checks
+exercise the served game.
+The live planner and baked-route checks accept `MARSWALK_TEST_URL`. The planner flow writes screenshots under
 `game_state/planner-flow-audit`. Run it against a server with a separate `MARSWALK_GAME_STATE_DIR`,
 so test missions and callsigns do not enter the normal leaderboard. See
 [the rebuild verification report](PLANNER_GAME_TEST_REPORT.md) for the final checks and limits.
