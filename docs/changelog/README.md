@@ -71,3 +71,4 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#65](PR-065-feat-gk-assistant.md) | Assistant: up to date with the planner (plan-anywhere, moons, overview, tour, game, badges, Helmut) | `anh-gl-nguyen1762/feat/Gk-assistant` | 2026-11-15 | none |
 | [#66](PR-066-aisearch.md) | Cloudflare Pages build; line icons instead of emoji; idle spin waits for real idleness | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
 | [#68](PR-068-fix-pr67-declutter.md) | Fix/pr67 declutter | `siddhilakkarsu-max/fix/pr67-declutter` | 2026-11-15 | none |
+| [#71](PR-071-feat-jason-chen10-marsmap.md) | Integrate planner missions with measured AI driving and persistent route rankings | `siddhilakkarsu-max/feat/jason-chen10-marsmap` | 2026-11-15 | none |
