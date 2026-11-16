@@ -126,8 +126,11 @@ class GameRoutesTest(unittest.TestCase):
             state=response.json()
         return state
 
-    def finish(self,player,state):
-        return self.client.post(f"/api/game/route-attempts/{state['id']}/finish",json=player)
+    def finish_body(self,player,state,ticks=1200):
+        return dict(player,ai_drive_ticks=ticks,route_hash=state["route_hash"],benchmark_version=routes.BENCHMARK_VERSION)
+
+    def finish(self,player,state,ticks=1200):
+        return self.client.post(f"/api/game/route-attempts/{state['id']}/finish",json=self.finish_body(player,state,ticks))
 
     def test_original_capture_preserves_id_goal_coordinates_and_is_immutable(self):
         saved=self.get()
@@ -293,7 +296,7 @@ class GameRoutesTest(unittest.TestCase):
         self.assertIn("terrain",saved)
         self.assertEqual(saved["terrain"]["grid"]["elevation_m"][0][0],-2000)
 
-    def test_auth_early_finish_and_browser_score_rejected(self):
+    def test_auth_early_finish_and_unsupported_score_fields_rejected(self):
         player,state=self.start()
         self.assertEqual(self.finish(player,state).status_code,400)
         self.assertEqual(self.client.post(f"/api/game/route-attempts/{state['id']}/finish",json=dict(player,simulated_time_s=1)).status_code,422)
@@ -423,7 +426,8 @@ class GameRoutesTest(unittest.TestCase):
         self.assertEqual(board["players"],2)
         self.assertEqual([entry["rank"] for entry in board["board"]],[1,1])
         self.assertNotEqual(board["board"][0]["actual_driving_time_s"],board["board"][1]["actual_driving_time_s"])
-        self.assertEqual(board["board"][0]["simulated_time_s"],board["board"][1]["simulated_time_s"])
+        self.assertEqual(board["board"][0]["ai_driving_time_s"],40)
+        self.assertEqual(board["board"][0]["ai_driving_time_s"],board["board"][1]["ai_driving_time_s"])
 
     def test_one_destination_sample_finishes_without_return_and_freezes_clock(self):
         player,state=self.start()
@@ -461,7 +465,7 @@ class GameRoutesTest(unittest.TestCase):
             player,old=self.start()
         self.assertNotEqual(self.get()["key"],old["key"])
         for path in ("resume","finish"):
-            response=self.client.post(f"/api/game/route-attempts/{old['id']}/{path}",json=player)
+            response=self.client.post(f"/api/game/route-attempts/{old['id']}/{path}",json=self.finish_body(player,old) if path=="finish" else player)
             self.assertEqual(response.status_code,409,response.text)
             self.assertIn("previous mission format",response.json()["detail"])
         self.assertEqual(self.progress(player,old).status_code,409)
@@ -514,7 +518,7 @@ class GameRoutesTest(unittest.TestCase):
         with routes._write() as db:
             row=db.execute("SELECT * FROM attempts WHERE id=?",(state["id"],)).fetchone()
             completed=json.loads(row["state"])
-            completed.update(status="finished",mode="paused")
+            completed.update(status="finished",mode="paused",ai_drive_ticks=1200,benchmark_version=routes.BENCHMARK_VERSION)
             for i in range(101):
                 name=f"Other{i:03d}"
                 db.execute("INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?)",
@@ -524,10 +528,10 @@ class GameRoutesTest(unittest.TestCase):
         self.assertEqual(finished.status_code,200,finished.text)
         self.assertEqual(finished.json()["rank"],1)
         with routes._write() as db:
-            for row in db.execute("SELECT id,payload FROM attempts WHERE name_lc LIKE 'other%'").fetchall():
-                payload=json.loads(row["payload"])
-                payload["metrics"]["simulated_time_s"]-=1
-                db.execute("UPDATE attempts SET payload=? WHERE id=?",(routes._json(payload),row["id"]))
+            for row in db.execute("SELECT id,state FROM attempts WHERE name_lc LIKE 'other%'").fetchall():
+                completed=json.loads(row["state"])
+                completed["ai_drive_ticks"]-=30
+                db.execute("UPDATE attempts SET state=? WHERE id=?",(routes._json(completed),row["id"]))
         _,second=self.start(player,key="after-first-hundred")
         second=self.drive_to_objective(player,second)
         finished=self.finish(player,second)
@@ -536,6 +540,64 @@ class GameRoutesTest(unittest.TestCase):
         public=self.client.get("/api/game/route-leaderboard",params=dict(key=state["key"],limit=100)).json()
         self.assertEqual(public["players"],102)
         self.assertEqual(len(public["board"]),100)
+
+    def test_guest_can_choose_callsign_after_sampling_without_signup_before_play(self):
+        guest=self.client.post('/api/game/route-guests',json={}).json()
+        self.assertEqual(self.client.get('/api/game/leaderboard').json()['players'],0)
+        _,state=self.start(guest)
+        player=self.claim('AfterLanding')
+        claim_url=f"/api/game/route-attempts/{state['id']}/claim"
+        body=dict(player,guest_token=guest['token'])
+        self.assertEqual(self.client.post(claim_url,json=body).status_code,400)
+        self.assertEqual(self.progress(dict(guest,token='wrong-secret'),state).status_code,403)
+        state=self.drive_to_objective(guest,state)
+        self.assertEqual(self.finish(guest,state).status_code,400)
+        self.assertEqual(self.client.post(claim_url,json=dict(body,guest_token='wrong-secret')).status_code,403)
+        claimed=self.client.post(claim_url,json=body)
+        self.assertEqual(claimed.status_code,200,claimed.text)
+        self.assertEqual(self.client.post(claim_url,json=body).json(),claimed.json())
+        self.assertEqual(self.finish(guest,state).status_code,400)
+        self.assertEqual(self.finish(self.claim('ThiefPilot'),state).status_code,403)
+        result=self.finish(player,claimed.json(),ticks=901)
+        self.assertEqual(result.status_code,200,result.text)
+        self.assertEqual(result.json()['ai_drive_ticks'],901)
+        self.assertAlmostEqual(result.json()['ai_driving_time_s'],901/30,places=6)
+        self.assertEqual(self.finish(player,claimed.json(),ticks=1).json(),result.json(),'A retry cannot replace a recorded AI time')
+        board=self.client.get('/api/game/route-leaderboard',params={'key':state['key']}).json()['board']
+        self.assertEqual([r['name'] for r in board],['AfterLanding'])
+
+    def test_ranking_uses_ai_ticks_even_when_player_driving_order_is_opposite(self):
+        fast,first=self.start(self.claim('FastPlayer'))
+        first=self.drive_to_objective(fast,first,dt=1)
+        self.assertEqual(self.finish(fast,first,ticks=1500).status_code,200)
+        slow,second=self.start(self.claim('SlowPlayer'))
+        second=self.drive_to_objective(slow,second,dt=2)
+        self.assertEqual(self.finish(slow,second,ticks=900).status_code,200)
+        self.assertEqual(first['metrics'],second['metrics'],'The planner estimates are identical')
+        board=self.client.get('/api/game/route-leaderboard',params={'key':first['key']}).json()['board']
+        self.assertEqual([r['name'] for r in board],['SlowPlayer','FastPlayer'])
+        self.assertEqual([r['ai_driving_time_s'] for r in board],[30,50])
+        self.assertGreater(board[0]['actual_driving_time_s'],board[1]['actual_driving_time_s'])
+
+    def test_ai_result_requires_valid_ticks_version_and_the_locked_route(self):
+        player,state=self.start()
+        state=self.drive_to_objective(player,state)
+        endpoint=f"/api/game/route-attempts/{state['id']}/finish"
+        body=self.finish_body(player,state)
+        for ticks in (0,-1,1.5,True,54001):
+            self.assertEqual(self.client.post(endpoint,json=dict(body,ai_drive_ticks=ticks)).status_code,422)
+        self.assertEqual(self.client.post(endpoint,json=dict(body,benchmark_version='old')).status_code,422)
+        self.assertEqual(self.client.post(endpoint,json=dict(body,route_hash='0'*64)).status_code,409)
+        self.assertEqual(self.client.post(endpoint,json=body).status_code,200)
+
+    def test_board_separates_difficulty_and_driving_mode(self):
+        player,state=self.start()
+        state=self.drive_to_objective(player,state)
+        self.assertEqual(self.finish(player,state).status_code,200)
+        query=dict(key=self.get()['key'],difficulty='astronaut',driving_mode='3d')
+        self.assertEqual(self.client.get('/api/game/route-leaderboard',params=query).json()['players'],1)
+        for change in ({'difficulty':'cadet'},{'driving_mode':'2d'}):
+            self.assertEqual(self.client.get('/api/game/route-leaderboard',params=dict(query,**change)).json()['board'],[])
 
 
 if __name__=="__main__":

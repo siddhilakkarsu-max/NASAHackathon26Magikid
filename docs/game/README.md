@@ -34,11 +34,17 @@ Ground firmness uses thermal observations and the planner's derived firmness, wi
 Zoomed views request the local planner pixels before downsampling. Finer saved observations take precedence over coarser regional data; no detail is invented below the source resolution.
 The relief slider changes shading only. The game keeps its storms, shelters, rocks, vehicles, sampling and tools.
 
-**Leaderboard** is available beside the corner minimap. Survival scores remain available; the Route comparison
-tab ranks completed runs on the same saved mission and vehicle by modeled one-way travel time. Claim a
-callsign before starting a ranked run, reach B and complete its sample, then explicitly press **Submit
-route score**. Active driving time is shown separately. Missing source data disables route ranking, while the
-original game stays playable. Offline baked missions retain their original gameplay.
+**Leaderboard** is available beside the corner minimap. Complete the sample at B, then press **Join leaderboard**
+on the results screen and choose a callsign. No account login or pre-mission registration is required. An
+unnamed browser attempt tracks completion until it is attached to the chosen callsign. Taken names can be
+changed without losing the completed result. Submission is explicit and retry-safe.
+
+The default route board ranks the measured AI drive on each player's designed route: fewer 30 Hz simulation
+ticks wins. Player driving time and detours do not affect rank. Boards separate mission, vehicle, difficulty
+and 2D/3D handling; equal AI tick counts share a rank. Existing planner-estimate entries are retained in the
+database but excluded from the new AI-time boards. Survival scores remain in their separate tab. Missing
+source data disables route ranking, while the original game stays playable. Offline baked missions retain
+their original gameplay.
 
 The large results board shows total gameplay time, driving time, and measured AI driving on your route and on
 the original route. Both AI runs use the same fixed 30 Hz simulation, vehicle handling, difficulty, seed and
@@ -323,10 +329,11 @@ mission's science raster bounds. Images without valid geographic bounds use the 
   for that. Rover tracks and backup routes are drawn as ground lines only.
 - The 3D view was checked in headless Chrome only: not on a phone, and mouse capture was not exercised by hand.
 - The hop is visual only: it does not clear obstacles or change the simulation.
-- Route comparison uses the saved planner cube's actual resolution and the existing planner travel model.
-  Display imagery can be finer than the scoring grid. The server verifies geographic progress and computes
-  the score and accepts new samples only near mission science locations, but the browser still reports
-  whether its sampling mini-game succeeded.
+- Route validation uses the saved planner cube's actual resolution and travel/resource model. Display imagery
+  can be finer than that grid. The server verifies geographic progress, sample location, attempt ownership,
+  route identity and bounded integer AI ticks. The actual AI simulation and sampling mini-game run in the
+  browser, which reports their results; Python does not independently replay the AI. Rankings are therefore
+  not cheat-proof. The recorded time is AI ticks / 30, never the planner estimate or the player's driving time.
 - Vehicle handling is a feel model (momentum, speed-dependent steering, grip from firmness), not vehicle dynamics.
   Top speed, energy and oxygen still come from the planner's numbers. Returning to A on foot without the
   vehicle still counts as a success.
