@@ -128,6 +128,11 @@
 .helmut-bubble.on { opacity: 1; transform: none; }
 #helmut.bubble-left .helmut-bubble { right: auto; left: -8px; transform-origin: 15% 100%; }
 #helmut.bubble-left .helmut-bubble::after { right: auto; left: 18px; }
+#helmut.bubble-below .helmut-bubble { bottom: auto; top: calc(100% + 12px); transform: translateY(-4px) scale(.9);
+                                      transform-origin: 85% 0; }
+#helmut.bubble-below.bubble-left .helmut-bubble { transform-origin: 15% 0; }
+#helmut.bubble-below .helmut-bubble.on { transform: none; }
+#helmut.bubble-below .helmut-bubble::after { top: auto; bottom: 100%; transform: translateY(4px) rotate(225deg); }
 .helmut-bubble.think { padding: 6px 9px; display: flex; gap: 4px; }
 .helmut-bubble.think i { width: 5px; height: 5px; background: #2a1d17; animation: rDot 1s steps(1) infinite; }
 .helmut-bubble.think i:nth-child(2) { animation-delay: .2s; }
