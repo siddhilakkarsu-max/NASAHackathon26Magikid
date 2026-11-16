@@ -74,7 +74,7 @@ try{
   const page=await context.newPage();page.on('pageerror',error=>errors.push(error.message));
   await page.goto('http://tracking.test/game.html?plan=tracking-fixture&cand=0&view=2d&skip=1&mute=1');
   await page.waitForFunction(()=>window.__MW?.getSnapshot().screen==='brief');
-  await page.locator('#bLaunch').click();await page.locator('#btnDrive').click();
+  await page.locator('#bLaunch').click();
   await page.waitForFunction(()=>!__MW.getSnapshot().paused);
   // Use an ordinary movement key, selected from the original route heading.
   const direction=await page.evaluate(()=>{const W=__MW.state.W,dx=W.B.x-W.A.x,dy=W.B.y-W.A.y;return Math.abs(dx)>Math.abs(dy)?dx>0?'d':'a':dy>0?'w':'s';});

@@ -39,14 +39,13 @@ try {
  assert.equal(await game.locator('#brief .briefOptions > details[open]').count(),0);
  await game.screenshot({path:path.join(out,'briefing.png')});
  await game.locator('#bLaunch').click();
- await game.waitForFunction(()=>__MW.getSnapshot().screen==='play'&&__MW.getSnapshot().paused);
- const ready=await game.evaluate(()=>__MW.getSnapshot());await game.waitForTimeout(500);
- assert.equal((await game.evaluate(()=>__MW.getSnapshot())).t,ready.t,'ready state must not drain resources');
+ await game.waitForFunction(()=>__MW.getSnapshot().screen==='play'&&!__MW.getSnapshot().paused);
+ const ready=await game.evaluate(()=>__MW.getSnapshot());
+ assert.equal(await game.evaluate(()=>document.pointerLockElement?.id),'gl','Play captures mouse directly');
  assert.ok(ready.tools.length>0&&ready.spots>0,'science tools and sampling locations survive');
  assert.ok(await game.evaluate(()=>__MW.hazards().shelters.length>0),'original shelters survive');
  assert.equal(await game.locator('#mini').isVisible(),true);
- pass('Green Play preserves selected mission; compact briefing enters the original game ready to drive');
- await game.locator('#btnDrive').click();
+ pass('Green Play preserves selected mission; briefing Play captures the mouse and starts controls directly');
  await game.waitForFunction(()=>!__MW.getSnapshot().paused);
  assert.equal(await game.evaluate(()=>window.MarswalkRouteMap.isOpen()),false);
  await game.keyboard.down('w');
@@ -57,6 +56,8 @@ try {
  assert.ok(driven.t>ready.t);assert.equal(driven.nan,false);
  await game.screenshot({path:path.join(out,'driving.png')});
  pass('Start driving starts driving directly, with the original vehicle and corner minimap');
+ await game.evaluate(()=>document.exitPointerLock());
+ await game.waitForFunction(()=>!document.pointerLockElement);
  await game.locator('#btnLeaderboard').click();await game.locator('#gameBoard').waitFor({state:'visible'});
  await game.locator('#boardRoutes').click();await game.waitForFunction(()=>!document.getElementById('routeBoardContent').textContent.includes('Loading'));
  assert.match(await game.locator('#routeBoardContent').innerText(),/Simulated|simulated|No completed/);
@@ -93,6 +94,8 @@ try {
  await game.locator('#btnDrive').click();await game.waitForFunction(()=>!__MW.getSnapshot().paused);
  assert.equal(await game.evaluate(()=>MarswalkRouteMap.isOpen()),false);
  pass('Applying a dragged route restarts the original game at A, preserves its reference, and drives directly');
+ await game.evaluate(()=>document.exitPointerLock());
+ await game.waitForFunction(()=>!document.pointerLockElement);
  for(const [width,height] of [[760,900],[390,844]]){
    await game.setViewportSize({width,height});await game.locator('#btnEditMap').click();
    const bounds=await game.locator('#routeMapDialog').boundingBox();assert.ok(bounds.x>=0&&bounds.x+bounds.width<=width+1);

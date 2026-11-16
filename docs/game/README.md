@@ -16,14 +16,14 @@ These need no library or build step. This document is both the player guide and 
 | `run.bat` / `./run.sh`, then `http://localhost:8000/game.html` | Online mode: plan any mission on the title screen, real weather, pixel values and rover tracks |
 | **Play** button on the gear page (`kit.html`) | Opens the game and plans a mission from the kit form's vehicle, season, region and goals |
 | **Play route #N** in the planner's Mission results | Opens the exact plan and selected route in a new tab |
-| **MISSION READY · PLAY** after chatting with the Planner assistant | Opens that generated mission, with its saved goal, start time, vehicle and selected route |
+| **MISSION READY · PLAY ROUTE** after chatting with the Planner assistant | Opens that generated mission, with its saved goal, start time, vehicle and selected route |
 | **Game · Survive the route** on the planner | A collapsed section for playing the selected route or browsing ready-made missions |
 | Double-click `frontend/game.html` | Offline mode: five baked real missions, embedded Jezero weather tables, generated terrain |
 
 ## How to play
 
-Use the existing Planner assistant to choose a goal, time and vehicle. Press the green **MISSION READY · PLAY**
-button, then **Play game** under the route preview. **Start driving** starts the selected mission directly.
+Use the existing Planner assistant to choose a goal, time and vehicle. Press the green **MISSION READY · PLAY ROUTE**
+button, then **Play game** under the route preview. Play captures the mouse and starts driving directly.
 Mission details, tools, alternative routes and difficulty stay in collapsed panels.
 
 **Edit map** pauses driving and opens a contained popup over real Mars satellite imagery. Drag an interior point
@@ -31,6 +31,7 @@ or click the route to insert one. Undo, remove and reset are available without c
 checks the new path against the saved mission terrain and restarts the original game at A; closing an uncommitted
 edit preserves the current route. Satellite, topography, slope and Ground firmness share the same geographic coordinates.
 Ground firmness uses thermal observations and the planner's derived firmness, with explicit unknown areas and source links. It estimates material categories, not measured bearing strength or individual rocks.
+Zoomed views request the local planner pixels before downsampling. Finer saved observations take precedence over coarser regional data; no detail is invented below the source resolution.
 The relief slider changes shading only. The game keeps its storms, shelters, rocks, vehicles, sampling and tools.
 
 **Leaderboard** is available beside the corner minimap. Survival scores remain available; the Route comparison
@@ -38,6 +39,25 @@ tab ranks completed runs on the same saved mission and vehicle by modeled one-wa
 callsign before starting a ranked run, reach B and complete its sample, then explicitly press **Submit
 route score**. Active driving time is shown separately. Missing source data disables route ranking, while the
 original game stays playable. Offline baked missions retain their original gameplay.
+
+The large results board shows total gameplay time, driving time, and measured AI driving on your route and on
+the original route. Both AI runs use the same fixed 30 Hz simulation, vehicle handling, difficulty, seed and
+time compression as the player. Sampling is excluded from AI driving; pauses and menus are excluded from
+all four times. A failed simulation is shown as unavailable or unfinished, never replaced with a planner
+estimate or a forced faster time. Oxygen, electricity and distance follow, then cost. User price assumptions
+remain in the separate expandable cost model. The simulated surface clock remains internal to resource/cost calculations.
+
+### Persistent leaderboard database
+
+The existing server stores callsigns and survival scores in `game_state/leaderboard.sqlite3`, and captured
+plans, terrain, route attempts and completed route rankings in `game_state/game_routes.sqlite3`. SQLite WAL
+transactions commit scores to disk; browser storage only remembers the player's token. Tests cover reopening
+the database and reading a committed score from a separate application process.
+
+Set `MARSWALK_GAME_STATE_DIR` to a persistent writable directory on the backend host (mount a persistent
+volume if using containers). Preserve the entire directory during deployment. Use SQLite's backup API or
+stop the service before copying the files; copying only an active `.sqlite3` file can miss WAL transactions.
+Cloudflare Pages hosts the UI; both leaderboard tabs use the same configured FastAPI backend database.
 
 | Key | Action |
 |---|---|
@@ -241,6 +261,7 @@ node docs/game/route_tracking_test.mjs                  # slow/lost movement ack
 node docs/game/start_pause_test.mjs                     # late start/resume cannot override a newer pause
 node docs/game/mission_results_test.mjs                 # cost units, sources, unknown resources, mobile layout
 node docs/game/single_site_test.mjs                     # sampling, clocks, refills, cancel, retry and next objective
+node docs/game/ai_driver_test.mjs                       # actual AI driving on all 14 baked routes
 node docs/game/single_site_live_test.mjs                # normal keyboard drive + sample + ranking; isolated :8014
 node docs/game/planner_flow_test.mjs                    # real assistant and game; isolated server at :8012
 ```
@@ -257,7 +278,8 @@ so test missions and callsigns do not enter the normal leaderboard. See
 The planner handoff reads the saved mission settings even when the form contains a draft for the next plan.
 It preserves the selected candidate and the resolved region, and passes the exact solar longitude through
 the URL if browser storage is unavailable. Start time also comes from the saved plan. A server-saved plan ID
-preserves the exact route when local storage is unavailable; older uncaptured plans retain the live-planning fallback.
+preserves the exact route when local storage is unavailable. A missing saved plan shows a restore error instead
+of silently generating a different mission.
 The Game section stays collapsed until opened; its shortcut in
 Mission results is hidden while planning and when a region change clears the mission. Kit Play keeps its
 existing form-to-live-mission flow and preserves the form's exact solar longitude.

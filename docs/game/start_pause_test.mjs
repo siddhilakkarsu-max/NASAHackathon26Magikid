@@ -54,10 +54,10 @@ try {
     await page.waitForFunction(()=>window.__MW?.getSnapshot().screen==='brief');
     await page.locator('#bLaunch').click();
     if(operation==='resume'){
-      await page.locator('#btnDrive').click();await page.waitForFunction(()=>!__MW.getSnapshot().paused);
+      await page.waitForFunction(()=>!__MW.getSnapshot().paused);
       await page.locator('#btnPause').click();await page.waitForFunction(()=>__MW.routeTracking().attempt?.mode==='paused');
       hold=true;await page.locator('#pResume').click();
-    }else await page.locator('#btnDrive').click();
+    }
     for(let i=0;!blocked&&i<100;i++)await page.waitForTimeout(20);
     assert.ok(blocked,'request is pending before the newer user action');
     if(action.startsWith('map'))await page.locator('#btnEditMap').click();

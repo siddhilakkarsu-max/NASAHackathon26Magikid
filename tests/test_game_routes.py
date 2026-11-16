@@ -216,6 +216,24 @@ class GameRoutesTest(unittest.TestCase):
             getter.side_effect=HTTPException(404,"Cube unavailable")
             self.assertEqual(self.client.get("/api/game/materials",params=dict(region="gale")).status_code,404)
 
+    def test_material_zoom_preserves_native_planner_observations(self):
+        values=np.arange(1024*1024,dtype=float).reshape(1024,1024)+1
+        cube=SimpleNamespace(rect=self.cube.rect,pixel_m=(2.,2.),provenance=self.cube.provenance,
+                             bands=dict(thermal_inertia=values))
+        with patch.dict(sys.modules,{"app":SimpleNamespace(get_cube=Mock(return_value=cube))}):
+            full=self.client.get("/api/game/materials").json()["terrain"]
+            response=self.client.get("/api/game/materials",params=dict(west=.009,south=.009,east=.011,north=.011))
+            self.assertEqual(response.status_code,200,response.text)
+            close=response.json()["terrain"]
+            self.assertEqual(full["display_resolution_m"],[4.,4.])
+            self.assertEqual(close["display_resolution_m"],[2.,2.])
+            self.assertEqual(close["sources"],cube.provenance)
+            self.assertEqual(close["grid"]["thermal_inertia"][0][1]-close["grid"]["thermal_inertia"][0][0],1)
+            self.assertEqual(close["grid"]["thermal_inertia"][1][0]-close["grid"]["thermal_inertia"][0][0],1024)
+            for bounds in (dict(west=0),dict(west=.01,east=0,south=0,north=.01)):
+                self.assertEqual(self.client.get("/api/game/materials",params=bounds).status_code,400)
+            self.assertEqual(self.client.get("/api/game/materials",params=dict(west=1,east=2,south=1,north=2)).status_code,404)
+
     def test_material_grid_bounded_and_older_capture_remains_readable(self):
         record,_=routes._plan("original")
         routes._terrain(record["terrain"]).pop("firmness")

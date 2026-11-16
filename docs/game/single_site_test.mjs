@@ -65,7 +65,8 @@ try{
   await finishAtB();await page.locator('#eNext').click();
   const nextTime=await page.evaluate(()=>__MW.state.R.W.C.route.one_way_h*3600);assert.notEqual(editedTime,nextTime,'fixture candidates have different travel models');
   await finishAtB();
-  assert.equal(await page.locator('[data-result="player-model-time"]').textContent(),await page.evaluate(value=>MarswalkMissionResults.duration(value),nextTime),'next objective must not reuse previous candidate edited-route model');
+  await page.waitForFunction(()=>__MW.state.R.aiComparison?.status==='complete');
+  assert.equal(await page.locator('[data-result="player-model-time"]').textContent(),await page.evaluate(()=>MarswalkMissionResults.duration(__MW.state.R.aiComparison.own.seconds)),'next objective uses its own measured driving simulation');
   await page.evaluate(()=>{const i=__MW.state.baked.findIndex(n=>n.veh.key==='buggy');__MW.startBaked(i,0,'cadet');});
   await finishAtB();
   const cabin=await page.evaluate(()=>__MW.state.R.t/24*.895);

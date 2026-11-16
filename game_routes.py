@@ -327,7 +327,8 @@ def _display(data, points):
 
 
 @router.get("/materials")
-def materials(region: str=Query(default="jezero",min_length=1,max_length=80)):
+def materials(region: str=Query(default="jezero",min_length=1,max_length=80),
+              west: float|None=None,south: float|None=None,east: float|None=None,north: float|None=None):
     """Read an existing regional cube for the standalone game's material map.
 
     This path never starts a cube build and does not classify unseen terrain.
@@ -342,9 +343,22 @@ def materials(region: str=Query(default="jezero",min_length=1,max_length=80)):
         raise HTTPException(404,"No thermal-inertia observations are available for this region.")
     thermal=np.asarray(thermal)
     rows,cols=thermal.shape
-    step=max(1,math.ceil(max(rows,cols)/512))
-    rr=np.arange(0,rows,step);cc=np.arange(0,cols,step)
     rect=cube.rect;dy,dx=map(float,cube.pixel_m)
+    r0,c0,r1,c1=0,0,rows,cols
+    bounds=(west,south,east,north)
+    if any(v is not None for v in bounds):
+        if not all(v is not None and math.isfinite(v) for v in bounds) or not (-180<=west<east<=180 and -90<=south<north<=90):
+            raise HTTPException(400,"Provide a complete, valid material-map rectangle.")
+        if east<rect["west"] or west>rect["east"] or north<rect["south"] or south>rect["north"]:
+            raise HTTPException(404,"No planner material observations in this view.")
+        # Crop before reducing: a short route keeps the native planner pixels.
+        c0=max(0,int(math.floor((west-rect["west"])/(rect["east"]-rect["west"])*cols))-1)
+        c1=min(cols,int(math.ceil((east-rect["west"])/(rect["east"]-rect["west"])*cols))+1)
+        r0=max(0,int(math.floor((rect["north"]-north)/(rect["north"]-rect["south"])*rows))-1)
+        r1=min(rows,int(math.ceil((rect["north"]-south)/(rect["north"]-rect["south"])*rows))+1)
+        c0=min(c0,cols-2);r0=min(r0,rows-2);c1=max(c1,c0+2);r1=max(r1,r0+2)
+    step=max(1,math.ceil(max(r1-r0,c1-c0)/512))
+    rr=np.arange(r0,r1,step);cc=np.arange(c0,c1,step)
     grid=dict(thermal_inertia=_clean(thermal[np.ix_(rr,cc)]),shape=[len(rr),len(cc)],
               resolution_m=[dy*step,dx*step],row_order="north_to_south")
     if "firmness" in cube.bands:

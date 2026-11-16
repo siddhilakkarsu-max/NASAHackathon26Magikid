@@ -5,6 +5,8 @@ Uses a temporary state folder, never the real game_state/.
     python -m unittest tests.test_leaderboard
 """
 import os
+import json
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -106,6 +108,17 @@ class LeaderboardTest(unittest.TestCase):
         board = self.client.get("/api/game/leaderboard", params={"mission": MISSION}).json()["board"]
         self.assertEqual(board[0]["name"], "Keeper")
         self.assertTrue((Path(self.tmp.name) / "leaderboard.sqlite3").exists())
+
+    def test_database_is_shared_with_a_new_application_process(self):
+        player=self.claim("PersistentPilot")
+        self.assertEqual(self.score(player,83).status_code,200)
+        result=subprocess.run([sys.executable,"-c",
+            "import json,leaderboard; print(json.dumps(leaderboard.leaderboard(mission='',limit=20)))"],
+            cwd=ROOT,env=os.environ.copy(),capture_output=True,text=True,timeout=30)
+        self.assertEqual(result.returncode,0,result.stderr)
+        board=json.loads(result.stdout)["board"]
+        self.assertEqual(board[0]["name"],"PersistentPilot")
+        self.assertEqual(board[0]["points"],83)
 
 
 if __name__ == "__main__":

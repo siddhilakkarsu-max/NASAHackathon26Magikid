@@ -210,10 +210,16 @@
     try{const data=s.context.planData||await(await fetchTimed('/api/game/plans/'+encodeURIComponent(s.context.N.id)+'?candidate='+(s.context.W?s.context.W.ci:(s.context.N.selected||0)),15000)).json(),grid=normalizeGrid(data.terrain);if(state!==s)return;s.material=normalizeMaterial(data.terrain);if(grid){s.heights.unshift(grid);s.heights.sort((a,b)=>(a.priority??1)-(b.priority??1));s.planHeights=true;}s.reliefImage=null;scheduleDraw();}
     catch(_){}finally{if(state===s){s.loadingPlan=false;if(s.layer==='firmness')loadMaterials();else if(s.layer!=='imagery')loadHeights();}}
   }
-  async function loadMaterials(){const s=state;if(!s||s.material||s.materialBusy||s.loadingPlan||s.materialTried)return;
-    const region=s.context.region||s.context.N&&s.context.N.region;if(!region)return;s.materialBusy=true;s.materialTried=true;scheduleDraw();
-    try{const result=await(await fetchTimed('/api/game/materials?region='+encodeURIComponent(region),15000)).json();if(state!==s)return;s.material=normalizeMaterial(result.terrain);s.reliefImage=null;}
-    catch(_){}finally{if(state===s){s.materialBusy=false;scheduleDraw();}}
+  async function loadMaterials(){const s=state;if(!s||s.loadingPlan)return;
+    const region=s.context.region||s.context.N&&s.context.N.region;if(!region)return;
+    const rect={...s.rect},key=JSON.stringify(rect);if(s.materialKey===key)return;s.materialKey=key;
+    const version=s.materialVersion=(s.materialVersion||0)+1;s.materialBusy=true;scheduleDraw();
+    try{const query=new URLSearchParams({region,...(rect.west>=-180&&rect.east<=180?rect:{})});const result=await(await fetchTimed('/api/game/materials?'+query,15000)).json();
+      if(state!==s||version!==s.materialVersion)return;const material=normalizeMaterial(result.terrain);
+      const current=s.material,resolution=g=>Math.max(...[].concat(g?.resolution||Infinity));
+      const covered=current&&current.rect.west<=rect.west&&current.rect.east>=rect.east&&current.rect.south<=rect.south&&current.rect.north>=rect.north;
+      if(material&&(!covered||resolution(material)<resolution(current)))s.material=material;s.reliefImage=null;
+    }catch(_){}finally{if(state===s&&version===s.materialVersion){s.materialBusy=false;scheduleDraw();}}
   }
   function heightTile(tile){const key=[tile.z,tile.y,tile.x].join('/');let e=heightCache.get(key);if(e&&e.failed&&Date.now()-e.failed>30000){heightCache.delete(key);e=null;}if(!e){e={pending:true};heightCache.set(key,e);e.promise=fetchTimed('/terrain/detail/'+key+'.bin',45000).then(async r=>{const n=+(r.headers.get('X-Terrain-Grid-Size')||257),a=new Float32Array(await r.arrayBuffer());if(a.length!==n*n)throw Error('Unexpected elevation grid');const global=r.headers.get('X-Terrain-Detail-Status')==='global-fallback';e.grid={rect:tile,width:n,height:n,values:a,source:global?'MOLA/HRSC global elevation (~200 m)':'CTX / HRSC elevation (global data in coverage gaps)',priority:global?2:0,resolution:null};}).catch(()=>{e.failed=Date.now();}).finally(()=>{e.pending=false;trimCache(heightCache,36);});}return e;}
   async function loadHeights(){const s=state;if(!s||s.layer==='imagery')return;if(s.layer==='firmness'){loadMaterials();return;}const version=++s.loadVersion;
@@ -233,8 +239,8 @@
       // Fixed bins preserve meaning when zooming; never invent fine soil detail
       // from the satellite photo or smooth across a missing thermal observation.
       const group=!Number.isFinite(ti)?3:ti<300?0:ti<600?1:2,color=[[224,167,99],[184,198,139],[121,185,193],[72,80,82]][group];counts[group]++;
-      const shade=group===3?((x+y)%12<3?1.55:1):Number.isFinite(firm)?.85+.25*firm:1,k=(y*w+x)*4;
-      im.data[k]=color[0]*shade;im.data[k+1]=color[1]*shade;im.data[k+2]=color[2]*shade;im.data[k+3]=group===3?210:165;
+      const shade=group===3?((x+y)%12<3?1.55:1):Number.isFinite(firm)?.65+.65*firm:clamp(.75+Math.log2(Math.max(100,ti)/150)*.12,.7,1.2),k=(y*w+x)*4;
+      im.data[k]=color[0]*shade;im.data[k+1]=color[1]*shade;im.data[k+2]=color[2]*shade;im.data[k+3]=group===3?180:105;
     }
     c.putImageData(im,0,0);return s.reliefImage={canvas:out,counts};
   }
@@ -265,9 +271,10 @@
     sourceInfo.innerHTML='Satellite: NASA/JPL/MSSS · <a href="https://murray-lab.caltech.edu/CTX/" target="_blank" rel="noopener">Caltech Murray Lab CTX mosaic</a>, up to 5 m/pixel.'+(imagery.coarse?' Some tiles use a coarser source.':'')+'<br>';
     sourceInfo.append(document.createTextNode(source+'. Relief exaggeration changes shading only. Colours stretch to the visible elevation range; route calculations use original heights.'));
     if(s.layer==='firmness'){
-      sourceInfo.append(document.createElement('br'),document.createTextNode('Ground firmness is an estimate from saved thermal-inertia observations. Fixed game display classes: below 300 = dust/sand-like; 300 to below 600 = coarse or crusted; 600 and above = rock-like (J m⁻² K⁻¹ s⁻½). These are broad model categories, not measured soil strength or guaranteed traction. Rock, ice, cemented soil and mixed surfaces can overlap. Satellite detail does not increase material resolution. '));
+      sourceInfo.append(document.createElement('br'),document.createTextNode('Ground firmness is an estimate from saved thermal-inertia observations. Fixed game display classes: below 300 = dust/sand-like; 300 to below 600 = coarse or crusted; 600 and above = rock-like (J m⁻² K⁻¹ s⁻½). These are broad model categories, not measured soil strength or guaranteed traction. Rock, ice, cemented soil and mixed surfaces can overlap. The zoomed map uses the same local thermal and night-IR data as the Marswalk planner, with satellite imagery underneath. Satellite detail does not increase material resolution. '));
       if(s.material){const g=s.material,res=Array.isArray(g.resolution)?Math.max(...g.resolution):g.resolution;if(Number.isFinite(res))sourceInfo.append(document.createTextNode('Displayed material grid: about '+Math.round(res)+' m; source observations may be coarser. '));if(g.firmness)sourceInfo.append(document.createTextNode('Within-class shading uses the planner’s thermal/night-IR firmness estimate. '));}
       const link=document.createElement('a');link.href='https://ntrs.nasa.gov/citations/20170003773';link.target='_blank';link.rel='noopener';link.textContent='NASA/JPL: thermal properties and mixed surfaces';sourceInfo.append(link,document.createTextNode(' · '));
+      const research=document.createElement('a');research.href='https://astrogeology.usgs.gov/search/map/mars-themis-derived-global-thermal-inertia-mosaic';research.target='_blank';research.rel='noopener';research.textContent='USGS: THEMIS material interpretation';sourceInfo.append(research,document.createTextNode(' · '));
       const dataLink=document.createElement('a');dataLink.href='https://pds.nasa.gov/ds-view/pds/viewProfile.jsp?dsid=MGS-M-TES-5-TIMAP-V1.0';dataLink.target='_blank';dataLink.rel='noopener';dataLink.textContent='NASA PDS: TES thermal-inertia maps';sourceInfo.append(dataLink);
       for(const entry of s.material?s.material.sources:[]){if(typeof entry!=='string'||!/^thermal_inertia:|^themis_night:/i.test(entry))continue;sourceInfo.append(document.createElement('br'));const url=entry.match(/https?:\/\/[^\s"'{}<>]+/);if(url){const a=document.createElement('a');a.href=url[0];a.target='_blank';a.rel='noopener';a.textContent=entry.startsWith('thermal_inertia:')?'Mission thermal-inertia dataset':'Mission night-IR dataset';sourceInfo.append(a);}else sourceInfo.append(document.createTextNode(entry));}
     }

@@ -8,7 +8,7 @@ const script=await fs.readFile(path.resolve(path.dirname(fileURLToPath(import.me
 const sandbox={window:{},Intl}; vm.runInNewContext(script,sandbox);
 const api=sandbox.window.MarswalkMissionResults;
 const summary={totalElapsedS:90,drivingElapsedS:60,missionElapsedS:3600,drivingMissionS:2400,
-  playerModelS:1800,referenceModelS:1500,oxygenKg:.25,energyWh:1500,distanceM:2400,vehicleKey:'four_wheel',vehicleLabel:'Open crew rover'};
+  aiComparison:{status:'complete',own:{status:'complete',seconds:48},reference:{status:'complete',seconds:40}},oxygenKg:.25,energyWh:1500,distanceM:2400,vehicleKey:'four_wheel',vehicleLabel:'Open crew rover'};
 assert.equal(api.cost(summary,{hour:20,oxygen:100,energy:4}).value,51,'hours,kg and kWh are converted independently');
 assert.equal(api.cost({...summary,totalElapsedS:999999},{hour:20,oxygen:100,energy:4}).value,51,'real play compression does not alter surface operating cost');
 for(const value of ['',null,undefined,NaN,Infinity,-1,'oops',1e10,true,[]]) assert.equal(api.cost(summary,{hour:value,oxygen:0,energy:0}).value,null,'invalid rate must not look like free operation');
@@ -31,18 +31,20 @@ try{
   await page.goto('http://results.test/'); await page.addScriptTag({content:script});
   const render=async value=>page.evaluate(value=>MarswalkMissionResults.render(document.getElementById('results'),value),value);
   await render(summary);
-  assert.match(await page.locator('[data-cost-status]').textContent(),/Enter all three rates/);
+  assert.match(await page.locator('[data-cost-status]').textContent(),/Set your cost model below/);
   assert.equal(await page.locator('[data-result="total-time"]').textContent(),'1 min 30 s');
   assert.equal(await page.locator('[data-result="driving-time"]').textContent(),'1 min 0 s');
-  assert.equal(await page.locator('[data-result="player-model-time"]').textContent(),'30 min 0 s');
-  assert.equal(await page.locator('[data-result="reference-model-time"]').textContent(),'25 min 0 s');
+  assert.equal(await page.locator('[data-result="player-model-time"]').textContent(),'48.0 s');
+  assert.equal(await page.locator('[data-result="reference-model-time"]').textContent(),'40.0 s');
+  assert.equal(await page.locator('[data-result="mission-time"]').count(),0);
+  assert.ok(await page.locator('[data-result="total-time"]').evaluate(el=>parseFloat(getComputedStyle(el).fontSize)>=20));
   await page.getByText('Your cost model · USD',{exact:true}).click();
   for(const [key,value]of Object.entries({hour:'20',oxygen:'100',energy:'4'}))await page.locator(`[data-cost-rate="${key}"]`).fill(value);
   assert.match(await page.locator('[data-cost-status]').textContent(),/\$51\.00/);
   assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'cost fields fit narrow screen');
   await render({...summary,vehicleKey:'buggy',vehicleLabel:'Pressurized crew rover',oxygenKg:null});
   assert.equal(await page.locator('[data-result="oxygen"]').textContent(),'Not modeled for this vehicle');
-  assert.match(await page.locator('[data-cost-status]').textContent(),/Complete cost unavailable/);
+  assert.match(await page.locator('[data-cost-breakdown]').textContent(),/Complete cost unavailable/);
   await page.getByText('Your cost model · USD',{exact:true}).click(); await page.locator('[data-cost-rate="oxygen"]').fill('0');
   assert.match(await page.locator('[data-cost-status]').textContent(),/\$26\.00/);
   assert.match(await page.locator('[data-cost-breakdown]').textContent(),/Excluded at your zero rate: oxygen use/);
@@ -60,7 +62,7 @@ try{
   for(const [key,value]of Object.entries({hour:'20',oxygen:'100',energy:'4'}))await page.locator(`[data-cost-rate="${key}"]`).fill(value);
   assert.match(await page.locator('[data-cost-status]').textContent(),/\$29\.73/,'cabin oxygen participates in user-priced surface cost');
   await page.evaluate(()=>Object.defineProperty(window,'localStorage',{get(){throw Error('blocked')}}));
-  await render(summary); assert.match(await page.locator('[data-cost-status]').textContent(),/Enter all three rates/);
+  await render(summary); assert.match(await page.locator('[data-cost-status]').textContent(),/Set your cost model below/);
   assert.deepEqual(errors,[]);
   console.log('PASS mission results: four clocks, unit conversion, NASA cabin O2 estimate, explicit user rates, unavailable resources, persistence, storage failure, mobile layout and NASA links');
 }finally{await browser.close();}

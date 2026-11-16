@@ -1597,10 +1597,11 @@ function simStep() {
   if (!R || R.over) return;
   const W = R.W, dt = SIM_DT, dtH = dt * W.TS / 3600;
   const o2p = R.o2, batp = R.bat, intp = R.integ;
-  R.tick++; R.real += dt; R.t += dtH; R.px = R.x; R.py = R.y;
-  if (G.autopilot) { botThink(R); R.bot = true; }
+  R.tick++; R.real += dt; R.elapsedS += dt; if(!R.site)R.drivingElapsedS += dt;
+  R.t += dtH; R.px = R.x; R.py = R.y;
+  if (G.autopilot) { botThink(R); if(R.aiDriving) benchmarkSteer(R,dt); R.bot = true; }
   if (G.speed > 1) R.fast = true;
-  else { R.mvx = IN.mx; R.mvy = IN.my; R.careful = IN.careful; }
+  if (!G.autopilot) { R.mvx = IN.mx; R.mvy = IN.my; R.careful = IN.careful; }
   if (R.site) { siteTick(R, dt); R.mvx = 0; R.mvy = 0; }
   if (R.over) return;
   if (R.phase === 'site') R.siteH += dtH;                    // everything at the site (walking between spots, mini-games) is site time, not travel
@@ -1650,7 +1651,7 @@ function moveTick(R, dt) {
   kmh *= 1 - CFG.STORM_SPEED_LOSS * R.stormK;
   if (R.red) kmh *= 0.4;
   const vW = kmh / 3.6 * W.TS / W.kDist;                   // world metres per real second
-  const drv = !!veh.bat && G3.on && !G.autopilot;         // driven by hand: momentum, and less grip on loose ground
+  const drv = !!veh.bat && (R.aiDriving || G3.on && !G.autopilot); // identical momentum and grip for the comparison driver
   const k = Math.min(1, (drv ? (want ? CFG.DRIVE_ACCEL : CFG.DRIVE_COAST) * (0.55 + 0.45 * R.firm) : CFG.ACCEL) * dt);
   R.vx += ((want ? mx * vW : 0) - R.vx) * k; R.vy += ((want ? my * vW : 0) - R.vy) * k;
   let nx = R.x + R.vx * dt, ny = R.y + R.vy * dt;
@@ -1662,7 +1663,7 @@ function moveTick(R, dt) {
     const j = idxAt(W, nx, ny), dx = W.X[j] - nx, dy = W.Y[j] - ny, l = Math.hypot(dx, dy) || 1, sp = 0.2 * (vW / 0.4) * CFG.RED_PUSH * dt;
     nx += dx / l * sp; ny += dy / l * sp;
   }
-  if(RouteFlight.attempt){const d=Math.hypot(nx-R.x,ny-R.y),limit=45*dt;if(d>limit){nx=R.x+(nx-R.x)*limit/d;ny=R.y+(ny-R.y)*limit/d;}}
+  if(RouteFlight.attempt||R.driveSpeedLimit){const d=Math.hypot(nx-R.x,ny-R.y),limit=(R.driveSpeedLimit||45)*dt;if(d>limit){nx=R.x+(nx-R.x)*limit/d;ny=R.y+(ny-R.y)*limit/d;}}
   const stepM = Math.hypot(nx - R.x, ny - R.y);
   R.x = nx; R.y = ny; R.step = stepM; R.moving = stepM > 0.02;
   R.kmh = stepM / dt / W.TS * 3.6 * W.kDist;
@@ -2196,6 +2197,7 @@ function scoreRun(R) {
   return { s: s, total: Math.round(tot * 10) / 10, grade: grade, sci: sci, offFrac: offFrac, minLeft: minLeft, planLeft: planLeft, pen: pen };
 }
 function finishRun(R) {
+  if(G.benchmark)return;
   const W = R.W, N = W.N;
   RouteFlight.finish(R);
   R.score = scoreRun(R);
@@ -2411,6 +2413,7 @@ function call(key, arg) {
 const STORY = new URLSearchParams(location.search).get('story') === '1';
 const SCENE_SKIP = { briefing: 1, loadout: 1 }, SCENE_RADIO = { storm: 1, arrival: 1, objective: 1, abandon: 1 }, SCENE_MAX = { intro: 3, landing: 1 };
 function scene(key, arg, onDone) {
+  if(G.benchmark){if(onDone)onDone();return;}
   const R = G.R, f = SCENES[key];
   let lines = f ? f(R, arg) : null;
   if (!STORY && lines && lines.length) {
@@ -3464,8 +3467,8 @@ function render3d(dt) {
     if (G.autopilot || R.over) { if (spd > 0.4) { let dy = Math.atan2(R.vx, R.vy) - G3.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); G3.yaw += dy * Math.min(1, dt * 3.2); } G3.pitch += (-0.07 - G3.pitch) * Math.min(1, dt * 2); }
     else if (!G.paused && !G.cut) {
       if (g3Driving()) {                                  // steering only bites while rolling; reversing flips it
-        const vn = Math.max(0.5, W.vNom / 3.6 * W.TS / W.kDist), fwd = R.vx * Math.sin(G3.vyaw) + R.vy * Math.cos(G3.vyaw);
-        const rate = (W.veh.key === 'two_wheel' ? 1.15 : W.veh.key === 'buggy' ? 0.5 : 0.8) * (IN.steer || 0) * clamp(spd / (0.3 * vn), 0, 1) * (fwd < -0.05 ? -1 : 1);
+        const vn=Math.max(.5,W.vNom/3.6*W.TS/W.kDist);
+        const rate = drivingTurnRate(R,G3.vyaw,IN.steer||0);
         G3.vyaw += rate * dt; G3.yaw += rate * dt; G3.lean = (G3.lean || 0) + (-(IN.steer || 0) * 0.03 * clamp(spd / vn, 0, 1) - (G3.lean || 0)) * Math.min(1, dt * 5);
       } else { const turn = (K.ArrowRight ? 1 : 0) - (K.ArrowLeft ? 1 : 0); G3.yaw += turn * 2.0 * dt; G3.lean = 0; }
     }
@@ -3583,7 +3586,7 @@ function render3d(dt) {
       if (G3.lastInt !== undefined && integ < G3.lastInt - 0.4) { vf.classList.remove('hit'); void vf.offsetWidth; vf.classList.add('hit'); } G3.lastInt = integ;
       setCls(vf, 'lowo2', o2f < 0.2 && !R.over); vf.style.setProperty('--dust', clamp(R.stormK, 0, 1).toFixed(2)); vf.style.setProperty('--frost', clamp(R.env.cold || 0, 0, 1).toFixed(2));
       $('crack').style.opacity = clamp((62 - integ) / 45, 0, 1).toFixed(2); setCls($('hud'), 'glitch', !R.comms && !G.reduced); }
-    if (G3.locked && (G.paused || G.cut || R.site || G.drawer || R.over) && D.exitPointerLock) D.exitPointerLock();
+    if (G3.locked && !GameTools.starting && (G.paused || G.cut || R.site || G.drawer || R.over) && D.exitPointerLock) D.exitPointerLock();
   }
 }
 
@@ -4052,7 +4055,7 @@ function titleInit() {
   });
   $('btnIntro').addEventListener('click', () => { Snd.init(); const sk = G.skip; G.skip = false; scene('intro', null, () => { G.skip = sk; }); });
   $('bBack').addEventListener('click', () => { if(G.N&&G.N.src==='planner'){location.href='index.html';return;}show('title'); titleRender(); });
-  $('bLaunch').addEventListener('click', () => { Snd.init(); if (G.N) startMission(G.N, G.ci, G.diffKey, {ready:true}); });
+  $('bLaunch').addEventListener('click', () => { Snd.init(); if (G.N) { startMission(G.N, G.ci, G.diffKey, {ready:true}); GameTools.startDriving(); } });
   $('bCands').addEventListener('click', (ev) => { const b = ev.target.closest ? ev.target.closest('[data-cand]') : null; if (b) { G.ci = clamp(parseInt(b.getAttribute('data-cand'), 10) || 0, 0, G.N.cands.length - 1); briefRender(); } });
   const seg = $('bDiff');
   Object.keys(DIFF).forEach((k) => { const b = mk('button', '', DIFF[k].label); b.type = 'button'; b.setAttribute('data-d', k); b.addEventListener('click', () => { G.diffKey = k; briefRender(); }); seg.appendChild(b); });
@@ -4512,15 +4515,12 @@ function frame(ts) {
   requestAnimationFrame(frame);
   const t0 = performance.now();
   let dt = (ts - lastTs) / 1000; lastTs = ts;
-  const elapsed = Math.max(0,dt);
   if (!(dt > 0)) dt = 0; if (dt > CFG.MAX_FRAME_DT) dt = CFG.MAX_FRAME_DT;
   G.frame++;
   inputUpdate();
   const R = G.R, play = G.screen === 'play' && !!R;
   RouteFlight.beforeStep();
   if (play && !R.over && !G.paused && !G.cut) {
-    R.elapsedS += elapsed;
-    if (!R.site) R.drivingElapsedS += elapsed;
     G.acc += dt; let ticks = 0;
     while (G.acc >= SIM_DT && ticks < CFG.MAX_TICKS_PER_FRAME) {
       for (let k = 0; k < G.speed && !R.over && !G.cut; k++) { if (IN.actHeld && R.stuck && !G.autopilot && R.tick % 5 === 0) mash(R); simStep(); }
@@ -4541,12 +4541,70 @@ function frame(ts) {
   pf.buf[pf.bi] = ms; pf.bi = (pf.bi + 1) % pf.buf.length; if (pf.n < pf.buf.length) pf.n++;
 }
 
+// Both drivers use the same steering, acceleration, grip, terrain and fixed 30 Hz clock.
+function drivingTurnRate(R,yaw,steer){
+  const W=R.W,vn=Math.max(.5,W.vNom/3.6*W.TS/W.kDist),spd=Math.hypot(R.vx,R.vy),fwd=R.vx*Math.sin(yaw)+R.vy*Math.cos(yaw);
+  return (W.veh.key==='two_wheel'?1.15:W.veh.key==='buggy'?.5:.8)*steer*clamp(spd/(.3*vn),0,1)*(fwd<-.05?-1:1);
+}
+function benchmarkSteer(R,dt){
+  if(!R.W.veh.bat||afoot(R))return;
+  const magnitude=Math.hypot(R.mvx,R.mvy);if(!magnitude)return;
+  const target=Math.atan2(R.mvx,R.mvy),delta=Math.atan2(Math.sin(target-R.driveYaw),Math.cos(target-R.driveYaw));
+  R.driveYaw+=drivingTurnRate(R,R.driveYaw,clamp(delta*3,-1,1))*dt;
+  const throttle=Math.min(magnitude,clamp(1-Math.abs(delta)/1.5,.15,1));
+  R.mvx=Math.sin(R.driveYaw)*throttle;R.mvy=Math.cos(R.driveYaw)*throttle;
+}
+const DriveBenchmark={
+  async run(payload){
+    if(!G.benchmark)throw Error('Driving comparisons require an isolated simulator.');
+    G.skip=true;G.mute=true;G.autopilot=true;G.speed=1;G.wxLive=payload.weather||{};
+    const W=G.W=buildWorld(payload.mission,payload.candidate,payload.difficulty,payload.seed);
+    // Hold the player's vehicle/time calibration fixed when comparing the other route.
+    Object.assign(W,payload.calibration);G.N=W.N;
+    const R=G.R=newRun(W);R.aiDriving=payload.driving3d&&!!W.veh.bat;
+    R.driveYaw=Math.atan2(W.X[1]-W.X[0],W.Y[1]-W.Y[0]);R.driveSpeedLimit=payload.speedLimit;
+    const maxTicks=30*1800;
+    while(R.tick<maxTicks&&!R.over){
+      for(let n=0;n<300&&!R.over;n++){
+        if(Math.hypot(R.x-W.B.x,R.y-W.B.y)<CFG.SPOT_ZONE_M){
+          return {status:'complete',seconds:R.real,ticks:R.tick,distanceM:R.odo*W.kDist,end:{x:R.x,y:R.y},destination:{x:W.B.x,y:W.B.y},seed:W.seed};
+        }
+        simStep();
+      }
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
+    return {status:'failed',reason:R.cause||'The driver did not reach the destination.',ticks:R.tick};
+  },
+  async compare(R){
+    if(R.aiComparison)return;R.aiComparison={status:'running'};
+    const frame=D.createElement('iframe');frame.hidden=true;frame.setAttribute('aria-hidden','true');frame.tabIndex=-1;
+    const url=new URL('game.html',location.href);url.search='?drive-benchmark=1';
+    try{
+      await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Simulator could not load.')),20000);frame.onload=()=>{clearTimeout(timer);resolve();};frame.onerror=()=>{clearTimeout(timer);reject(Error('Simulator could not load.'));};frame.src=url.href;D.body.append(frame);});
+      const driver=frame.contentWindow.__MW?.runDriveBenchmark;if(!driver)throw Error('Simulator unavailable.');
+      const W=R.W,key=GameTools.key(W.N,W.ci),calibration={};
+      for(const k of ['TS','kSpeed','kDist','kO2','kWh'])calibration[k]=W[k];
+      const common={candidate:W.ci,difficulty:W.diffKey,seed:W.seed,calibration,weather:JSON.parse(JSON.stringify(G.wxLive)),driving3d:G3.on,speedLimit:R.routeAttemptId?45:0};
+      const original=GameTools.referenceMissions.get(key)||W.N;
+      const own=await driver({...common,mission:JSON.parse(JSON.stringify(W.N))});
+      const reference=await driver({...common,mission:JSON.parse(JSON.stringify(original))});
+      R.aiComparison={status:'complete',own,reference};
+    }catch(error){R.aiComparison={status:'failed',reason:error.message};}
+    finally{frame.remove();if(G.R===R&&R.over)RouteFlight.renderEnd(R);}
+  }
+};
 // Compact planning tools around the original game world and simulation.
 const GameTools={
-  references:new Map(),referenceMetrics:new Map(),planLoads:new Map(),pauseRevision:0,
+  references:new Map(),referenceMissions:new Map(),referenceMetrics:new Map(),planLoads:new Map(),pauseRevision:0,
+  captureControls(){
+    const c=G3.on?$('gl'):cv;c.tabIndex=-1;c.focus({preventScroll:true});
+    if(G3.on&&!G.autopilot&&!G.touch&&!D.pointerLockElement&&c.requestPointerLock){
+      try{const request=c.requestPointerLock();if(request?.catch)request.catch(()=>{});}catch(_){}
+    }
+  },
   pauseIntent(){this.pauseRevision++;},
   key(N=G.N,ci=G.ci){return N?N.id+'|'+ci:'';},
-  remember(N,ci){const key=this.key(N,ci);if(!this.references.has(key)){this.referenceMetrics.set(key,{one_way_time_s:N.cands[ci].route.one_way_h*3600});const c=N.cands[ci],points=c.route.points.length>=2?c.route.points:[c.A,c.B];this.references.set(key,points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));}},
+  remember(N,ci){const key=this.key(N,ci);if(!this.references.has(key)){this.referenceMissions.set(key,JSON.parse(JSON.stringify(N)));this.referenceMetrics.set(key,{one_way_time_s:N.cands[ci].route.one_way_h*3600});const c=N.cands[ci],points=c.route.points.length>=2?c.route.points:[c.A,c.B];this.references.set(key,points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));}},
   planData(N=G.N,ci=G.ci){return N?.planDataByCandidate?.[ci]||(N?.planData?.candidate===ci?N.planData:null);},
   async loadPlan(N,ci){if(!API.on||!N||N.src==='baked')return null;const key=this.key(N,ci);if(!this.planLoads.has(key))this.planLoads.set(key,apiJSON('/api/game/plans/'+encodeURIComponent(N.id)+'?candidate='+ci,undefined,12000));const pending=this.planLoads.get(key);let data;try{data=await pending;}catch(e){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);throw e;}if(!data){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);return null;}N.planDataByCandidate=N.planDataByCandidate||{};N.planDataByCandidate[ci]=data;if(N===G.N&&ci===G.ci)N.planData=data;if(data.reference&&data.reference.points)this.references.set(key,data.reference.points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));return data;},
   context(){if(!G.N)return null;this.remember(G.N,G.ci);return{N:G.N,C:G.N.cands[G.ci],W:G.W,R:G.R,region:G.N.region,referenceRoute:this.references.get(this.key()).map(p=>({...p})),imagery:G.imgs.imagery,imageryRect:G.imageryRect,planData:this.planData(),paused:G.paused};},
@@ -4565,11 +4623,11 @@ const GameTools={
     N.routeEvaluations={...(N.routeEvaluations||{}),[G.ci]:evaluation};N.selected=G.ci;startMission(N,G.ci,G.diffKey,{ready:true});if(evaluation.unranked){RouteFlight.unranked=true;RouteFlight.note='Route changed; comparison unavailable for this saved mission. Travel and energy are distance-scaled estimates.';suitSay(RouteFlight.note,false);}return{ok:true,context:this.context()};
   },
   driveButton(){const b=$('btnDrive');if(!b)return;b.disabled=!!(G.R&&G.R.over)||!!this.starting;setText(b,G.paused||G.driveReady?'Start driving':'Driving');},
-  async startDriving(){if(this.starting||G.screen!=='play'||!G.R||G.R.over||(!G.paused&&!G.driveReady))return;const run=G.R,generation=RouteFlight.generation,pauseRevision=this.pauseRevision;this.starting=true;this.driveButton();
+  async startDriving(){if(this.starting||G.screen!=='play'||!G.R||G.R.over||(!G.paused&&!G.driveReady))return;const run=G.R,generation=RouteFlight.generation,pauseRevision=this.pauseRevision;this.starting=true;this.driveButton();this.captureControls();
     const canResume=()=>this.pauseRevision===pauseRevision&&!G.modal&&!D.hidden;
     try{if(W_.MarswalkRouteMap)W_.MarswalkRouteMap.close();this.closeBoard();if(G.cut)cutSkipAll();G.modal='';clearKeys();setHidden($('pause'),true);await RouteFlight.start();if(G.R!==run||RouteFlight.generation!==generation||G.screen!=='play')return;if(!canResume()){G.paused=true;RouteFlight.pause();return;}if(G.driveReady&&$('toast').textContent.startsWith('Ready at A.')){Radio.toastT=0;$('toast').classList.remove('on');}G.driveReady=false;G.paused=false;G.acc=0;}
     catch(e){if(G.R===run&&RouteFlight.generation===generation&&G.screen==='play'){suitSay('Route comparison unavailable: '+e.message+'. You can continue the mission.',false);RouteFlight.unranked=true;RouteFlight.retire().catch(()=>{});if(canResume()){G.driveReady=false;G.paused=false;}}}
-    finally{this.starting=false;this.driveButton();}
+    finally{this.starting=false;this.driveButton();if(G.R===run&&!G.paused&&!G.modal){const c=G3.on?$('gl'):cv;c.tabIndex=-1;c.focus({preventScroll:true});}}
   },
   openBoard(){if(G.screen==='play'&&G.R){this.pauseIntent();G.paused=true;RouteFlight.pause();clearKeys();if(D.pointerLockElement&&D.exitPointerLock)D.exitPointerLock();}G.modal='board';setHidden($('pause'),true);$('boardContent').appendChild($('lb'));this.boardTab(false);setHidden($('gameBoard'),false);$('boardClose').focus();lbRender();lbLoad();this.driveButton();},
   closeBoard(){if($('lb')&&$('lbHomeSlot'))$('lbHomeSlot').appendChild($('lb'));setHidden($('gameBoard'),true);if(G.modal==='board')G.modal='';this.driveButton();},
@@ -4603,20 +4661,18 @@ const RouteFlight={
   renderEnd(R){
     const el=$('endRouteComparison');if(!el||G.R!==R)return;el.replaceChildren();
     const receipt=R.routeReceipt,preview=receipt||R.routePreview||(R.routeAttemptId===this.attempt?.id?this.attempt:null);
-    const data=GameTools.planData(R.W.N,R.W.ci),own=preview?.metrics||R.W.N.routeEvaluations?.[R.W.ci]?.metrics||data?.reference?.metrics;
-    const reference=preview?.reference_metrics||data?.reference?.metrics||GameTools.referenceMetrics.get(GameTools.key(R.W.N,R.W.ci));
     const cabinEstimate=!R.hasO2&&R.W.veh.key==='buggy';
     const summary={
-      totalElapsedS:R.elapsedS,drivingElapsedS:preview?.active_drive_s??R.drivingElapsedS,
-      missionElapsedS:R.t*3600,playerModelS:own?.one_way_time_s??R.W.C.route.one_way_h*3600,
-      referenceModelS:reference?.one_way_time_s??null,
+      totalElapsedS:R.elapsedS,drivingElapsedS:R.drivingElapsedS,
+      missionElapsedS:R.t*3600,aiComparison:R.aiComparison,
       oxygenKg:R.hasO2?R.oxygenUsedKg:cabinEstimate?W_.MarswalkMissionResults?.cabinOxygenKg(R.t*3600,1):null,energyWh:R.energyUsedWh,
       oxygenBasis:cabinEstimate?'cabin-estimate':'game-model',crewCount:1,
     distanceM:R.odo*R.W.kDist,vehicleLabel:R.W.N.veh.label,vehicleKey:R.W.veh.key,drivingMissionS:Math.max(0,R.t-R.siteH)*3600,
-      resourceNote:(R.hasO2?'Oxygen is the game model consumption, including leaks and replenished supplies. ':cabinEstimate?'Cabin oxygen estimates one crew member at the NASA daily average over the simulated mission clock; it does not drain a gameplay tank. ':'Oxygen is not modeled for this vehicle. ')+(R.hasBat?'Energy includes modeled driving, hotel load and instruments.':'Energy covers modeled instruments only; suit power is not modeled.')+(!data?.available?' AI times use the saved planner estimate; edited uncaptured routes use a distance-scaled estimate.':'')
+      resourceNote:(R.hasO2?'Oxygen is the game model consumption, including leaks and replenished supplies. ':cabinEstimate?'Cabin oxygen estimates one crew member at the NASA daily average over the simulated mission clock; it does not drain a gameplay tank. ':'Oxygen is not modeled for this vehicle. ')+(R.hasBat?'Energy includes modeled driving, hotel load and instruments.':'Energy covers modeled instruments only; suit power is not modeled.')
     };
     const result=mk('div');result.id='missionResultsSummary';el.append(result);
     if(W_.MarswalkMissionResults)W_.MarswalkMissionResults.render(result,summary);
+    if(!R.aiComparison)DriveBenchmark.compare(R);
     if(receipt)el.append(mk('p','good','Leaderboard rank #'+receipt.rank));
     if(preview&&!receipt&&R.outcome==='success'){
       const submit=mk('button','',R.routeSubmitting?'Submitting…':'Submit route score');
@@ -4666,7 +4722,8 @@ function findRed(W, x, y) {           // nearest solid patch of off-limits groun
   return null;
 }
 W_.__MW = {
-  version: CFG.VERSION, state: G, CFG: CFG,
+  version: CFG.VERSION, state: G,
+  runDriveBenchmark:payload=>DriveBenchmark.run(payload), CFG: CFG,
   mapBridge:{getContext:()=>GameTools.context(),pauseForMap:()=>GameTools.pauseForMap(),closeMap:()=>GameTools.closeMap(),applyRoute:(points,evaluation)=>GameTools.applyRoute(points,evaluation),startDriving:()=>GameTools.startDriving(),loadPlan:()=>GameTools.loadPlan(G.N,G.ci)},
   routeTracking(){return{attempt:RouteFlight.attempt?JSON.parse(JSON.stringify(RouteFlight.attempt)):null,unranked:RouteFlight.unranked,note:RouteFlight.note,generation:RouteFlight.generation};}, // Read-only audit view; completion still requires the server.
   startBaked(i, cand, diff) { const N = G.baked[i | 0]; if (!N) return false; N.briefed = true; startMission(N, cand | 0, diff || G.diffKey); return true; },
@@ -4684,7 +4741,22 @@ W_.__MW = {
 // ---- boot
 function routeStart(skipSavedPlan) {
   const Q = new URLSearchParams(location.search), cand = Math.max(0, parseInt(Q.get("cand"), 10) || 0), direct = G.autopilot;       // autopilot demos start straight away; skip=1 only skips cutscenes
-  if(!skipSavedPlan&&Q.get('plan')){show('brief');setText($('bGoal'),'Loading your mission…');setText($('bSub'),'Restoring the selected planner route');$('bLaunch').disabled=true;GameTools.restorePlan(Q.get('plan'),cand).then(N=>{$('bLaunch').disabled=false;if(N){if(direct){N.briefed=true;startMission(N,N.selected,G.diffKey);}else openBriefing(N);}else routeStart(true);});return;}
+  if(Q.get('src')==='planner'){
+    const handed=readHandoff();
+    if(handed&&(!Q.get('plan')||handed.id===Q.get('plan'))){
+      if(Q.has('cand'))handed.selected=clamp(cand,0,handed.cands.length-1);
+      if(direct){handed.briefed=true;startMission(handed,handed.selected,G.diffKey);}else openBriefing(handed);
+      return;
+    }
+  }
+  if(!skipSavedPlan&&Q.get('plan')){
+    show('brief');setText($('bGoal'),'Loading your mission…');setText($('bSub'),'Restoring the selected planner route');$('bLaunch').disabled=true;
+    GameTools.restorePlan(Q.get('plan'),cand).then(N=>{
+      $('bLaunch').disabled=false;
+      if(N){if(direct){N.briefed=true;startMission(N,N.selected,G.diffKey);}else openBriefing(N);}
+      else {setText($('bGoal'),'Your saved mission could not load');setText($('bSub'),'Return to the planner and use Play route again.');$('bLaunch').disabled=true;}
+    });return;
+  }
   if (Q.has('baked')) {
     const N = G.baked[clamp(parseInt(Q.get('baked'), 10) || 0, 0, G.baked.length - 1)];
     if (N) { N.briefed = true; startMission(N, cand, G.diffKey); return; }
@@ -4709,6 +4781,7 @@ function routeStart(skipSavedPlan) {
 }
 function boot() {
   const Q = new URLSearchParams(location.search);
+  if(Q.get('drive-benchmark')==='1'){G.benchmark=true;API.on=false;API.ok=false;G.mute=true;G.skip=true;return;}
   G.skip = Q.get('skip') === '1'; G.autopilot = Q.get('autopilot') === '1'; G.mute = Q.get('mute') === '1';
   G.speed = clamp(parseInt(Q.get('speed'), 10) || 1, 1, 200); G.seedParam = Q.has('seed') ? parseInt(Q.get('seed'), 10) : NaN;
   if (DIFF[Q.get('difficulty')]) G.diffKey = Q.get('difficulty');

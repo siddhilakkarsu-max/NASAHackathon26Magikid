@@ -82,26 +82,25 @@
     container.replaceChildren(); container.classList.add('mission-results');
     if (!document.getElementById('missionResultsStyle')) {
       const style = element('style'); style.id = 'missionResultsStyle';
-      style.textContent = '.mission-results .cost-rates{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0}.mission-results .cost-rates label{display:flex;flex-direction:column;gap:5px;flex:1 1 145px;min-width:0}.mission-results .cost-rates input{width:100%;min-width:0;box-sizing:border-box}.mission-results .stat th{text-align:left;font-weight:400}.mission-results details{margin-top:12px}.mission-results li{margin:7px 0}.mission-results .stat{width:100%;table-layout:fixed}.mission-results td,.mission-results th{overflow-wrap:anywhere}.mission-results [data-cost-status]{min-height:1.4em}';
+      style.textContent = '.mission-results .cost-rates{display:flex;flex-wrap:wrap;gap:12px;margin:12px 0}.mission-results .cost-rates label{display:flex;flex-direction:column;gap:5px;flex:1 1 145px;min-width:0}.mission-results .cost-rates input{width:100%;min-width:0;box-sizing:border-box}.mission-results .stat th{text-align:left;font-weight:400}.mission-results details{margin-top:12px}.mission-results li{margin:7px 0}.mission-results .stat{width:100%;table-layout:fixed}.mission-results td,.mission-results th{overflow-wrap:anywhere}.mission-results [data-cost-status]{min-height:1.4em}.mission-results .stat{font-size:clamp(20px,2vw,26px);line-height:1.45}.mission-results .stat th{width:62%;padding:14px 10px;color:#e9dfd4}.mission-results .stat td{padding:14px 10px;text-align:right;font-weight:650;font-variant-numeric:tabular-nums}.mission-results h3{font-size:25px}.mission-results summary{font-size:20px}.mission-results .small{font-size:16px;line-height:1.5}.mission-results .stat [data-cost-status]{font-size:20px}@media(max-width:600px){.mission-results .stat{font-size:20px}.mission-results .stat th{width:56%;padding:12px 4px}.mission-results .stat td{padding:12px 4px}.mission-results .stat [data-cost-status]{font-size:18px}}';
       document.head.append(style);
     }
     container.append(element('h3', 'Mission results'));
     const times = element('table', null, 'stat'); times.setAttribute('aria-label', 'Mission time comparison');
-    row(times, 'Your total time · active play', duration(summary.totalElapsedS), 'total-time');
-    row(times, 'Your driving time · active play', duration(summary.drivingElapsedS), 'driving-time');
-    row(times, 'AI on your route · estimated mission time', duration(summary.playerModelS), 'player-model-time');
-    row(times, 'AI on its own route · estimated mission time', duration(summary.referenceModelS), 'reference-model-time');
-    container.append(times, element('p', 'Your times exclude pauses and menus. AI estimates cover A → B travel only, using the same terrain and vehicle model. The game speeds up the mission clock.', 'small'));
+    row(times, 'Your total time', duration(summary.totalElapsedS), 'total-time');
+    row(times, 'Your driving time', duration(summary.drivingElapsedS), 'driving-time');
+    const comparison=summary.aiComparison;
+    const aiTime=result=>result?.status==='complete'?duration(result.seconds):result?.status==='failed'?'Did not finish':comparison?.status==='failed'?'Unavailable':'AI driving…';
+    row(times, 'AI on your route', aiTime(comparison?.own), 'player-model-time');
+    row(times, 'AI on its own route', aiTime(comparison?.reference), 'reference-model-time');
+    container.append(times, element('p', 'Driving times use the same gameplay clock and exclude sampling. Total time includes sampling. Pauses and menus are excluded.', 'small'));
     const resources = element('table', null, 'stat'); resources.setAttribute('aria-label', 'Surface mission resources');
-    row(resources, 'Your mission clock · travel and sampling', duration(summary.missionElapsedS), 'mission-time');
-    if (finite(summary.drivingMissionS)) row(resources, 'Your driving · mission clock', duration(summary.drivingMissionS), 'mission-driving-time');
     const oxygenLabel = summary.oxygenBasis === 'cabin-estimate' ? 'Oxygen used · cabin estimate (' + (summary.crewCount || 1) + ' crew)' : 'Oxygen used · game model';
     row(resources, oxygenLabel, finite(summary.oxygenKg) ? summary.oxygenKg.toFixed(3) + ' kg' : 'Not modeled for this vehicle', 'oxygen');
     row(resources, 'Electrical energy used · game model', finite(summary.energyWh) ? summary.energyWh.toFixed(1) + ' Wh' : 'Not modeled for this vehicle', 'energy');
     if (finite(summary.distanceM)) row(resources, 'Distance traveled · A → B', (summary.distanceM / 1000).toFixed(2) + ' km', 'distance');
     container.append(resources);
-    const heading = element('h3', 'Surface operating cost'), output = element('p', null, 'small'); output.dataset.costStatus = ''; output.setAttribute('aria-live', 'polite');
-    container.append(heading, output);
+    const output = row(resources, 'Your cost', '', 'cost'); output.dataset.costStatus = ''; output.setAttribute('aria-live', 'polite');
     const settings = element('details'), controls = element('div', null, 'cost-rates'); settings.append(element('summary', 'Your cost model · USD'));
     settings.append(element('p', 'Set your rates to calculate an estimate. These are your assumptions, not NASA prices. Use 0 only for a cost you want to exclude.', 'small'));
     let saved = {}; try { saved = JSON.parse(localStorage.getItem(STORE) || '{}') || {}; } catch (_) {}
@@ -117,8 +116,8 @@
       const values = Object.fromEntries(RATE_KEYS.map(key => [key, inputs[key].value]));
       const result = cost(summary, values);
       RATE_KEYS.forEach(key => inputs[key].setAttribute('aria-invalid', String(inputs[key].value !== '' && rate(inputs[key].value) === null)));
-      output.textContent = result.value === null ? result.reason : money(result.value) + ' USD · your surface cost estimate';
-      breakdown.textContent = result.value === null ? '' : 'Operations ' + money(result.breakdown.hour) + ' + oxygen ' + money(result.breakdown.oxygen) + ' + electricity ' + money(result.breakdown.energy) + (result.excluded.length ? '. Excluded at your zero rate: ' + result.excluded.join(', ') + '.' : '.');
+      output.textContent = result.value === null ? 'Set your cost model below' : money(result.value) + ' USD';
+      breakdown.textContent = result.value === null ? result.reason : 'Operations ' + money(result.breakdown.hour) + ' + oxygen ' + money(result.breakdown.oxygen) + ' + electricity ' + money(result.breakdown.energy) + (result.excluded.length ? '. Excluded at your zero rate: ' + result.excluded.join(', ') + '.' : '.');
       try { localStorage.setItem(STORE, JSON.stringify(values)); } catch (_) {}
     }
     RATE_KEYS.forEach(key => inputs[key].addEventListener('input', update)); update();

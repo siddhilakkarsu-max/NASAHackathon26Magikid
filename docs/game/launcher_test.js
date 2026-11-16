@@ -34,16 +34,16 @@ function plain(value){return JSON.parse(JSON.stringify(value))}
   assert.equal(payload.region,'area_saved');assert.equal(payload.selected,2);
   assert.equal(payload.hour,12,'mission start time survives a changed slider');assert.equal(payload.ls,247.5);
   assert.equal(payload.mission.goal_ai,undefined);assert.equal(payload.ai.goal.content,'goal content');
-  assert.equal(h.api.open(),'game.html?src=planner');
+  assert.equal(h.api.open(),'game.html?src=planner&plan=selected-plan&cand=2');
   assert.equal(h.saved[0].key,'marswalk.game.mission');assert.equal(h.saved[0].payload.mission.science_image,'image-science');
-  assert.deepEqual(h.opened[0],['game.html?src=planner','_blank','noopener']);
+  assert.deepEqual(h.opened[0],['game.html?src=planner&plan=selected-plan&cand=2','_blank','noopener']);
   const original=h.api;vm.runInContext(source,h.ctx);assert.equal(h.window.MarswalkGameLaunch,original,'loading twice must not duplicate mounting');
 }
 {
   const p=plan();delete p.request_region;assert.equal(host({plan:p}).api.buildPayload().region,'area_resolved','anywhere resolves to a real region');
 }
 {
-  const h=host({storage:'images-full'});assert.equal(h.api.open(),'game.html?src=planner');
+  const h=host({storage:'images-full'});assert.equal(h.api.open(),'game.html?src=planner&plan=selected-plan&cand=2');
   assert.equal(h.saved[0].payload.mission.science_image,undefined);assert.equal(h.saved[0].payload.selected,2);
 }
 {
