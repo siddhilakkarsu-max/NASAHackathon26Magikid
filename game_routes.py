@@ -1,7 +1,8 @@
 """Route comparison attached to the existing planner and survival game.
 
 The planner captures its own result and measured cube. Browser geometry is
-evaluated against that immutable snapshot; a browser never supplies a score.
+evaluated against that immutable snapshot. AI driving ticks are reported by the
+browser simulator, not recomputed by Python; rankings are not cheat-proof.
 This module has no independent mission generator, home screen or demo terrain.
 """
 from contextlib import contextmanager
@@ -13,6 +14,9 @@ import secrets
 import sqlite3
 import threading
 import time
+from pathlib import Path
+from functools import lru_cache
+from typing import Literal
 
 import numpy as np
 from fastapi import APIRouter, HTTPException, Query
@@ -24,7 +28,8 @@ import physics
 from config import MARS_RADIUS_M, MISSION_VEHICLES, SITE_HOURS, region_box
 
 router = APIRouter(prefix="/api/game", tags=["game routes"])
-MODEL_VERSION = "planner-route-comparison-v2-single-site"
+MODEL_VERSION = "planner-route-comparison-v5-ideal-path"
+BENCHMARK_VERSION = "ideal-path-drive-v3"
 MAX_POINTS = 5000
 MAX_DRIVE_M_S = 60.0  # Above the game's 45 m/s presentation cap, including storm drift.
 MAX_HEARTBEAT_GAP_S = 4.0
@@ -77,6 +82,8 @@ def _db():
             idempotency_key TEXT NOT NULL, payload TEXT NOT NULL, state TEXT NOT NULL,
             UNIQUE(name_lc,idempotency_key));
           CREATE INDEX IF NOT EXISTS attempts_key ON attempts(mission_key,name_lc);
+          CREATE TABLE IF NOT EXISTS route_guests(name TEXT PRIMARY KEY,
+            token_hash TEXT NOT NULL, created REAL NOT NULL);
         """)
         _path = path
         _terrain_cache.clear()
@@ -420,6 +427,93 @@ class Credentials(Strict):
 class StartRequest(Credentials,RouteRequest):
     plan_id: str=Field(min_length=1,max_length=80)
     idempotency_key: str=Field(min_length=8,max_length=100)
+    difficulty: Literal["cadet","astronaut","commander"]="astronaut"
+    driving_mode: Literal["2d","3d"]="3d"
+
+
+class ClaimAttemptRequest(Credentials):
+    guest_token: str=Field(min_length=8,max_length=200)
+
+
+class FinishRequest(Credentials):
+    ai_drive_ticks: int=Field(gt=0,le=54000,strict=True)
+    route_hash: str=Field(min_length=64,max_length=64)
+    benchmark_version: Literal["ideal-path-drive-v3"]
+
+
+class CompletedRouteRequest(StartRequest,FinishRequest):
+    route_hash: str|None=None
+    position: Point
+    samples: Literal[1]
+    actual_driving_time_s: float=Field(ge=0,le=86400)
+
+
+@lru_cache(maxsize=1)
+def _bundled_plans():
+    # Read the same bundled planner responses the standalone game uses.
+    source=(Path(__file__).parent/'frontend'/'game.html').read_text(encoding='utf-8')
+    plans=json.JSONDecoder().raw_decode(source.split('const BAKED = ',1)[1])[0]
+    return {p['id']:p for p in plans}
+
+
+def _result_plan(plan_id):
+    if plan_id in _bundled_plans():return _bundled_plans()[plan_id]
+    return _plan(plan_id)[1]
+
+
+def _result_key(plan,candidate):
+    return _hash(dict(source='completed-game',plan=plan['id'],settings=plan['settings'],
+                      reference=_candidate(plan,candidate)['route']['points'],version=MODEL_VERSION))
+
+
+@router.get('/standalone-plans/{plan_id}')
+def standalone_plan(plan_id:str,candidate:int=Query(0,ge=0,le=8)):
+    plan=_result_plan(plan_id);c=_candidate(plan,candidate)
+    return dict(available=False,submission_available=True,key=_result_key(plan,candidate),
+                reference=dict(points=_points(c['route']['points'])),
+                reason='This mission uses the saved game terrain model.')
+
+
+@router.post('/route-results')
+def completed_route(req:CompletedRouteRequest):
+    """Persist completed standalone runs; completion and AI time are browser-reported.
+
+    Kept on a separate board from server-tracked terrain-validated attempts.
+    No planner assistant or pre-mission identity is required.
+    """
+    name=_auth(req)
+    if name.startswith('@guest:'):raise HTTPException(400,'Choose a callsign first.')
+    plan=_result_plan(req.plan_id);cand=_candidate(plan,req.candidate)
+    points=_points([p.model_dump() for p in req.points]);reference=_points(cand['route']['points'])
+    def xy(p):
+        return np.array([p['lon']*math.cos(math.radians(reference[0]['lat'])),p['lat']])*math.pi/180*MARS_RADIUS_M
+    if any(float(np.linalg.norm(xy(points[i])-xy(reference[i])))>1 for i in (0,-1)):
+        raise HTTPException(400,'Keep the original start and destination.')
+    if float(np.linalg.norm(xy(req.position.model_dump())-xy(reference[-1])))>SCIENCE_RADIUS_M:
+        raise HTTPException(400,'Complete the sample at the destination before submitting.')
+    distance=sum(float(np.linalg.norm(xy(b)-xy(a))) for a,b in zip(points,points[1:]))
+    if distance>200000:raise HTTPException(400,'The route is too long.')
+    # Match JSON coordinate normalization used by tracked route hashing.
+    if req.route_hash is not None and req.route_hash!=_hash(points):raise HTTPException(409,'The result belongs to a different route.')
+    key=_score_key(_result_key(plan,req.candidate),req.difficulty,req.driving_mode)
+    payload=dict(model_version=MODEL_VERSION,key=key,points=points,route_hash=_hash(points),
+                 metrics=dict(distance_m=distance),reference_metrics={},source='completed-game')
+    with _write() as db:
+        prior=db.execute('SELECT * FROM attempts WHERE name_lc=? AND idempotency_key=?',(name.lower(),req.idempotency_key)).fetchone()
+        if prior:
+            saved=json.loads(prior['payload']);state=json.loads(prior['state'])
+            if saved['key']!=key or saved['route_hash']!=payload['route_hash'] or state['ai_drive_ticks']!=req.ai_drive_ticks:
+                raise HTTPException(409,'This submission key belongs to a different result.')
+            return _snapshot(prior,saved,state)
+        attempt_id=secrets.token_urlsafe(18)
+        state=dict(status='finished',mode='paused',position=req.position.model_dump(),samples=1,
+                   objective_complete=True,visited_destination=True,active_drive_s=req.actual_driving_time_s,
+                   ai_drive_ticks=req.ai_drive_ticks,ai_driving_time_s=round(req.ai_drive_ticks/30,6),
+                   benchmark_version=BENCHMARK_VERSION)
+        db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?)',(attempt_id,name.lower(),name,req.plan_id,req.candidate,key,req.idempotency_key,_json(payload),_json(state)))
+        board,_=_board(db,key,limit=None);state['rank']=next(e['rank'] for e in board if e['name'].lower()==name.lower())
+        _save(db,attempt_id,state)
+        return _snapshot(*_attempt(db,attempt_id,name))
 
 
 class ProgressRequest(Credentials):
@@ -430,12 +524,32 @@ class ProgressRequest(Credentials):
 
 
 def _auth(req):
+    if req.name.startswith("@guest:"):
+        with _lock:
+            row=_db().execute("SELECT token_hash FROM route_guests WHERE name=?",(req.name,)).fetchone()
+        if row is None or not secrets.compare_digest(row[0],players._hash(req.token)):
+            raise HTTPException(403,"This browser does not hold that guest attempt.")
+        return req.name
     name=players.clean_name(req.name)
     with players._lock:
         row=players._db().execute("SELECT name,token_hash FROM players WHERE name_lc=?",(name.lower(),)).fetchone()
     if row is None or not secrets.compare_digest(row[1],players._hash(req.token)):
         raise HTTPException(403,"Claim this callsign before submitting route scores.")
     return row[0]
+
+
+@router.post("/route-guests")
+def create_route_guest():
+    # A private browser capability, not a public callsign or account login.
+    name="@guest:"+secrets.token_hex(12)
+    token=secrets.token_urlsafe(24)
+    with _write() as db:
+        db.execute("INSERT INTO route_guests VALUES(?,?,?)",(name,players._hash(token),time.time()))
+    return dict(name=name,token=token)
+
+
+def _score_key(key,difficulty,driving_mode):
+    return _hash(dict(mission=key,difficulty=difficulty,driving_mode=driving_mode))
 
 
 def _attempt(db,attempt_id,name,allow_legacy=False):
@@ -462,6 +576,9 @@ def start(req: StartRequest):
     payload=evaluate(req.plan_id,RouteRequest(candidate=req.candidate,points=req.points))
     payload["model_version"]=MODEL_VERSION
     payload["max_drive_m_s"]=MAX_DRIVE_M_S
+    payload["difficulty"]=req.difficulty
+    payload["driving_mode"]=req.driving_mode
+    payload["key"]=_score_key(payload["key"],req.difficulty,req.driving_mode)
     with _write() as db:
         prior=db.execute("SELECT * FROM attempts WHERE name_lc=? AND idempotency_key=?",(name.lower(),req.idempotency_key)).fetchone()
         if prior:
@@ -478,6 +595,28 @@ def start(req: StartRequest):
         state=dict(status="active",mode="paused",sequence=0,position=payload["points"][0],samples=0,
                    visited_destination=False,objective_complete=False,active_drive_s=0.,updated=time.monotonic(),request_hash=None)
         db.execute("INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?)",(attempt_id,name.lower(),name,req.plan_id,req.candidate,payload["key"],req.idempotency_key,_json(payload),_json(state)))
+        return _snapshot(*_attempt(db,attempt_id,name))
+
+
+@router.post("/route-attempts/{attempt_id}/claim")
+def claim_attempt(attempt_id:str,req:ClaimAttemptRequest):
+    name=_auth(req)
+    if name.startswith("@guest:"):
+        raise HTTPException(400,"Choose a callsign before joining the leaderboard.")
+    with _write() as db:
+        row=db.execute("SELECT * FROM attempts WHERE id=?",(attempt_id,)).fetchone()
+        if row is None:raise HTTPException(404,"Route attempt not found.")
+        if row["name_lc"]==name.lower():return _snapshot(*_attempt(db,attempt_id,name))
+        guest=db.execute("SELECT token_hash FROM route_guests WHERE name=?",(row["name"],)).fetchone()
+        if guest is None or not secrets.compare_digest(guest[0],players._hash(req.guest_token)):
+            raise HTTPException(403,"This browser does not hold that guest attempt.")
+        _,payload,state=_attempt(db,attempt_id,row["name"])
+        if state["status"]!="active" or not state.get("objective_complete"):
+            raise HTTPException(400,"Complete the sample at B before claiming this result.")
+        try:
+            db.execute("UPDATE attempts SET name_lc=?,name=? WHERE id=?",(name.lower(),name,attempt_id))
+        except sqlite3.IntegrityError:
+            raise HTTPException(409,"That callsign already owns an attempt with this key.")
         return _snapshot(*_attempt(db,attempt_id,name))
 
 
@@ -561,30 +700,36 @@ def _board(db,key,limit=100):
     for row in db.execute("SELECT * FROM attempts WHERE mission_key=?",(key,)):
         state,payload=json.loads(row["state"]),json.loads(row["payload"])
         if state["status"]!="finished" or payload.get("model_version")!=MODEL_VERSION:continue
-        entry=dict(name=row["name"],attempt_id=row["id"],simulated_time_s=payload["metrics"]["simulated_time_s"],
+        ticks=state.get("ai_drive_ticks")
+        if type(ticks) is not int or ticks<=0 or state.get("benchmark_version")!=BENCHMARK_VERSION:continue
+        entry=dict(name=row["name"],attempt_id=row["id"],ai_drive_ticks=ticks,ai_driving_time_s=round(ticks/30,6),
                    distance_m=payload["metrics"]["distance_m"],actual_driving_time_s=round(state["active_drive_s"],3),points=payload["points"])
-        if row["name_lc"] not in best or entry["simulated_time_s"]<best[row["name_lc"]]["simulated_time_s"]:best[row["name_lc"]]=entry
-    values=sorted(best.values(),key=lambda e:(e["simulated_time_s"],e["name"].lower()))
+        if row["name_lc"] not in best or ticks<best[row["name_lc"]]["ai_drive_ticks"]:best[row["name_lc"]]=entry
+    values=sorted(best.values(),key=lambda e:(e["ai_drive_ticks"],e["name"].lower()))
     rank=0;previous=None
     for i,e in enumerate(values,1):
-        if e["simulated_time_s"]!=previous:rank=i;previous=e["simulated_time_s"]
+        if e["ai_drive_ticks"]!=previous:rank=i;previous=e["ai_drive_ticks"]
         e["rank"]=rank
     return (values if limit is None else values[:limit]),len(values)
 
 
 @router.post("/route-attempts/{attempt_id}/finish")
-def finish(attempt_id:str,req:Credentials):
+def finish(attempt_id:str,req:FinishRequest):
     name=_auth(req)
+    if name.startswith("@guest:"):raise HTTPException(400,"Choose a callsign before joining the leaderboard.")
     with _write() as db:
         row,payload,state=_attempt(db,attempt_id,name)
         if state["status"]=="finished":return _snapshot(row,payload,state)
         if state["status"]!="active":raise HTTPException(409,"This route attempt was restarted.")
+        if req.route_hash!=payload["route_hash"]:
+            raise HTTPException(409,"The AI comparison belongs to a different route.")
         record,plan=_plan(row["plan_id"]);data=_terrain(record["terrain"])
         if not state["visited_destination"] or not state.get("objective_complete") or state["samples"]!=1 or float(np.linalg.norm(_local(state["position"],data)-_local(payload["points"][-1],data)))>SCIENCE_RADIUS_M:
             raise HTTPException(400,"Reach B and complete its sample before submitting this mission.")
         checked=_evaluate(record,plan,row["candidate"],payload["points"])
         if checked["metrics"]!=payload["metrics"]:raise HTTPException(409,"The route model changed; restart the attempt.")
-        state.update(status="finished",mode="paused")
+        state.update(status="finished",mode="paused",ai_drive_ticks=req.ai_drive_ticks,
+                     ai_driving_time_s=round(req.ai_drive_ticks/30,6),benchmark_version=req.benchmark_version)
         _save(db,attempt_id,state)
         # A submission receipt needs its rank even when it lies beyond the
         # first page, including a tie containing more than 100 callsigns.
@@ -595,11 +740,16 @@ def finish(attempt_id:str,req:Credentials):
 
 
 @router.get("/route-leaderboard")
-def route_leaderboard(key:str=Query(min_length=1,max_length=80),limit:int=Query(20,ge=1,le=100)):
+def route_leaderboard(key:str=Query(min_length=1,max_length=80),limit:int=Query(20,ge=1,le=100),
+                      difficulty:Literal["cadet","astronaut","commander"]|None=None,
+                      driving_mode:Literal["2d","3d"]|None=None):
+    if difficulty is not None or driving_mode is not None:
+        key=_score_key(key,difficulty or "astronaut",driving_mode or "3d")
     with _lock:
         db=_db();board,count=_board(db,key,limit)
         row=db.execute("SELECT payload FROM attempts WHERE mission_key=? LIMIT 1",(key,)).fetchone()
     payload=json.loads(row[0]) if row else None
     reference=payload["reference_metrics"] if payload and payload.get("model_version")==MODEL_VERSION else None
     return dict(key=key,board=board,players=count,reference_metrics=reference,
-                score_label="AI-estimated one-way A to B travel time; lower is better",model_version=MODEL_VERSION)
+                score_label="AI driving your designed route; lower is better",model_version=MODEL_VERSION,
+                benchmark_version=BENCHMARK_VERSION)

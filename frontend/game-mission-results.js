@@ -49,6 +49,7 @@
   }
   function sources(summary) {
     const details = element('details'); details.append(element('summary', 'Sources and model assumptions'));
+    details.append(element('p','AI times model an ideal driver following every designed route segment at its terrain-limited speed, without steering errors, reaction delays or random incidents. They are best-case model times, not measured autonomous NASA rover performance. Both drivers use the same physical speed envelope and gameplay time compression.'));
     const resourceNote = summary.oxygenBasis === 'cabin-estimate' ?
       'Electrical use is accumulated from the game simulation through sampling. Cabin oxygen is estimated from the mission clock and the NASA baseline below. These are model estimates, not measurements from a real Mars mission.' :
       'Resources are accumulated from the game simulation through sampling. Terrain, carried load, difficulty and hazards affect consumption; these are estimates, not measurements from a real Mars mission.';
@@ -69,11 +70,14 @@
       add('NASA Mars surface-power study (2022), Table 1', 'https://ntrs.nasa.gov/citations/20210022250',
         'Concept rover: 5,193 kg, 60 kWh storage, 1.85 kW hotel load and rolling resistance 0.15. The game derives about 0.80 kWh/km on level Mars terrain, then applies its terrain and load model.');
     } else if (summary.vehicleKey === 'four_wheel' || /Apollo|open crew/i.test(summary.vehicleLabel || '')) {
+      add('NASA Apollo 15 rover performance', 'https://history.nasa.gov/wp-content/uploads/static/history/alsj/WOTM/WOTM-LRVPerformance.html',
+        'The game uses the observed 13 km/h level-ground maximum as its Apollo-class speed envelope. This is a lunar vehicle analogy, not a Mars rover measurement.');
       add('NASA Apollo Lunar Roving Vehicle', 'https://nssdc.gsfc.nasa.gov/planetary/lunar/apollo_lrv.html',
         'Two 36 V, 121 Ah batteries give 8.712 kWh nominal storage. The game adapts an Apollo-class vehicle to Mars; terrain penalties and its 0.095 kWh/km rate are model assumptions.');
     } else if (summary.vehicleKey === 'two_wheel') {
       list.append(element('li', 'Scout-bike power and driving loads are game engineering assumptions; no NASA vehicle specification is claimed.'));
     }
+    if(summary.vehicleKey==='buggy')add('NASA Space Exploration Vehicle concept','https://science.nasa.gov/3d-resources/space-exploration-vehicle/','The pressurized rover model uses the SEV concept speed of about 10 km/h. Terrain reduces this speed.');
     details.append(list, element('p', 'Cost = simulated surface hours × your USD/hour + oxygen kg × your USD/kg + electrical kWh × your USD/kWh. Enter an hourly rate excluding oxygen and electricity to avoid double counting. This covers A to the objective and sampling only. Launches, transit, spacecraft purchase and a return journey are excluded. NASA sources inform physical quantities, not these user-supplied prices.', 'small'));
     return details;
   }
