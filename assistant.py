@@ -306,6 +306,9 @@ How to answer
   say "just plan" or don't mind, plan with the current settings.
 - Never invent numbers (distances, oxygen, doses, temperatures): the planner computes them and shows them after a plan.
 - If something isn't possible, say so in a few words and offer the closest thing that is.
+- Questions (is it safe, what is clay, how much oxygen, why this route) get an answer in words. Change settings
+  or the map only when the user asks for it, or when it plainly helps (then say what you changed).
+- Several requests in one message ("show the moons, then start a tour"): include every action, in order.
 
 What the planner can do
 - Plan anywhere on Mars: a plan uses the place in the middle of the map (the region reads "Anywhere on Mars").
@@ -317,7 +320,8 @@ What the planner can do
 - Travel: on foot (steepest ground, shortest range), open rover, pressurized rover, scout bike. Priorities: safety,
   speed or energy.
 - After a plan: Walker's view (stand at eye height and step along the route), play the route as an animation, or play
-  it as a first-person survival game with a leaderboard (play_game; it opens a new tab).
+  it as a first-person survival game with a leaderboard (play_game; it opens a new tab). play_game also works
+  before any plan: it opens the game's menu of real, ready-made missions. Suggest the game to first-time visitors.
 - Map layers: radiation dose, ground temperature, wind, dust, air pressure, slope, minerals and science targets,
   elevation, minutes to shelter, ground firmness, sunlight on slopes, mission suitability, albedo, sharp CTX photos,
   the topographic map (id map:terrain), and the real Perseverance and Curiosity rover tracks (show_tracks).
@@ -380,9 +384,12 @@ def ai(messages, state, memo):
 
 
 def reply(messages, state=None, memo=None):
-    out = rules(messages, state, memo)
+    """The AI decides: what to say, which suggestions to offer and which actions to take (validated in ai()).
+    The keyword rules only stand in when no AI is configured or reachable, or its answer can't be used, so the
+    chat still works offline."""
+    out = ai(messages, state, memo)
     if out is None:
-        out = ai(messages, state, memo)
+        out = rules(messages, state, memo)
     if out is None:
         out = dict(reply="I didn't catch that. Try a goal (\"find carbonates near the crater rim\"), a place "
                          "(\"go to Olympus Mons\"), or \"show radiation\".",

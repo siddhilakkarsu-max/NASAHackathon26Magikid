@@ -71,3 +71,38 @@ def test_ai_answers_are_checked(monkeypatch):
     out = assistant.ai([{"role": "user", "text": "surprise me"}], {"region": "Anywhere on Mars"}, {})
     assert out["actions"] == [{"type": "show_moons", "view": "phobos"}, {"type": "start_tour", "kind": "flythrough"},
                               {"type": "play_game"}]
+
+
+def _ai_says(monkeypatch, answer):
+    import search
+    calls = []
+
+    def fake(system, prompt, max_tokens=500):
+        calls.append(prompt)
+        return json.dumps(answer) if answer else None
+    monkeypatch.setattr(search, "ai_write", fake)
+    return calls
+
+
+def test_the_ai_decides_every_message(monkeypatch):
+    calls = _ai_says(monkeypatch, {"reply": "Night walks need lights, and dust season adds storm risk.", "chips": [],
+                                   "actions": [{"type": "show_moons", "view": "system"}, {"type": "start_tour"}]})
+    for q in ("is it safe to walk at night in dust storm season?", "what is clay?", "show radiation",
+              "can you show me phobos?", "show me the moons and then start a tour", "just plan"):
+        out = say(q)
+        assert out["source"] == "ai" and out["reply"].startswith("Night walks"), q
+    assert len(calls) == 6
+    assert [a["type"] for a in say("show me the moons and then start a tour")["actions"]] == ["show_moons", "start_tour"]
+
+
+def test_rules_only_stand_in_when_the_ai_is_unavailable(monkeypatch):
+    calls = _ai_says(monkeypatch, None)
+    out = say("show radiation")
+    assert out["source"] == "rules" and first(out) == {"type": "show_layer", "layer": "radiation_dose"}
+    assert len(calls) == 1                                    # asked the AI once, then the rules answered
+    junk = _ai_says(monkeypatch, {"chips": []})              # an unusable AI answer (no reply) also falls back
+    assert say("show radiation")["source"] == "rules" and len(junk) == 1
+
+
+def test_prompt_tells_the_ai_to_answer_questions_and_offer_the_game():
+    assert "get an answer in words" in assistant._SYSTEM and "before any plan" in assistant._SYSTEM
