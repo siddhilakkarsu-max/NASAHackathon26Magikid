@@ -65,3 +65,7 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#59](PR-059-aisearch.md) | Sharp map on high-DPI (Retina) screens | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
 | [#60](PR-060-feat-jason-chen10-marsmap.md) | Add JPL Mars moons, animated overview, and reliable cached reloads | `siddhilakkarsu-max/feat/jason-chen10-marsmap` | 2026-11-15 | 1 file(s) |
 | [#61](PR-061-feat-gk-juice.md) | Juice: make the planner fun to click (press physics, sounds, slider bubbles, confetti, XP and badges) | `anh-gl-nguyen1762/feat/Gk-juice` | 2026-11-15 | none |
+| [#62](PR-062-aisearch.md) | Plan where the camera looks, loading progress bar, 13x faster mineral maps, zoom to the route | `siddhilakkarsu-max/aisearch` | 2026-11-15 | 1 file(s) |
+| [#63](PR-063-feat-gk-mobile.md) | Phones: full-width assistant chat; Helmut's bubble no longer covers Send | `anh-gl-nguyen1762/feat/Gk-mobile` | 2026-11-15 | none |
+| [#64](PR-064-feat-gk-click.md) | Juice: a crisp, satisfying two-part click for every button, key and slider | `anh-gl-nguyen1762/feat/Gk-click` | 2026-11-15 | 1 file(s) |
+| [#65](PR-065-feat-gk-assistant.md) | Assistant: up to date with the planner (plan-anywhere, moons, overview, tour, game, badges, Helmut) | `anh-gl-nguyen1762/feat/Gk-assistant` | 2026-11-15 | none |

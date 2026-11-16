@@ -843,15 +843,31 @@ function syncPlanningMoons() {
   marsMoons.syncPlanning({ hour: +$("hour").value, ls: +$("ls").value, longitude: planningLongitude() });
 }
 
+// Busy = something the user started is still running. The idle globe spin (mars_overview.js) waits until
+// nothing is: no server call, camera move, plan, AI text, loading area or layer, assistant reply, route
+// playback, Walker's view or open help.
+let serverCalls = 0, cameraMoving = false;
+viewer.camera.moveStart.addEventListener(() => { cameraMoving = true; });
+viewer.camera.moveEnd.addEventListener(() => { cameraMoving = false; });
+function plannerBusy() {
+  return serverCalls > 0 || cameraMoving || $("runMission").disabled ||
+    !!(mission?.explain_ai?.live || mission?.annot_ai?.live) ||
+    !!($("areaProgress") && !$("areaProgress").hidden) || /^Loading/.test($("layerStatus").textContent) ||
+    !!document.querySelector("#gmChat .msg.wait") || $("playRoute").textContent === "Pause" ||
+    routePlayback.walking() || !!document.querySelector("dialog[open]");
+}
 async function api(path, body, signal) {
   const options = body ? { method: "POST", headers: { "Content-Type": "application/json" },
                            body: JSON.stringify(body), signal } : { signal };
-  const r = await fetch(API + path, options);
-  if (!r.ok) {
-    const error = await r.json().catch(() => ({}));
-    throw new Error(typeof error.detail === "string" ? error.detail : `Request failed (${r.status}).`);
-  }
-  return r.json();
+  serverCalls++;
+  try {
+    const r = await fetch(API + path, options);
+    if (!r.ok) {
+      const error = await r.json().catch(() => ({}));
+      throw new Error(typeof error.detail === "string" ? error.detail : `Request failed (${r.status}).`);
+    }
+    return await r.json();
+  } finally { serverCalls--; }
 }
 
 // -------------------------------------------------------------- overlays ----
@@ -1461,6 +1477,10 @@ function marker(ds, p, color, text, size = 11) {
 let missionCtl = null;                       // the plan being streamed; a new plan aborts the old stream
 
 async function streamEvents(path, body, onEvent, signal) {
+  serverCalls++;
+  try { return await readEvents(path, body, onEvent, signal); } finally { serverCalls--; }
+}
+async function readEvents(path, body, onEvent, signal) {
   const r = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" },
                                      body: JSON.stringify(body), signal });
   if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
@@ -3007,6 +3027,7 @@ marsOverview = createMarsOverview({ viewer, ellipsoid: MARS, moons: marsMoons, l
     $("globeLighting").checked = true; globeLighting.setEnabled(true);
   },
   restorePlanningLight: syncGlobeLighting,
+  isBusy: plannerBusy,
 });
 api("/api/weather/calendar").then(calendar => {
   seasonCalendar = calendar; labels();             // the season slider shows the sol from now on

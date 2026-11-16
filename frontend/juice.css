@@ -194,3 +194,9 @@ body.touring .jz-toast, body.touring #jzLevel, body.touring #jzPanel { display: 
   #jzRailPill { transition: opacity .2s; }
 }
 @keyframes jzFade { 0%, 70% { opacity: 1; } 100% { opacity: 0; } }
+
+/* line icons (juice.js ICONS) in the menu's style instead of emoji; they size with the text around them */
+.jz-icon { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8;
+           stroke-linecap: round; stroke-linejoin: round; vertical-align: -0.15em; }
+.jz-toast i .jz-icon, #jzPanel .tile i .jz-icon { display: block; stroke: #e8b48c; stroke-width: 1.5; }
+#jzPanel .ghost .jz-icon { margin-right: 2px; }
