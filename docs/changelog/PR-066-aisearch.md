@@ -1,4 +1,4 @@
-# PR #66: Cloudflare Pages build: static front end that talks to the public server
+# PR #66: Cloudflare Pages build; line icons instead of emoji; idle spin waits for real idleness
 
 **What changed**
 - **`tools/build_pages.py`** builds `dist/`, a static copy of the front end (planner, game, kit) for Cloudflare
@@ -12,10 +12,26 @@
 - **`deploy/cloudflare/README.md`:** two ways to deploy, Wrangler from a computer or Cloudflare building from
   GitHub (build command `python3 tools/build_pages.py`, output `dist`).
 - **`tests/test_build_pages.py`**, and `dist/` is added to `.gitignore`.
+- **Line icons instead of emoji** (`juice.js`, `juice.css`). The slider bubbles (time of day, season, time
+  budget), the 15 badges, the secret-badge placeholder and the sound button now use line icons in the menu's
+  style: 24×24, stroked in the text colour. The game page is unchanged.
+- **The idle globe spin waits until the page is really idle.**
+  - `mars_overview.js` starts spinning again only after 7 s with no input (mouse movement, scrolling, touch and
+    focus changes now count) and nothing busy in the planner.
+  - `index.html`'s `plannerBusy()` reports busy for:
+    - server calls in flight
+    - a camera move
+    - a plan or AI text still running
+    - an area or layer loading
+    - the assistant waiting for an answer
+    - route playback or Walker's view
+    - an open help dialog
 
 **Why**
-To host the front end on Cloudflare Pages, at https://fire-computers-2026.pages.dev, while the AWS server keeps
-the data, maps and AI.
+- **Cloudflare:** host the front end on Cloudflare Pages, at https://fire-computers-2026.pages.dev, while the
+  AWS server keeps the data, maps and AI.
+- **Icons:** emoji didn't match the menus' line icons.
+- **Idle spin:** the globe started spinning while people were still using the page or waiting for a plan.
 
 **How to try it**
 ```bash
