@@ -369,10 +369,16 @@
   window.marsSearchPlaces = places;
 
   // ------------------------------------------------------- first-time quick start ----
+  // First visit: the assistant pops up and offers help (the full guide is one tap away in its chips and under ?).
   function firstTime() {
     if (store.get("mapManualSeen") === "1") return;
+    if (document.body.classList.contains("touring") || /[?&](tour|flythrough)\b/.test(location.search)) return;
     store.set("mapManualSeen", "1");
-    openManual("start");
+    if (window.marsAssistant?.welcome) {
+      window.marsAssistant.welcome("Hi, I'm Helmut, your Marswalk planner! If you need any help, please ask me. " +
+        "Type a goal like \"find clay where water once flowed\", ask what a button does, or tap below for the full guide.",
+        ["How to use this map", "Find clay where water once flowed", "Play the game", "Show radiation"]);
+    } else openManual("start");
   }
   const landing = $("landing");
   const landingShown = () => landing && !landing.hidden && getComputedStyle(landing).display !== "none"

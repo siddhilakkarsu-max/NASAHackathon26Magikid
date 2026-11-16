@@ -75,3 +75,6 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#69](PR-069-aisearch.md) | Fix the server running out of memory; plans never hang; plan errors in the AI chat | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
 | [#71](PR-071-feat-jason-chen10-marsmap.md) | Integrate planner missions with measured AI driving and persistent route rankings | `siddhilakkarsu-max/feat/jason-chen10-marsmap` | 2026-11-15 | none |
 | [#72](PR-072-aisearch.md) | Safari rendering fix for the Cloudflare site; favicon | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
+| [#73](PR-073-feat-jason-chen10-marsmap.md) | Fix ideal AI route timing and standalone leaderboard submission | `siddhilakkarsu-max/feat/jason-chen10-marsmap` | 2026-11-15 | none |
+| [#74](PR-074-aisearch.md) | GitHub button on the title page | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
+| [#75](PR-075-feat-gk-judge-ready.md) | Judge-ready: start zoomed in on Mars, the game one click away, AI-driven assistant, QA bug fixes | `anh-gl-nguyen1762/feat/Gk-judge-ready` | 2026-11-15 | 1 file(s) |
