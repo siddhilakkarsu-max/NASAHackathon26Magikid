@@ -9,8 +9,9 @@
   - `tools/pages/api_shim.js` now sets `crossOrigin="anonymous"` on every image it moves. The server already
     allows CORS.
   - Only the Cloudflare build was affected. p1g4 and the sslip address serve the pages from the server itself.
-- **Favicon:** a computer on fire.
-  - `frontend/favicon.svg`, `favicon.ico` (16/32/48 px) and `apple-touch-icon.png` (180 px on a dark background).
+- **Favicon:** the Fire Computer logo, a flaming chip.
+  - Cropped from the team's logo without the "FIRE COMPUTER" wordmark, which is unreadable at 16–48 px.
+  - `frontend/favicon.png` (256 px), `favicon.ico` (16/32/48 px) and `apple-touch-icon.png` (180 px).
   - Linked from the planner and kit pages. The game page picks up `favicon.ico` without changes.
 
 **Why**
@@ -19,7 +20,7 @@
 
 **How to try it**
 Open https://fire-computers-2026.pages.dev in Safari. The globe, 3D terrain and planning render. The browser tab
-shows the burning-computer icon.
+shows the flaming-chip logo.
 
 **Merge conflicts**
 None: main through #71 merged automatically.
