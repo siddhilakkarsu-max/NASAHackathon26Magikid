@@ -66,12 +66,77 @@
     o.connect(g); g.connect(master);
     o.start(t0); o.stop(t0 + dur + 0.03);
   }
+  // The click: a premium-switch "tk… tik", built from three tiny layers so it is crisp, not beepy.
+  //   1. transient: ~1-2 ms of high-passed noise with a bright peak (the snap you feel in your teeth)
+  //   2. body: a 20-35 ms resonant ping falling in pitch (the plastic of the key)
+  //   3. weight: a soft low thump, on the press only (the key bottoming out)
+  // The release is lighter and higher. Each click varies its pitch by a few percent so repeats never sound
+  // machine-gunned, and it pans gently toward where you clicked. kind: "down" | "up" | "tick" (slider detent).
+  const noiseFor = new WeakMap();
+  function noise(c) {
+    let b = noiseFor.get(c);
+    if (!b) {
+      b = c.createBuffer(1, Math.floor(c.sampleRate * 0.06), c.sampleRate);
+      const d = b.getChannelData(0);
+      for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      noiseFor.set(c, b);
+    }
+    return b;
+  }
+  function clickInto(c, dest, t, kind = "down", pan = 0, pitch = 1) {
+    const up = kind === "up", tick = kind === "tick";
+    const jit = pitch * (1 + (Math.random() - 0.5) * 0.07);
+    const out = c.createGain();
+    out.gain.value = tick ? 0.32 : up ? 0.6 : 1;
+    if (c.createStereoPanner) { const p = c.createStereoPanner(); p.pan.value = pan; out.connect(p); p.connect(dest); }
+    else out.connect(dest);
+    // 1. transient
+    const n = c.createBufferSource();
+    n.buffer = noise(c);
+    const hp = c.createBiquadFilter(); hp.type = "highpass"; hp.frequency.value = (up || tick ? 3600 : 2400) * jit;
+    const pk = c.createBiquadFilter(); pk.type = "peaking"; pk.frequency.value = (up || tick ? 6800 : 4700) * jit;
+    pk.Q.value = 1.4; pk.gain.value = 9;
+    const ng = c.createGain();
+    ng.gain.setValueAtTime(0, t);
+    ng.gain.linearRampToValueAtTime(tick ? 1.5 : up ? 1.8 : 2.4, t + 0.0005);
+    ng.gain.exponentialRampToValueAtTime(0.001, t + (tick ? 0.006 : up ? 0.009 : 0.014));
+    n.connect(hp); hp.connect(pk); pk.connect(ng); ng.connect(out);
+    n.start(t, Math.random() * 0.04); n.stop(t + 0.02);
+    // 2. body
+    const o = c.createOscillator(), og = c.createGain();
+    o.type = "sine";
+    o.frequency.setValueAtTime((tick ? 3400 : up ? 2900 : 2050) * jit, t);
+    o.frequency.exponentialRampToValueAtTime((tick ? 3000 : up ? 2450 : 1650) * jit, t + 0.02);
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.exponentialRampToValueAtTime(tick ? 0.12 : up ? 0.16 : 0.34, t + 0.0008);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + (tick ? 0.014 : up ? 0.022 : 0.034));
+    o.connect(og); og.connect(out);
+    o.start(t); o.stop(t + 0.05);
+    // 3. weight
+    if (kind === "down") {
+      const l = c.createOscillator(), lg = c.createGain();
+      l.type = "sine";
+      l.frequency.setValueAtTime(260 * jit, t);
+      l.frequency.exponentialRampToValueAtTime(130, t + 0.02);
+      lg.gain.setValueAtTime(0.0001, t);
+      lg.gain.exponentialRampToValueAtTime(0.15, t + 0.0015);
+      lg.gain.exponentialRampToValueAtTime(0.0001, t + 0.026);
+      l.connect(lg); lg.connect(out);
+      l.start(t); l.stop(t + 0.06);
+    }
+  }
+  function click(kind, x = innerWidth / 2, pitch = 1) {
+    const c = audio();
+    if (!c) return;
+    clickInto(c, master, c.currentTime + 0.002, kind, clamp(x / innerWidth * 2 - 1, -1, 1) * 0.35, pitch);
+  }
   const SFX = {
-    press: () => tone(380, { dur: 0.05, type: "triangle", vol: 0.28, slide: 0.7 }),
+    press: (x) => click("down", x),
+    release: (x) => click("up", x),
     on: () => { tone(660, { dur: 0.07, type: "triangle", vol: 0.5 }); tone(990, { t: 0.06, dur: 0.1, type: "triangle", vol: 0.5 }); },
     off: () => { tone(620, { dur: 0.06, type: "triangle", vol: 0.35 }); tone(415, { t: 0.05, dur: 0.08, type: "triangle", vol: 0.35 }); },
     open: () => tone(260, { dur: 0.16, vol: 0.3, slide: 2.6 }),
-    tick: (f = 1) => tone(1000 * f, { dur: 0.022, type: "square", vol: 0.07 }),
+    tick: (f = 1, x) => click("tick", x, f),
     ping: () => { tone(540, { dur: 0.4, vol: 0.4, slide: 2.1 }); tone(1080, { t: 0.09, dur: 0.32, vol: 0.12 }); },
     xp: (step = 0) => tone(880 * Math.pow(1.1225, step * 2), { dur: 0.1, vol: 0.32 }),
     success: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, { t: i * 0.08, dur: 0.24, type: "triangle", vol: 0.5 })),
@@ -137,10 +202,11 @@
     t.classList.remove("jz-release");
     t.classList.add("jz-press");
     spawn("ring", e.clientX, e.clientY);
-    sfx("press");
-    const up = () => {
+    sfx("press", e.clientX);
+    const up = (ev) => {
       removeEventListener("pointerup", up, true);
       removeEventListener("pointercancel", up, true);
+      if (ev.type === "pointerup") sfx("release", ev.clientX);
       t.classList.remove("jz-press");
       t.classList.add("jz-release");
       setTimeout(() => t.classList.remove("jz-release"), 500);
@@ -149,6 +215,18 @@
     addEventListener("pointercancel", up, true);
   }, true);
   addEventListener("keydown", () => { lastUser = now(); }, true);
+  // keyboard presses click too: Enter/Space on a focused button press on keydown, release on keyup
+  const keyX = (n) => { const r = n.getBoundingClientRect(); return r.left + r.width / 2; };
+  let keyHeld = null;
+  addEventListener("keydown", (e) => {
+    if ((e.key !== "Enter" && e.key !== " ") || e.repeat || keyHeld) return;
+    const t = e.target.closest?.('button, summary, [role="button"], [role="menuitem"]');
+    if (!t || t.disabled) return;
+    keyHeld = t; audio(); sfx("press", keyX(t));
+  }, true);
+  addEventListener("keyup", (e) => {
+    if (keyHeld && (e.key === "Enter" || e.key === " ")) { sfx("release", keyX(keyHeld)); keyHeld = null; }
+  }, true);
 
   // ------------------------------------------------------------------------------------ toggles sparkle ----
   const chips = $("gmChips");
@@ -213,7 +291,8 @@
     const cfg = SLIDERS[r.id];
     const v = +r.value, b = Math.floor(v / (cfg?.step || ((r.max - r.min) / 12 || 1)));
     if (bucket.has(r) && bucket.get(r) !== b && userish()) {
-      sfx("tick", 0.75 + 0.75 * (v - r.min) / ((r.max - r.min) || 1));
+      const rr = r.getBoundingClientRect();
+      sfx("tick", 0.85 + 0.4 * (v - r.min) / ((r.max - r.min) || 1), rr.left + rr.width * (v - r.min) / ((r.max - r.min) || 1));
       buzz(3);
     }
     bucket.set(r, b);
