@@ -3,7 +3,7 @@
 // A rotating presentation camera around the real Mars-fixed ephemeris. The
 // camera's half-solar-turn path is deliberately not a spacecraft trajectory.
 function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
-  selectPlanner, restorePlanningLight, isPlanner = () => false, eligible = true }) {
+  selectPlanner, restorePlanningLight, isPlanner = () => false, eligible = true, isBusy = () => false }) {
   // A previously cached module must never throw inside Cesium's render loop.
   // Versioned script URLs prevent this on upgrade; this guard also handles a
   // partial deployment or an independently cached embedded-browser resource.
@@ -34,19 +34,40 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
       !!event.target.closest?.(zoomButtons));
   }
   function cancelResume() { clearTimeout(resumeTimer); resumeTimer = null; }
+  // Spin again only after IDLE_MS with no input (mouse movement included) AND nothing busy in the planner
+  // (isBusy: a plan, the AI, an area or layer loading, a camera flight, route playback, …). Any input or
+  // busy moment restarts the wait.
+  const IDLE_MS = 7000;
+  let idleSince = 0;
   function scheduleResume() {
     cancelResume();
+    idleSince = performance.now();
     if (mode !== 'paused' || !(ownsLight || resumePlanning) || document.hidden || reduced.matches || heldPointers.size ||
         moons.systemFrame().error) return;
-    resumeTimer = setTimeout(() => {
-      resumeTimer = null;
-      if (mode !== 'paused' || !(ownsLight || resumePlanning) || document.hidden || reduced.matches || heldPointers.size ||
-          viewer.trackedEntity || document.body.classList.contains('touring') || moons.systemFrame().error) return;
-      if (!moons.systemFrame().available) { scheduleResume(); return; }
-      // Resume at the user's camera position, without resetting zoom or map.
-      mode = 'playing'; ownsLight = true; resumePlanning = false; previousLongitude = null; moons.setSpeed(RATE);
-      report(); scene.requestRender();
-    }, 7000);
+    resumeTimer = setTimeout(checkResume, IDLE_MS);
+  }
+  function checkResume() {
+    resumeTimer = null;
+    if (mode !== 'paused' || !(ownsLight || resumePlanning) || document.hidden || reduced.matches || heldPointers.size ||
+        viewer.trackedEntity || document.body.classList.contains('touring') || moons.systemFrame().error) return;
+    let busy = true;
+    try { busy = !!isBusy(); } catch { /* treat an unreadable state as busy */ }
+    if (busy || !moons.systemFrame().available) {
+      idleSince = performance.now(); resumeTimer = setTimeout(checkResume, 1000); return;
+    }
+    const left = IDLE_MS - (performance.now() - idleSince);
+    if (left > 50) { resumeTimer = setTimeout(checkResume, left); return; }
+    // Resume at the user's camera position, without resetting zoom or map.
+    mode = 'playing'; ownsLight = true; resumePlanning = false; previousLongitude = null; moons.setSpeed(RATE);
+    report(); scene.requestRender();
+  }
+  let lastMove = 0;
+  function activity() {                                 // using the page restarts the idle wait (if one is running)
+    if (resumeTimer === null) return;
+    const now = performance.now();
+    if (now - lastMove < 150) return;
+    lastMove = now;
+    idleSince = now;
   }
   const removers = [];
   function listen(node, event, fn, options) {
@@ -58,7 +79,7 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
     controls.button.setAttribute('aria-pressed', String(mode === 'playing'));
     const frame = moons.systemFrame();
     const text = ownsLight ? (frame.error ? 'Motion unavailable · Play overview to retry' : !frame.available ? 'Loading NASA/JPL motion…' :
-      `${mode === 'playing' ? '3,600× · orbiting view' : reduced.matches ? 'Motion paused' : 'Paused · resumes after 7 seconds idle'} · ${C.JulianDate.toIso8601(frame.time, 0).replace('T', ' ').replace('Z', ' UTC')}`) :
+      `${mode === 'playing' ? '3,600× · orbiting view' : reduced.matches ? 'Motion paused' : 'Paused · resumes after 7 seconds idle, once nothing is loading'} · ${C.JulianDate.toIso8601(frame.time, 0).replace('T', ' ').replace('Z', ' UTC')}`) :
       resumePlanning && !reduced.matches ? 'Time selected · resumes after 7 seconds idle' :
       'Drag to explore · Play to return to the animated planet';
     if (text !== lastText) { controls.readout.textContent = text; lastText = text; }
@@ -148,10 +169,12 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
   for (const type of ['pointerup', 'pointercancel']) {
     listen(document, type, event => { if (heldPointers.delete(event.pointerId)) scheduleResume(); }, true);
   }
-  // Hovering is inspection, not an action. Held drags are tracked separately.
   for (const type of ['wheel', 'keydown', 'input']) listen(document, type, event => {
     if (!passiveZoom(event)) scheduleResume();
   }, { capture: true, passive: true });
+  // Moving the mouse, scrolling a panel, touching or tabbing around is using the page too: it delays the spin
+  // (it doesn't stop one that is already running; clicks and drags do that).
+  for (const type of ['pointermove', 'scroll', 'touchstart', 'focusin']) listen(document, type, activity, { capture: true, passive: true });
   listen(window, 'blur', () => { heldPointers.clear(); cancelResume(); });
   listen(window, 'focus', scheduleResume);
   // Stop before other handlers fly, plan, change lighting, or follow a moon.
