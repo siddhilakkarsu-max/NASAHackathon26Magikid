@@ -250,6 +250,8 @@
         root.style.transform = `translate3d(${x.toFixed(1)}px, ${y.toFixed(1)}px, 0)`;
         // the bubble opens away from the chat: rightwards when Helmut floats beside it and there is room
         root.classList.toggle("bubble-left", (a.side === "right" && x + 210 < innerWidth) || x < 200);
+        // hanging under the chat (phones): speak below, so the bubble never covers the chat's Send button
+        root.classList.toggle("bubble-below", a.side === "below" && y + H + 90 < innerHeight);
       }
     }
     gaze();

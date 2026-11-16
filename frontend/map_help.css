@@ -52,4 +52,7 @@
   #mapManual .sheet { grid-template-columns: 1fr; grid-template-rows: auto auto 1fr; }
   #mapManual nav { display: flex; overflow-x: auto; border-right: 0; border-bottom: 1px solid #ffffff1f; }
   #mapManual nav button { white-space: nowrap; width: auto; }
+  /* the map buttons sit at the bottom, so on a phone the search bar and the assistant chat under it can use
+     the full width (min(380px, 100% - 90px) left the chat 228px wide on a 390px phone) */
+  #marsSearch { width: calc(100% - 28px); }
 }
