@@ -31,4 +31,3 @@ await page.mouse.move(x,y);await page.mouse.down();await page.mouse.move(x+15,y+
 const beforeFallback=materialFallbackRequests;await page.evaluate(()=>fixture.id='fallback');await page.locator('#open').click();await page.getByRole('button',{name:'Ground firmness',exact:true}).click();await page.waitForFunction(()=>MarswalkRouteMap.snapshot().materialLoaded);assert(materialFallbackRequests===beforeFallback+1,'Standalone mission uses regional observations when its saved plan is unavailable');assert((await page.locator('#routeMapSource').textContent()).includes('300 m'),'Regional material resolution is disclosed');assert(errors.length===0,'No browser errors after material fallback');
 console.log(JSON.stringify({pendingApplyGuard:true,pass:true,staleResponses:true,antimeridian:true,mobileAspect:aspect,validationRetry:true,firmnessClasses:true,materialMissingData:true,materialFallback:true,errors}));
 } finally {await browser.close();}
-

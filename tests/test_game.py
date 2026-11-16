@@ -139,11 +139,11 @@ class GameTest(unittest.TestCase):
         for old in ("mk('four_wheel'", "mk('two_wheel'", "mk('buggy'"):
             self.assertNotIn(old, self.script, old)
 
-    def test_handoff_contract(self):
+    def test_handoff_storage_key(self):
+        # Generated URLs and their plan/candidate parameters are exercised by
+        # test_launcher_behavior, rather than matched against source comments.
         self.assertIn(HANDOFF_KEY, self.html)
         self.assertIn(HANDOFF_KEY, self.launch)
-        self.assertIn("game.html?src=planner", self.launch)
-        self.assertIn("src=planner", self.html.replace("'planner'", "=planner"))
 
     def test_kit_page_loads_launcher(self):
         self.assertRegex(self.client.get("/kit.html").text,
