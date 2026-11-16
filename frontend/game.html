@@ -907,6 +907,10 @@ function speedKmh(slope, firm, rough, v) {
   const lo = 1 - firm;
   return spd / ((1 + v.sand * lo * lo) * (1 + v.rough * CFG.ROUGH_K * rough));
 }
+// Apollo 15 observed level-ground envelope; NASA SEV concept speed.
+// Scout bike and walking envelopes remain explicit game assumptions.
+function vehicleTopKmh(v){return v.key==='four_wheel'?13:v.key==='buggy'?10:v.base;}
+function terrainSpeedKmh(W,slope,firm,rough,v=W.veh){return Math.min(vehicleTopKmh(v),speedKmh(slope,firm,rough,v)*W.kSpeed);}
 // [P] physics.sun_position
 function sunElev(latDeg, hour, ls) {
   const dec = Math.asin(Math.sin(CFG.OBLIQUITY * DEG) * Math.sin(ls * DEG)), H = 15 * (hour - 12) * DEG, lat = latDeg * DEG;
@@ -1646,7 +1650,7 @@ function moveTick(R, dt) {
   let mx = R.mvx, my = R.mvy; const ml = Math.hypot(mx, my);
   if (ml > 1) { mx /= ml; my /= ml; }
   const want = ml > 0.05 && !R.stuck && !R.site;
-  let kmh = speedKmh(R.slope, R.firm, R.rough, veh) * W.kSpeed;
+  let kmh = terrainSpeedKmh(W,R.slope,R.firm,R.rough,veh);
   if (R.careful) kmh *= CFG.CAREFUL_SPEED;
   kmh *= 1 - CFG.OFF_SPEED_LOSS * Math.min(1, R.offK);
   if (R.wheel && !afoot(R)) kmh *= CFG.WHEEL_SPEED;
@@ -1665,7 +1669,8 @@ function moveTick(R, dt) {
     const j = idxAt(W, nx, ny), dx = W.X[j] - nx, dy = W.Y[j] - ny, l = Math.hypot(dx, dy) || 1, sp = 0.2 * (vW / 0.4) * CFG.RED_PUSH * dt;
     nx += dx / l * sp; ny += dy / l * sp;
   }
-  if(RouteFlight.attempt||R.driveSpeedLimit){const d=Math.hypot(nx-R.x,ny-R.y),limit=(R.driveSpeedLimit||45)*dt;if(d>limit){nx=R.x+(nx-R.x)*limit/d;ny=R.y+(ny-R.y)*limit/d;}}
+  // Momentum must not carry either driver above the current terrain speed.
+  const velocity=Math.hypot(R.vx,R.vy);if(velocity>vW){R.vx*=vW/velocity;R.vy*=vW/velocity;nx=R.x+R.vx*dt;ny=R.y+R.vy*dt;}
   const stepM = Math.hypot(nx - R.x, ny - R.y);
   R.x = nx; R.y = ny; R.step = stepM; R.moving = stepM > 0.02;
   R.kmh = stepM / dt / W.TS * 3.6 * W.kDist;
@@ -4560,26 +4565,30 @@ function benchmarkSteer(R,dt){
   R.mvx=Math.sin(R.driveYaw)*throttle;R.mvy=Math.cos(R.driveYaw)*throttle;
 }
 const DriveBenchmark={
-  version:'fixed-step-drive-v2-planner-baseline',
+  version:'ideal-path-drive-v3',
   async run(payload){
     if(!G.benchmark)throw Error('Driving comparisons require an isolated simulator.');
     G.skip=true;G.mute=true;G.autopilot=true;G.speed=1;G.wxLive=payload.weather||{};
     const W=G.W=buildWorld(payload.mission,payload.candidate,payload.difficulty,payload.seed);
     // Both routes use the original planner mission's fixed calibration.
     Object.assign(W,payload.calibration);G.N=W.N;
-    const R=G.R=newRun(W);R.aiDriving=payload.driving3d&&!!W.veh.bat;
-    R.driveYaw=Math.atan2(W.X[1]-W.X[0],W.Y[1]-W.Y[0]);R.driveSpeedLimit=payload.speedLimit;
-    const maxTicks=30*1800;
-    while(R.tick<maxTicks&&!R.over){
-      for(let n=0;n<300&&!R.over;n++){
-        if(Math.hypot(R.x-W.B.x,R.y-W.B.y)<CFG.SPOT_ZONE_M){
-          return {status:'complete',seconds:R.real,ticks:R.tick,distanceM:R.odo*W.kDist,end:{x:R.x,y:R.y},destination:{x:W.B.x,y:W.B.y},seed:W.seed};
-        }
-        simStep();
+    // Ideal driver: integrate every segment on the path, without steering error,
+    // corner cutting, reaction delays or random incidents. One-metre substeps
+    // respect terrain variation; quantize only the final score to 30 Hz.
+    let seconds=0,distance=0,maxKmh=0;
+    const path=W.synthetic?Array.from({length:W.n},(_,i)=>({x:W.X[i],y:W.Y[i]})):W.C.route.points.map(p=>({x:W.toX(p.lon),y:W.toY(p.lat)}));
+    for(let i=0;i<path.length-1;i++){
+      const a=path[i],b=path[i+1],length=Math.hypot(b.x-a.x,b.y-a.y),steps=Math.max(1,Math.ceil(length));
+      for(let j=0;j<steps;j++){
+        const f=(j+.5)/steps;fieldAt(W,lerp(a.x,b.x,f),lerp(a.y,b.y,f));
+        const kmh=terrainSpeedKmh(W,F.slope,F.firm,F.rough),speed=kmh/3.6*W.TS/W.kDist;
+        if(!(speed>0))return{status:'failed',reason:'No traversable speed on this route.'};
+        seconds+=length/steps/speed;distance+=length/steps;maxKmh=Math.max(maxKmh,kmh);
       }
-      await new Promise(resolve=>setTimeout(resolve,0));
+      if(i%100===0)await new Promise(resolve=>setTimeout(resolve,0));
     }
-    return {status:'failed',reason:R.cause||'The driver did not reach the destination.',ticks:R.tick};
+    const ticks=Math.ceil(seconds*30);
+    return {status:'complete',seconds:ticks/30,ticks,distanceM:distance*W.kDist,end:{x:W.B.x,y:W.B.y},destination:{x:W.B.x,y:W.B.y},seed:W.seed,maxKmh,pathErrorM:0};
   },
   async compare(R){
     if(R.aiComparison)return;R.aiComparison={status:'running'};
@@ -4606,6 +4615,8 @@ const GameTools={
     if(!this.baselines.has(key)){
       const original=this.referenceMissions.get(this.key(W.N,W.ci)),base=buildWorld(original,W.ci,W.diffKey,W.seed),calibration={};
       for(const field of ['TS','kSpeed','kDist','kO2','kWh','vNom'])calibration[field]=base[field];
+      // Compress time equally for every run; retain the physical rover limit.
+      calibration.TS=Math.min(calibration.TS,CFG.MAX_SCREEN_MPS*3.6*base.kDist/vehicleTopKmh(base.veh));
       this.baselines.set(key,{original,calibration,seed:W.seed,weather:JSON.parse(JSON.stringify(G.wxLive)),results:new Map()});
     }
     return this.baselines.get(key);
@@ -4620,7 +4631,7 @@ const GameTools={
   key(N=G.N,ci=G.ci){return N?N.id+'|'+ci:'';},
   remember(N,ci){const key=this.key(N,ci);if(!this.referenceMissions.has(key)){this.referenceMissions.set(key,JSON.parse(JSON.stringify(N)));this.referenceMetrics.set(key,{one_way_time_s:N.cands[ci].route.one_way_h*3600});}if(!this.references.has(key)){const c=N.cands[ci],points=c.route.points.length>=2?c.route.points:[c.A,c.B];this.references.set(key,points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));}},
   planData(N=G.N,ci=G.ci){return N?.planDataByCandidate?.[ci]||(N?.planData?.candidate===ci?N.planData:null);},
-  async loadPlan(N,ci){if(!API.on||!N||N.src==='baked')return null;const key=this.key(N,ci);if(!this.planLoads.has(key))this.planLoads.set(key,apiJSON('/api/game/plans/'+encodeURIComponent(N.id)+'?candidate='+ci,undefined,12000));const pending=this.planLoads.get(key);let data;try{data=await pending;}catch(e){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);throw e;}if(!data){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);return null;}N.planDataByCandidate=N.planDataByCandidate||{};N.planDataByCandidate[ci]=data;if(N===G.N&&ci===G.ci)N.planData=data;if(data.reference&&data.reference.points)this.references.set(key,data.reference.points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));return data;},
+  async loadPlan(N,ci){if(!API.on||!N)return null;const key=this.key(N,ci);if(!this.planLoads.has(key))this.planLoads.set(key,apiJSON('/api/game/'+(N.src==='baked'?'standalone-plans/':'plans/')+encodeURIComponent(N.id)+'?candidate='+ci,undefined,12000));const pending=this.planLoads.get(key);let data;try{data=await pending;}catch(e){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);throw e;}if(!data){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);return null;}N.planDataByCandidate=N.planDataByCandidate||{};N.planDataByCandidate[ci]=data;if(N===G.N&&ci===G.ci)N.planData=data;if(data.reference&&data.reference.points)this.references.set(key,data.reference.points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));return data;},
   context(){if(!G.N)return null;this.remember(G.N,G.ci);return{N:G.N,C:G.N.cands[G.ci],W:G.W,R:G.R,region:G.N.region,referenceRoute:this.references.get(this.key()).map(p=>({...p})),imagery:G.imgs.imagery,imageryRect:G.imageryRect,planData:this.planData(),paused:G.paused};},
   pauseForMap(){if(G.screen!=='play'||!G.R)return;this.pauseIntent();G.modal='map';G.paused=true;clearKeys();setHidden($('pause'),true);if(D.pointerLockElement&&D.exitPointerLock)D.exitPointerLock();RouteFlight.pause();this.driveButton();},
   closeMap(){G.modal='';this.driveButton();},
@@ -4671,19 +4682,30 @@ const RouteFlight={
   async failed(error,generation=this.generation,id=this.attempt?.id){if(generation!==this.generation||this.attempt?.id!==id||!id)return;if(this.recovering)return this.recovering;G.paused=true;clearKeys();this.lastMode='paused';this.note='Route tracking paused: '+error.message;GameTools.driveButton();suitSay(this.note,false);const recovery=(async()=>{try{await this.queue.catch(()=>{});if(generation!==this.generation||this.attempt?.id!==id)return;const fresh=await this.request('/api/game/route-attempts/'+encodeURIComponent(id)+'/resume',this.credentials());if(generation===this.generation&&this.attempt?.id===id){this.attempt=fresh;this.snap(fresh.position);}}catch(_){}finally{if(this.recovering===recovery)this.recovering=null;}})();this.recovering=recovery;return recovery;},
   async finish(R){if(!this.attempt||R.outcome!=='success'){this.pause();return;}const id=this.attempt.id,generation=this.generation;R.routeAttemptId=id;R.routeFinalConfirmed=false;this.lastMode='paused';try{await this.sync('paused');if(generation===this.generation&&this.attempt?.id===id){R.routePreview=this.attempt;R.routeFinalConfirmed=true;}}catch(e){if(generation===this.generation&&G.R===R){R.routeReceiptError='Final position could not be confirmed: '+e.message;R.routePreview=this.attempt;}}this.renderEnd(R);},
   async submit(R){
-    if(R!==G.R||R.outcome!=='success'||R.routeSubmitting||!R.routeAttemptId||R.routeReceipt)return;
-    const id=R.routeAttemptId,generation=this.generation,current=()=>generation===this.generation&&R===G.R&&this.attempt?.id===id;
+    if(R!==G.R||R.outcome!=='success'||R.routeSubmitting||R.routeReceipt)return;
+    const id=R.routeAttemptId,generation=this.generation,current=()=>generation===this.generation&&R===G.R&&(!id||this.attempt?.id===id);
     R.routeSubmitting=true;R.routeReceiptError='';this.renderEnd(R);
     try{
       const ai=R.aiComparison?.own;
       if(ai?.status!=='complete'||!Number.isInteger(ai.ticks)||ai.ticks<=0)throw Error('Wait for the AI to finish driving your route.');
       await this.queue.catch(()=>{});if(!current())return;
-      if(!R.routeFinalConfirmed){await this.sync('paused');if(!current())return;R.routeFinalConfirmed=true;}
+      if(id&&!R.routeFinalConfirmed){await this.sync('paused');if(!current())return;R.routeFinalConfirmed=true;}
       let player=lbPlayer();
-      if(!player){
+      if(!player||(R.routeCallsign||'').trim()!==player.name){
         const name=(R.routeCallsign||'').trim();if(!name)throw Error('Enter your callsign.');
         player=await this.request('/api/game/players',{name});
         LB.player=player;store.set('marswalk.game.player',player);if(!current())return;
+      }
+      if(!id||this.identity&&!this.identity.name.startsWith('@guest:')&&this.identity.name!==player.name){
+        const W=R.W;R.resultKey=R.resultKey||('completed-'+(crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random()));
+        const result=await this.request('/api/game/route-results',{
+          ...player,plan_id:W.N.id,candidate:W.ci,points:W.C.route.points.map(p=>({lat:p.lat,lon:p.lon})),
+          difficulty:W.diffKey,driving_mode:G3.on?'3d':'2d',idempotency_key:R.resultKey,
+          position:{lat:W.toLat(R.y),lon:W.toLon(R.x)},samples:R.completedSamples,
+          actual_driving_time_s:R.drivingElapsedS,ai_drive_ticks:ai.ticks,benchmark_version:R.aiComparison.benchmarkVersion
+        });
+        if(current()){R.routeReceipt=result;R.routeReceiptName=player.name;}
+        return;
       }
       if(this.identity?.name.startsWith('@guest:')){
         const claimed=await this.request('/api/game/route-attempts/'+encodeURIComponent(id)+'/claim',{...player,guest_token:this.identity.token});
@@ -4702,10 +4724,10 @@ const RouteFlight={
     el.replaceChildren(mk('p','small','Loading leaderboard…'));
     const current=()=>G.N===mission&&G.ci===candidate&&requestId===this.boardRequest;
     try{
-      const data=GameTools.planData(mission,candidate)||await GameTools.loadPlan(mission,candidate);if(!current())return;
-      if(!data||!data.available){el.replaceChildren(mk('p','small',data?.reason||'Route ranking is unavailable for this mission.'));return;}
+      let data=GameTools.planData(mission,candidate)||await GameTools.loadPlan(mission,candidate);if(!data?.available&&!data?.submission_available)data=await this.request('/api/game/standalone-plans/'+encodeURIComponent(mission.id)+'?candidate='+candidate);if(!current())return;
+      if(!data||(!data.available&&!data.submission_available)){el.replaceChildren(mk('p','small',data?.reason||'Route ranking is unavailable for this mission.'));return;}
       const difficulty=G.R?.W.diffKey||G.diffKey,drivingMode=G3.on?'3d':'2d';
-      const board=await this.request('/api/game/route-leaderboard?'+new URLSearchParams({key:data.key,difficulty,driving_mode:drivingMode}));if(!current())return;
+      const receipt=G.R?.routeReceipt;const board=await this.request('/api/game/route-leaderboard?'+new URLSearchParams(receipt?.source==='completed-game'?{key:receipt.key}:{key:data.key,difficulty,driving_mode:drivingMode}));if(!current())return;
       el.replaceChildren(mk('p','small','AI driving each player’s designed route. Lowest time wins; player driving time does not affect rank.'));
       el.append(mk('p','small',(DIFF[difficulty]?.label||difficulty)+' · '+drivingMode.toUpperCase()));
       const table=mk('table','stat'),head=mk('tr');['Rank','Callsign','AI driving time'].forEach(x=>head.append(mk('th','',x)));table.append(head);
@@ -4732,14 +4754,14 @@ const RouteFlight={
     if(!receipt&&R.outcome==='success'){
       const ai=R.aiComparison?.own,ready=ai?.status==='complete'&&Number.isInteger(ai.ticks)&&ai.ticks>0;
       const form=mk('form','lbrow');form.id='routeJoinForm';
-      if(R.routeJoinOpen&&!lbPlayer()){
-        const label=mk('label','','Callsign'),input=mk('input');label.htmlFor='routeCallsign';input.id='routeCallsign';input.name='callsign';input.type='text';input.maxLength=16;input.placeholder='Choose a callsign (3–16 characters)';input.value=R.routeCallsign||'';input.autocomplete='nickname';input.disabled=!!R.routeSubmitting;input.oninput=()=>{R.routeCallsign=input.value;};form.append(label,input);
+      if(R.routeJoinOpen){
+        const label=mk('label','','Callsign'),input=mk('input');label.htmlFor='routeCallsign';input.id='routeCallsign';input.name='callsign';input.type='text';input.maxLength=16;input.placeholder='Choose a callsign (3–16 characters)';input.value=R.routeCallsign??lbPlayer()?.name??'';R.routeCallsign=input.value;input.autocomplete='nickname';input.disabled=!!R.routeSubmitting;input.oninput=()=>{R.routeCallsign=input.value;};form.append(label,input);
       }
-      const submit=mk('button','',R.routeSubmitting?'Adding…':R.routeJoinOpen&&!lbPlayer()?'Add me to leaderboard':'Join leaderboard');
-      submit.id='submitRouteScore';submit.type='submit';submit.disabled=!!R.routeSubmitting||!preview||!ready||this.unranked;
-      form.onsubmit=e=>{e.preventDefault();if(!lbPlayer()&&!R.routeJoinOpen){R.routeJoinOpen=true;this.renderEnd(R);$('routeCallsign')?.focus();}else this.submit(R);};form.append(submit);el.append(form);
+      const submit=mk('button','',R.routeSubmitting?'Adding…':R.routeJoinOpen?'Add me to leaderboard':'Leaderboard');
+      submit.id='submitRouteScore';submit.type='submit';submit.disabled=!!R.routeSubmitting||(R.routeJoinOpen&&!ready);
+      form.onsubmit=e=>{e.preventDefault();if(!R.routeJoinOpen){R.routeJoinOpen=true;this.renderEnd(R);$('routeCallsign')?.focus();}else this.submit(R);};form.append(submit);el.append(form);
       el.append(mk('p','small',ready?'Ranked by AI driving your designed route: '+W_.MarswalkMissionResults.duration(ai.seconds)+'. Lower is better.':R.aiComparison?.status==='failed'||ai?.status==='failed'?'The AI did not finish this route, so no leaderboard time is available.':'The AI is driving your route before it can be ranked…'));
-      if(!preview||this.unranked)el.append(mk('p','small',this.note||'Leaderboard submission needs a server-tracked mission completed at normal speed.'));
+      if(!preview||this.unranked)el.append(mk('p','small','Choose a callsign to save this completed game result.'));
     }
     if(R.routeReceiptError)el.append(mk('p','warn','Route score was not recorded: '+R.routeReceiptError));
     if(!receipt&&R.routeAttemptId&&!R.routeFinalConfirmed&&R.routeReceiptError){

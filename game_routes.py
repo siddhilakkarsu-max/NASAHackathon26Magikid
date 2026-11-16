@@ -14,6 +14,8 @@ import secrets
 import sqlite3
 import threading
 import time
+from pathlib import Path
+from functools import lru_cache
 from typing import Literal
 
 import numpy as np
@@ -26,8 +28,8 @@ import physics
 from config import MARS_RADIUS_M, MISSION_VEHICLES, SITE_HOURS, region_box
 
 router = APIRouter(prefix="/api/game", tags=["game routes"])
-MODEL_VERSION = "planner-route-comparison-v4-fixed-baseline"
-BENCHMARK_VERSION = "fixed-step-drive-v2-planner-baseline"
+MODEL_VERSION = "planner-route-comparison-v5-ideal-path"
+BENCHMARK_VERSION = "ideal-path-drive-v3"
 MAX_POINTS = 5000
 MAX_DRIVE_M_S = 60.0  # Above the game's 45 m/s presentation cap, including storm drift.
 MAX_HEARTBEAT_GAP_S = 4.0
@@ -436,7 +438,82 @@ class ClaimAttemptRequest(Credentials):
 class FinishRequest(Credentials):
     ai_drive_ticks: int=Field(gt=0,le=54000,strict=True)
     route_hash: str=Field(min_length=64,max_length=64)
-    benchmark_version: Literal["fixed-step-drive-v2-planner-baseline"]
+    benchmark_version: Literal["ideal-path-drive-v3"]
+
+
+class CompletedRouteRequest(StartRequest,FinishRequest):
+    route_hash: str|None=None
+    position: Point
+    samples: Literal[1]
+    actual_driving_time_s: float=Field(ge=0,le=86400)
+
+
+@lru_cache(maxsize=1)
+def _bundled_plans():
+    # Read the same bundled planner responses the standalone game uses.
+    source=(Path(__file__).parent/'frontend'/'game.html').read_text(encoding='utf-8')
+    plans=json.JSONDecoder().raw_decode(source.split('const BAKED = ',1)[1])[0]
+    return {p['id']:p for p in plans}
+
+
+def _result_plan(plan_id):
+    if plan_id in _bundled_plans():return _bundled_plans()[plan_id]
+    return _plan(plan_id)[1]
+
+
+def _result_key(plan,candidate):
+    return _hash(dict(source='completed-game',plan=plan['id'],settings=plan['settings'],
+                      reference=_candidate(plan,candidate)['route']['points'],version=MODEL_VERSION))
+
+
+@router.get('/standalone-plans/{plan_id}')
+def standalone_plan(plan_id:str,candidate:int=Query(0,ge=0,le=8)):
+    plan=_result_plan(plan_id);c=_candidate(plan,candidate)
+    return dict(available=False,submission_available=True,key=_result_key(plan,candidate),
+                reference=dict(points=_points(c['route']['points'])),
+                reason='This mission uses the saved game terrain model.')
+
+
+@router.post('/route-results')
+def completed_route(req:CompletedRouteRequest):
+    """Persist completed standalone runs; completion and AI time are browser-reported.
+
+    Kept on a separate board from server-tracked terrain-validated attempts.
+    No planner assistant or pre-mission identity is required.
+    """
+    name=_auth(req)
+    if name.startswith('@guest:'):raise HTTPException(400,'Choose a callsign first.')
+    plan=_result_plan(req.plan_id);cand=_candidate(plan,req.candidate)
+    points=_points([p.model_dump() for p in req.points]);reference=_points(cand['route']['points'])
+    def xy(p):
+        return np.array([p['lon']*math.cos(math.radians(reference[0]['lat'])),p['lat']])*math.pi/180*MARS_RADIUS_M
+    if any(float(np.linalg.norm(xy(points[i])-xy(reference[i])))>1 for i in (0,-1)):
+        raise HTTPException(400,'Keep the original start and destination.')
+    if float(np.linalg.norm(xy(req.position.model_dump())-xy(reference[-1])))>SCIENCE_RADIUS_M:
+        raise HTTPException(400,'Complete the sample at the destination before submitting.')
+    distance=sum(float(np.linalg.norm(xy(b)-xy(a))) for a,b in zip(points,points[1:]))
+    if distance>200000:raise HTTPException(400,'The route is too long.')
+    # Match JSON coordinate normalization used by tracked route hashing.
+    if req.route_hash is not None and req.route_hash!=_hash(points):raise HTTPException(409,'The result belongs to a different route.')
+    key=_score_key(_result_key(plan,req.candidate),req.difficulty,req.driving_mode)
+    payload=dict(model_version=MODEL_VERSION,key=key,points=points,route_hash=_hash(points),
+                 metrics=dict(distance_m=distance),reference_metrics={},source='completed-game')
+    with _write() as db:
+        prior=db.execute('SELECT * FROM attempts WHERE name_lc=? AND idempotency_key=?',(name.lower(),req.idempotency_key)).fetchone()
+        if prior:
+            saved=json.loads(prior['payload']);state=json.loads(prior['state'])
+            if saved['key']!=key or saved['route_hash']!=payload['route_hash'] or state['ai_drive_ticks']!=req.ai_drive_ticks:
+                raise HTTPException(409,'This submission key belongs to a different result.')
+            return _snapshot(prior,saved,state)
+        attempt_id=secrets.token_urlsafe(18)
+        state=dict(status='finished',mode='paused',position=req.position.model_dump(),samples=1,
+                   objective_complete=True,visited_destination=True,active_drive_s=req.actual_driving_time_s,
+                   ai_drive_ticks=req.ai_drive_ticks,ai_driving_time_s=round(req.ai_drive_ticks/30,6),
+                   benchmark_version=BENCHMARK_VERSION)
+        db.execute('INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?)',(attempt_id,name.lower(),name,req.plan_id,req.candidate,key,req.idempotency_key,_json(payload),_json(state)))
+        board,_=_board(db,key,limit=None);state['rank']=next(e['rank'] for e in board if e['name'].lower()==name.lower())
+        _save(db,attempt_id,state)
+        return _snapshot(*_attempt(db,attempt_id,name))
 
 
 class ProgressRequest(Credentials):

@@ -39,22 +39,29 @@ on the results screen and choose a callsign. No account login or pre-mission reg
 unnamed browser attempt tracks completion until it is attached to the chosen callsign. Taken names can be
 changed without losing the completed result. Submission is explicit and retry-safe.
 
-The default route board ranks the measured AI drive on each player's designed route: fewer 30 Hz simulation
-ticks wins. Player driving time and detours do not affect rank. Boards separate mission, vehicle, difficulty
-and 2D/3D handling; equal AI tick counts share a rank. Existing planner-estimate entries are retained in the
-database but excluded from the new AI-time boards. Survival scores remain in their separate tab. Missing
-source data disables route ranking, while the original game stays playable. Offline baked missions retain
-their original gameplay.
+The route board ranks the ideal AI driving time on each player's designed route, quantized to 30 Hz.
+Player driving time does not affect rank. Complete the sample at B, press the highlighted **Leaderboard**
+button, enter a callsign, and submit. Standalone built-in missions need no planner assistant or registration
+before playing. Their completed results are persisted in the same SQLite database on a separate board
+from server-tracked terrain-validated attempts. Completion and AI time in these game results are browser
+reported; they are not cheat-proof. A running backend is required to save a shared score. A connection
+failure keeps the completed result and callsign available for retry.
 
-The large results board shows total gameplay time, driving time, and measured AI driving on your route and on
-the original route. Both AI runs use the same fixed 30 Hz simulation, vehicle handling, difficulty, seed and
-time compression as the player. Calibration and comparison weather are captured from the original planner
-mission when it first starts, and preserved across route edits and retries. Editing your route changes only
-the player-route AI drive; the original planner route remains the fixed benchmark for that mission and difficulty.
-Sampling is excluded from AI driving; pauses and menus are excluded from
-all four times. A failed simulation is shown as unavailable or unfinished, never replaced with a planner
-estimate or a forced faster time. Oxygen, electricity and distance follow, then cost. User price assumptions
-remain in the separate expandable cost model. The simulated surface clock remains internal to resource/cost calculations.
+AI follows every original route segment exactly, integrating terrain-limited speed in one-metre substeps.
+It models ideal driving without steering error, reaction delays, random incidents or acceleration delay.
+This is a best-case model benchmark, not a NASA autonomous-driver measurement. It never adjusts a time
+to force a win. A player taking a different, shorter actual path is not driving the same route.
+Both players and AI share the terrain speed model and physical speed envelope: 13 km/h for the Apollo-class
+rover (Apollo 15 observed level-ground maximum), 10 km/h for the pressurized rover (NASA SEV concept),
+and existing game assumptions for walking and the scout bike. Sources are linked in the results board.
+Gameplay time compression is fixed from the original mission and shared across edits and retries; its
+upper bound keeps the fastest rover within the server's movement allowance without a separate AI-only cap.
+
+The four times remain player total, player driving, ideal AI on the designed player route, and ideal AI on
+the original planner route. Editing the player path cannot recalibrate the original benchmark. Sampling
+is excluded from driving; pauses and menus are excluded from all four clocks. Oxygen, electricity,
+distance and the separate cost model are unchanged. Older benchmark versions remain stored but are
+excluded from the corrected version's boards. Boards separate mission, difficulty and 2D/3D handling.
 
 ### Persistent leaderboard database
 
@@ -343,3 +350,5 @@ mission's science raster bounds. Images without valid geographic bounds use the 
   vehicle still counts as a success.
 - Models (lander, science station, rover, bike, cabin, gloves) are built from flat-shaded boxes, beams and
   cylinders in code; they are recognisable, not detailed.
+
+Focused regression: `node docs/game/standalone_leaderboard_test.mjs` against an isolated test server/database on port 8012.

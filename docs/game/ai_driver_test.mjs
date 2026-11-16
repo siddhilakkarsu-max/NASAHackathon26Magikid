@@ -24,6 +24,12 @@ try{
     assert.equal(result.status,'complete');assert.ok(result.seconds>0&&result.seconds<1800);
     assert.ok(Math.abs(result.seconds-result.ticks/30)<1e-6,'AI time is measured simulation ticks, not a planner estimate');
     assert.ok(Math.hypot(result.end.x-result.destination.x,result.end.y-result.destination.y)<9);
+    const top={on_foot:6,two_wheel:8,four_wheel:13,buggy:10}[payload.mission.veh.key];
+    assert.ok(result.maxKmh<=top+1e-9,'ideal driver respects its physical speed envelope');
+    const points=payload.mission.cands[payload.candidate].route.points,lat0=points[0].lat;
+    const metres=59274.6975; // Game's local Mars map projection.
+    const exact=points.slice(1).reduce((sum,p,i)=>sum+Math.hypot((p.lon-points[i].lon)*metres*Math.cos(lat0*Math.PI/180),(p.lat-points[i].lat)*metres),0)*payload.calibration.kDist;
+    assert.ok(Math.abs(result.distanceM-exact)<.1,'every original segment is included; corners are not cut');
   }
   const repeated=await page.evaluate(p=>__MW.runDriveBenchmark(p),payloads[0]);
   assert.equal(repeated.seconds,results[0].seconds,'same seed and route reproduce the actual drive');

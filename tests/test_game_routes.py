@@ -600,5 +600,28 @@ class GameRoutesTest(unittest.TestCase):
             self.assertEqual(self.client.get('/api/game/route-leaderboard',params=dict(query,**change)).json()['board'],[])
 
 
+    def test_standalone_result_callsign_ranking_retry_and_persistence(self):
+        mission=routes._bundled_plans()['a8f471347d55']
+        points=routes._points(mission['candidates'][0]['route']['points'])
+        player=self.claim('Standalone')
+        body=dict(player,plan_id=mission['id'],candidate=0,points=points,position=points[-1],samples=1,
+                  difficulty='astronaut',driving_mode='3d',idempotency_key='standalone-one',
+                  actual_driving_time_s=120,ai_drive_ticks=3000,benchmark_version=routes.BENCHMARK_VERSION)
+        self.assertTrue(self.client.get('/api/game/standalone-plans/'+mission['id']).json()['submission_available'])
+        response=self.client.post('/api/game/route-results',json=body)
+        self.assertEqual(response.status_code,200,response.text);result=response.json()
+        self.assertEqual(result['rank'],1);self.assertEqual(result['ai_driving_time_s'],100)
+        self.assertEqual(self.client.post('/api/game/route-results',json=body).json()['id'],result['id'])
+        self.assertEqual(self.client.post('/api/game/route-results',json=dict(body,ai_drive_ticks=3001)).status_code,409)
+        other=self.claim('FasterAI')
+        faster=dict(body,**other);faster.update(idempotency_key='standalone-two',ai_drive_ticks=2700,actual_driving_time_s=999)
+        self.assertEqual(self.client.post('/api/game/route-results',json=faster).status_code,200)
+        routes._conn.close();routes._conn=None
+        board=self.client.get('/api/game/route-leaderboard',params={'key':result['key']}).json()['board']
+        self.assertEqual([r['name'] for r in board],['FasterAI','Standalone'])
+        for change,code in [({'samples':0},422),({'position':points[0]},400),({'benchmark_version':'old'},422),({'ai_drive_ticks':True},422),({'plan_id':'unknown'},404)]:
+            self.assertEqual(self.client.post('/api/game/route-results',json=dict(body,**change)).status_code,code)
+
+
 if __name__=="__main__":
     unittest.main()
