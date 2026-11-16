@@ -257,7 +257,11 @@
     return { region: $("region").selectedOptions[0]?.textContent || "", hour: +$("hour").value,
              vehicle: $("mVehicle").value, priority: $("mPriority").value, ls: +$("ls").value,
              has_mission: !!mission?.candidates?.length, candidates: mission?.candidates?.length || 0,
-             selected_route: mission?.candidates?.length ? selected + 1 : null, places };
+             selected_route: mission?.candidates?.length ? selected + 1 : null, places,
+             // what else is on screen, so the assistant can talk about it (all optional: features may be absent)
+             layer: currentLayer() || "", rover_tracks: !!$("showTracks")?.checked, moons_shown: !!$("showMoons")?.checked,
+             overview_playing: $("overviewToggle")?.getAttribute("aria-pressed") === "true",
+             game_ready: !!$("playFab") && !$("playFab").hidden, explorer_level: window.marsJuice?.xp().lv ?? null };
   }
   const setInput = (id, v) => { const n = $(id); n.value = v; n.dispatchEvent(new Event("input", { bubbles: true }));
                                 n.dispatchEvent(new Event("change", { bubbles: true })); };
@@ -282,6 +286,36 @@
       case "show_layer": if (!setLayer(a.layer || "")) add("bot", "That layer isn't available for this area: pick a region first."); break;
       case "whole_mars": $("wholeMars").click(); break;
       case "open_help": window.openMapManual?.(); break;
+      // newer features: each presses the planner's own control, and says so when it isn't there
+      case "show_moons": {
+        const view = { phobos: "moonPhobos", deimos: "moonDeimos" }[a.view] || "moonSystemView";
+        if ($("showMoons") && !$("showMoons").checked) $("showMoons").click();
+        const b = $(view);
+        if (!b) add("bot", "The moons aren't available on this page.");
+        else if (b.disabled) add("bot", "The moon models are still loading: ask me again in a few seconds.");
+        else b.click();
+        break;
+      }
+      case "show_tracks": if ($("showTracks") && !$("showTracks").checked) $("showTracks").click(); break;
+      case "play_overview": {
+        const b = $("overviewToggle");
+        if (!b) add("bot", "The overview isn't available on this page.");
+        else if (b.getAttribute("aria-pressed") !== "true") b.click();
+        break;
+      }
+      case "start_tour": {                     // after a moment, so the reply can be read first
+        const go = a.kind === "flythrough" ? window.marsFlythrough : window.marsTour?.start;
+        if (go) setTimeout(go, 700); else add("bot", "The tour isn't available on this page.");
+        break;
+      }
+      case "play_game": {                      // the green "Mission ready" button knows the selected route
+        const fab = $("playFab");
+        if (fab && !fab.hidden) fab.click();
+        else if (window.MarswalkGameLaunch) window.MarswalkGameLaunch.open();
+        else add("bot", "The game isn't available on this page.");
+        break;
+      }
+      case "show_badges": if ($("jzMeter")) $("jzMeter").click(); else add("bot", "Badges aren't available on this page."); break;
     }
     syncChips();
   }
