@@ -18,13 +18,26 @@ const weatherDisplay = (() => {
     shelter: "Estimated travel time to terrain flagged as potential cover.",
     elevation: "Surface height relative to the Mars reference datum.",
     imagery: "Grayscale CTX imagery.",
+    suitability: "Safety, science value and radiation shielding combined. 0 = poor place to go, 1 = best. Green is better.",
+    science: "Green marks where NASA's CRISM spectrometer detected at least one target mineral (clay, carbonate, olivine…).",
+    minerals: "Each colour is a different CRISM mineral class (a kind of mineral, not an amount).
+    thermal_inertia: "How slowly the ground heats and cools (THEMIS). High: rock or firm ground. Low: loose dust.",
+    air_column_vs_gale: "Air overhead compared with Gale crater. More air blocks more cosmic radiation: above 1 is better shielded.",
+    albedo: "How much sunlight the ground reflects. Bright: dust. Dark: sand or bare rock.",
   };
   const titles = {
     imagery: "CTX imagery", illumination: "Direct sunlight", slope: "Slope",
     firmness: "Ground firmness", cost: "Travel cost", shelter: "Time to cover",
     elevation: "Elevation", walkback: "Walk-back zone",
+    suitability: "Mission suitability", science: "Science targets (CRISM minerals)",
+    minerals: "Dominant mineral (CRISM class map)", thermal_inertia: "Thermal inertia",
+    air_column_vs_gale: "Radiation shielding (air column)", albedo: "Albedo (brightness)",
   };
-  const units = { elevation: "m", firmness: "", illumination: "" };
+  const units = { elevation: "m", firmness: "", illumination: "", suitability: "", albedo: "",
+                  thermal_inertia: "TIU", air_column_vs_gale: "× Gale" };
+  // Layers whose numbers mean nothing on their own: words at the ends of the colour bar instead
+  const tickWords = { science: ["", "target mineral found", ""], minerals: ["", "one colour per mineral class", ""],
+                      suitability: ["worse", "", "better"] };
   const format = new Intl.NumberFormat("en", { maximumFractionDigits: 4 });
 
   function renderLegend({ bar, text, name, response, sources }) {
@@ -41,11 +54,12 @@ const weatherDisplay = (() => {
     title.textContent = titles[name] ?? legend.name;
     const ticks = document.createElement("div");
     ticks.className = "legend-ticks";
-    for (const value of [legend.min, (legend.min + legend.max) / 2, legend.max]) {
+    [legend.min, (legend.min + legend.max) / 2, legend.max].forEach((value, i) => {
       const tick = document.createElement("span");
-      tick.textContent = display(value);
+      const words = tickWords[name];
+      tick.textContent = !words ? display(value) : name === "suitability" && words[i] ? `${display(value)} ${words[i]}` : words[i];
       ticks.append(tick);
-    }
+    });
     const detail = document.createElement("div");
     detail.className = "legend-note";
     detail.textContent = layerNotes[name] ?? "";

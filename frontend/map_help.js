@@ -224,6 +224,7 @@
     if (e.key === "?" && !typing && overlay.hidden) { openManual(); e.preventDefault(); }
   });
   window.openMapManual = openManual;
+  window.closeMapManual = closeManual;
 
   // "?" on the map, "How to use this map" at the top of the panel, and (i) on each panel section.
   const fab = el("button", { id: "helpFab", type: "button", textContent: "?", title: "How to use this map (?)" });

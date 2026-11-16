@@ -172,3 +172,20 @@ body.flashing #tourCard .tourTitle { font-size: 30px; white-space: nowrap; }
 body.flashing #tourCard .tourLine { font-size: 13px; color: #c9a58c; font-variant-numeric: tabular-nums; }
 body.flashing #tourCard .tourDots, body.flashing #tourCard .tourStop { display: none; }
 body.flashing #tourCard.show { animation: none; }
+
+/* ---- QA fixes ---- */
+/* the overview bar sits at the map's bottom left: move it clear of the open panel instead of showing a sliver */
+@media (min-width: 761px) {
+  body.gm.drawer #overviewBar { left: 424px; max-width: calc(100% - 438px); }
+}
+/* short screens (a phone on its side): the left bar scrolls instead of squeezing icons into their labels */
+@media (max-height: 620px) {
+  #gmRail { overflow-y: auto; scrollbar-width: none; }
+  #gmRail::-webkit-scrollbar { display: none; }
+  #gmRail > * { flex-shrink: 0; }
+  #gmRail .grow { flex: 1 0 8px; }
+}
+/* phones: vehicle and priority get a full line each, so "Astronaut on foot (suited)" isn't cut off */
+@media (max-width: 760px) {
+  #missionSetup .row { flex-direction: column; gap: 0; }
+}
