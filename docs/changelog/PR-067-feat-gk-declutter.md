@@ -16,3 +16,8 @@ Nothing is deleted from `index.html`: the script only adds classes and ⓘ butto
 "2 data notes" in Results.
 
 No merge conflicts.
+
+**Review fixes (Siddhi):** `#areaStatus` folds only its default "Plan anywhere on Mars" note, so loading progress
+and "couldn't load… retry" errors stay visible; the "N data notes" button uses the panel font (the `font`
+shorthand with `inherit` was invalid CSS); the header comment no longer claims the folded text is in
+`aria-describedby`.

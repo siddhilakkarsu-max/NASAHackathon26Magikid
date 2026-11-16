@@ -6,7 +6,8 @@
 //             Notes that double as status lines (moon status, sharp-photo box) are folded only while they show
 //             their default explanation; errors and step-by-step instructions stay visible.
 //   * Mission results: the "mineral maps cover N% of this area" notes fold behind "ⓘ N data notes".
-// The text stays in index.html (and in aria-describedby), so screen readers and tests still have it.
+// The text stays in index.html, so tests still find it; folded notes are display:none (also for screen readers)
+// until their ⓘ is opened. Each ⓘ has aria-expanded and aria-controls pointing at its notes.
 (() => {
   "use strict";
   if (window.marsDeclutter) return;
@@ -27,7 +28,8 @@
     .dc-i:hover { border-color: #e0703a !important; color: #fff !important; background: #e0703a33 !important; }
     .dc-i[aria-expanded="true"] { background: #e0703a !important; border-color: #e0703a !important; color: #fff !important; }
     .dc-i.dc-wide { width: auto !important; padding: 0 7px !important; border-radius: 9px !important;
-                    font: 600 10.5px/17px inherit !important; font-style: normal !important; }
+                    font-family: inherit !important; font-size: 10.5px !important; font-weight: 600 !important;
+                    line-height: 17px !important; font-style: normal !important; }
     .dc-i[hidden] { display: none !important; }
     summary .dc-i { margin-left: 8px !important; }
     @media (prefers-reduced-motion: reduce) { .dc-tip.dc-open { animation: none; } }`;
@@ -44,7 +46,8 @@
   // Useful notes, folded behind an ⓘ on an anchor. `only`: fold only while the text matches (status lines).
   const TIPS = [
     { sel: "#regionHint", anchor: () => $("regionPicker") },
-    { sel: "#areaStatus", anchor: () => $("regionPicker") },
+    // #areaStatus also carries live loading progress and errors ("couldn't load… retry"): fold only its default note
+    { sel: "#areaStatus", anchor: () => $("regionPicker"), only: /^Plan anywhere on Mars:/ },
     { sel: "#lightingNote", anchor: () => $("globeLighting")?.closest("label") },
     { sel: "#moonSyncNote", anchor: () => $("moonControls")?.querySelector(":scope > summary") },
     { sel: "#moonStatus", anchor: () => $("moonControls")?.querySelector(":scope > summary"),
