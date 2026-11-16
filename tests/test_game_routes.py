@@ -249,6 +249,62 @@ class GameRoutesTest(unittest.TestCase):
         self.assertEqual(self.client.post(url,json=packet).json(),first.json())
         self.assertEqual(first.json()["active_drive_s"],2)
 
+    def test_paused_and_frozen_clock_packets_cannot_accumulate_roundoff_motion(self):
+        player,state=self.start()
+        anchor=state["position"].copy()
+        deg_per_m=(Cube.e/Cube.W)/Cube.pixel_m[1]
+        for mode in ("paused","driving"):
+            state=self.progress(player,state,mode=mode,dt=0).json()
+            for _ in range(20):
+                small=dict(state["position"],lon=state["position"]["lon"]+.0004*deg_per_m)
+                result=self.progress(player,state,position=small,mode=mode,dt=0)
+                self.assertEqual(result.status_code,200,result.text)
+                state=result.json()
+                self.assertEqual(state["position"],anchor)
+                self.assertEqual(state["active_drive_s"],0)
+                self.assertFalse(state["visited_destination"])
+            # The previous per-packet half-metre bonus allowed this indefinitely.
+            moved=dict(anchor,lon=anchor["lon"]+.4*deg_per_m)
+            self.assertEqual(self.progress(player,state,position=moved,mode=mode,dt=0).status_code,400)
+
+    def test_tiny_positive_time_packets_have_no_per_packet_distance_bonus(self):
+        player,state=self.start()
+        state=self.progress(player,state,dt=0).json()
+        start=state["position"].copy()
+        deg_per_m=(Cube.e/Cube.W)/Cube.pixel_m[1]
+        for _ in range(20):
+            # 4cm / 1ms =40m/s: valid. The old +.5m bonus allowed 440m/s.
+            moved=dict(state["position"],lon=state["position"]["lon"]+.04*deg_per_m)
+            result=self.progress(player,state,position=moved,dt=.001)
+            self.assertEqual(result.status_code,200,result.text)
+            state=result.json()
+            excess=dict(state["position"],lon=state["position"]["lon"]+.4*deg_per_m)
+            self.assertEqual(self.progress(player,state,position=excess,dt=0).status_code,400)
+        travelled=(state["position"]["lon"]-start["lon"])/deg_per_m
+        self.assertAlmostEqual(travelled,.8,places=6)
+        self.assertLessEqual(travelled,routes.MAX_DRIVE_M_S*state["active_drive_s"])
+
+    def test_stationary_near_destination_does_not_complete_and_zero_route_unavailable(self):
+        short=plan("nearby")
+        first=short["candidates"][0]["route"]["points"][0]
+        close=dict(first,lon=first["lon"]+10*(Cube.e/Cube.W)/Cube.pixel_m[1])
+        short["candidates"][0]["route"]["points"]=[first,close]
+        routes.capture_plan(short,self.cube)
+        player=self.claim()
+        start=self.client.post("/api/game/route-attempts",json=dict(player,plan_id="nearby",candidate=0,
+            points=[first,close],idempotency_key="nearby-test"))
+        self.assertEqual(start.status_code,200,start.text)
+        state=self.progress(player,start.json(),dt=0).json()
+        state=self.progress(player,state,dt=1,samples=1).json()
+        self.assertFalse(state["visited_destination"])
+        self.assertEqual(self.finish(player,state).status_code,400)
+        zero=plan("zero-distance")
+        zero["candidates"][0]["route"]["points"]=[first,first]
+        routes.capture_plan(zero,self.cube)
+        saved=self.get("zero-distance")
+        self.assertFalse(saved["available"])
+        self.assertEqual(saved["plan"]["id"],"zero-distance")
+
     def test_finish_persists_ties_and_ignores_driving_speed_for_rank(self):
         one,first=self.start()
         first=self.drive_round_trip(one,first,1)

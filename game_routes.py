@@ -28,6 +28,7 @@ MODEL_VERSION = "planner-route-comparison-v1"
 MAX_POINTS = 5000
 MAX_DRIVE_M_S = 60.0  # Above the game's 45 m/s presentation cap, including storm drift.
 MAX_HEARTBEAT_GAP_S = 4.0
+POSITION_ROUNDOFF_M = .001
 CORRIDOR_M = 1000.0  # Existing science/shelter excursions remain available.
 _lock = threading.RLock()
 _conn = _path = None
@@ -274,6 +275,8 @@ def _evaluate(record, plan, candidate, raw):
             energy+=ds*float(data["energy_wh_m"][r,c])
             elevations.append(float(data["elevation_m"][r,c]))
     vehicle=json.loads(record["model"])
+    if distance <= POSITION_ROUNDOFF_M:
+        raise HTTPException(400,"A ranked route must have a measurable travel distance.")
     if distance > vehicle["range_km"]*1000:
         raise HTTPException(400,"The edited route exceeds this vehicle's mission range.")
     total_seconds=2*seconds
@@ -317,9 +320,11 @@ def _display(data, points):
 @router.get("/plans/{plan_id}")
 def get_plan(plan_id: str, candidate: int=Query(0,ge=0,le=8)):
     record,plan=_plan(plan_id);cand=_candidate(plan,candidate)
-    result=dict(plan=plan,candidate=candidate,available=False,key=_key(record,plan,candidate),
-                reference=dict(points=_points(cand["route"]["points"])),reason=record["error"])
+    result=dict(plan=plan,candidate=candidate,available=False,key=None,
+                reference=dict(points=[]),reason=record["error"])
     try:
+        result["reference"]["points"]=_points(cand["route"]["points"])
+        result["key"]=_key(record,plan,candidate)
         if record["terrain"]:
             result["terrain"]=_display(_terrain(record["terrain"]),result["reference"]["points"])
         reference=_evaluate(record,plan,candidate,cand["route"]["points"])
@@ -435,7 +440,15 @@ def progress(attempt_id: str, req: ProgressRequest):
         now=time.monotonic();elapsed=max(0.,now-state["updated"])
         dt=elapsed if state["mode"]=="driving" and elapsed<=MAX_HEARTBEAT_GAP_S else 0.
         length=float(np.linalg.norm(b-a))
-        if length>MAX_DRIVE_M_S*dt+.5:raise HTTPException(400,"Movement exceeds the active driving allowance. Resume saved progress.")
+        if dt == 0:
+            if length>POSITION_ROUNDOFF_M:
+                raise HTTPException(400,"Movement requires active driving time. Resume saved progress.")
+            # Coordinate conversion can differ by sub-millimetre roundoff. Keep
+            # the authoritative anchor: accepting that noise must never grant
+            # a fresh movement allowance on every paused/frozen-clock packet.
+            new=dict(state["position"]);b=a;length=0.
+        elif length>MAX_DRIVE_M_S*dt:
+            raise HTTPException(400,"Movement exceeds the active driving allowance. Resume saved progress.")
         # Validate swept terrain, not merely the received endpoints.
         _crossings(a,b,data)
         route=np.array([_local(p,data) for p in payload["points"]])
