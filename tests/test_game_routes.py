@@ -4,6 +4,7 @@ Synthetic grids here are test fixtures only; production captures the planner's
 own cube and result. No fixture is exposed as a playable mission.
 """
 import copy
+import json
 import math
 import os
 from pathlib import Path
@@ -120,7 +121,8 @@ class GameRoutesTest(unittest.TestCase):
         for start,end in ((a,b),(b,a)):
             for t in np.linspace(0,1,13)[1:]:
                 point={k:start[k]+(end[k]-start[k])*float(t) for k in ("lat","lon")}
-                response=self.progress(player,state,point,samples=1,dt=dt)
+                count=1 if state["samples"] or (end==b and t==1) else 0
+                response=self.progress(player,state,point,samples=count,dt=dt)
                 self.assertEqual(response.status_code,200,response.text)
                 state=response.json()
         return state
@@ -305,6 +307,34 @@ class GameRoutesTest(unittest.TestCase):
         self.assertFalse(saved["available"])
         self.assertEqual(saved["plan"]["id"],"zero-distance")
 
+    def test_sample_claim_at_start_rejected_but_original_science_spot_before_b_allowed(self):
+        player,state=self.start()
+        state=self.progress(player,state,dt=0).json()
+        premature=self.progress(player,state,dt=1,samples=1)
+        self.assertEqual(premature.status_code,400,premature.text)
+        self.assertIn("science location",premature.json()["detail"])
+        unchanged=self.client.post(f"/api/game/route-attempts/{state['id']}/resume",json=player).json()
+        self.assertEqual(unchanged["samples"],0)
+        self.assertFalse(unchanged["visited_destination"])
+
+        original=plan("science-along-route")
+        site=Cube.point(3,4)
+        original["candidates"][0]["card"]["sampling"]=[dict(site,what="clay")]
+        routes.capture_plan(original,self.cube)
+        result=self.client.post("/api/game/route-attempts",json=dict(player,plan_id=original["id"],candidate=0,
+            idempotency_key="sample-at-original-site",points=original["candidates"][0]["route"]["points"]))
+        self.assertEqual(result.status_code,200,result.text)
+        state=self.progress(player,result.json(),dt=0).json()
+        start=state["position"]
+        for t in np.linspace(0,1,7)[1:]:
+            position={k:start[k]+(site[k]-start[k])*float(t) for k in ("lat","lon")}
+            response=self.progress(player,state,position=position,samples=1 if t==1 else 0,dt=1)
+            self.assertEqual(response.status_code,200,response.text)
+            state=response.json()
+        self.assertEqual(state["samples"],1)
+        self.assertFalse(state["visited_destination"])
+        self.assertEqual(self.finish(player,state).status_code,400)
+
     def test_finish_persists_ties_and_ignores_driving_speed_for_rank(self):
         one,first=self.start()
         first=self.drive_round_trip(one,first,1)
@@ -333,6 +363,37 @@ class GameRoutesTest(unittest.TestCase):
         self.assertEqual(restored["points"],second["points"])
         wrong=self.client.post("/api/game/route-attempts",json=dict(player,plan_id="original",candidate=0,idempotency_key="attempt-two",points=first["points"]))
         self.assertEqual(wrong.status_code,409)
+
+    def test_finish_receipt_rank_is_not_limited_to_first_hundred_players(self):
+        player,state=self.start(self.claim("ZzzPilot"))
+        state=self.drive_round_trip(player,state)
+        # Completed-score fixtures exercise pagination without simulating 101
+        # additional games. The submitting player still completes through APIs.
+        with routes._write() as db:
+            row=db.execute("SELECT * FROM attempts WHERE id=?",(state["id"],)).fetchone()
+            completed=json.loads(row["state"])
+            completed.update(status="finished",mode="paused")
+            for i in range(101):
+                name=f"Other{i:03d}"
+                db.execute("INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?)",
+                           (name,name.lower(),name,row["plan_id"],row["candidate"],row["mission_key"],
+                            "fixture-"+name,row["payload"],routes._json(completed)))
+        finished=self.finish(player,state)
+        self.assertEqual(finished.status_code,200,finished.text)
+        self.assertEqual(finished.json()["rank"],1)
+        with routes._write() as db:
+            for row in db.execute("SELECT id,payload FROM attempts WHERE name_lc LIKE 'other%'").fetchall():
+                payload=json.loads(row["payload"])
+                payload["metrics"]["simulated_time_s"]-=1
+                db.execute("UPDATE attempts SET payload=? WHERE id=?",(routes._json(payload),row["id"]))
+        _,second=self.start(player,key="after-first-hundred")
+        second=self.drive_round_trip(player,second)
+        finished=self.finish(player,second)
+        self.assertEqual(finished.status_code,200,finished.text)
+        self.assertEqual(finished.json()["rank"],102)
+        public=self.client.get("/api/game/route-leaderboard",params=dict(key=state["key"],limit=100)).json()
+        self.assertEqual(public["players"],102)
+        self.assertEqual(len(public["board"]),100)
 
 
 if __name__=="__main__":

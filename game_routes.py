@@ -30,6 +30,10 @@ MAX_DRIVE_M_S = 60.0  # Above the game's 45 m/s presentation cap, including stor
 MAX_HEARTBEAT_GAP_S = 4.0
 POSITION_ROUNDOFF_M = .001
 CORRIDOR_M = 1000.0  # Existing science/shelter excursions remain available.
+# Original game: 9m interaction, duplicate markers shifted by 26m, then a
+# half-second movement heartbeat. Three nearby markers can spread by 52m.
+# This is a gameplay-position tolerance, not the source's map resolution.
+SCIENCE_RADIUS_M = 90.0
 _lock = threading.RLock()
 _conn = _path = None
 _terrain_cache = {}
@@ -460,6 +464,16 @@ def progress(attempt_id: str, req: ProgressRequest):
             distances=np.linalg.norm(p-(route[:-1]+fractions[:,None]*vectors),axis=1)
             if float(distances.min())>CORRIDOR_M:
                 raise HTTPException(400,"Movement leaves the mission's route and shelter area.")
+        if req.samples>state["samples"]:
+            candidate=_candidate(plan,row["candidate"])
+            sites=[route[-1]]  # The original game moves its nearest sample to B.
+            for site in candidate.get("card",{}).get("sampling",[]):
+                if isinstance(site,dict) and isinstance(site.get("lat"),(float,int)) and isinstance(site.get("lon"),(float,int)):
+                    sites.append(_local(site,data))
+            if min(float(np.linalg.norm(b-site)) for site in sites)>SCIENCE_RADIUS_M:
+                raise HTTPException(400,"New samples must be collected near a mission science location.")
+            # The server checks collection location; completion of the browser's
+            # sampling mini-game remains a browser-reported claim.
         if dt>0 and length>0 and _distance_to_segment(route[-1],a,b)<=35:state["visited_destination"]=True
         state.update(mode=req.mode,sequence=req.sequence,position=new,samples=max(state["samples"],req.samples),
                      active_drive_s=state["active_drive_s"]+dt,updated=now,request_hash=fingerprint)
@@ -499,7 +513,7 @@ def _board(db,key,limit=100):
     for i,e in enumerate(values,1):
         if e["simulated_time_s"]!=previous:rank=i;previous=e["simulated_time_s"]
         e["rank"]=rank
-    return values[:limit],len(values)
+    return (values if limit is None else values[:limit]),len(values)
 
 
 @router.post("/route-attempts/{attempt_id}/finish")
@@ -516,7 +530,9 @@ def finish(attempt_id:str,req:Credentials):
         if checked["metrics"]!=payload["metrics"]:raise HTTPException(409,"The route model changed; restart the attempt.")
         state.update(status="finished",mode="paused")
         _save(db,attempt_id,state)
-        board,_=_board(db,payload["key"])
+        # A submission receipt needs its rank even when it lies beyond the
+        # first page, including a tie containing more than 100 callsigns.
+        board,_=_board(db,payload["key"],limit=None)
         state["rank"]=next((e["rank"] for e in board if e["name"].lower()==name.lower()),None)
         _save(db,attempt_id,state)
         return _snapshot(row,payload,state)
