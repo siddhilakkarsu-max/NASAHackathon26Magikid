@@ -1,122 +1,179 @@
 # Changelog
 
+> **Frozen.** New changes go in `docs/changelog/`, one file per merged pull request (see `AGENTS.md`).
+> This file keeps the history up to PR #32.
+
 Notable changes to Marswalk Planner. Entries are grouped by session; this is a hackathon
 project, so dates matter more than semantic version numbers.
 
-Every PR that changes behaviour adds its entry here, newest first, with the PR number and author. How to write
-one: `README.md`, section "Keeping the docs current". Authors by first name; git author `Gk` is Gia.
+## [Unreleased] - 2026-11-15, game: complete vehicle models
 
-## [Unreleased] - 2026-11-14, docs rule and team docs
-
-### Added
-
-- **Docs rule for every teammate and agent:** README section "Keeping the docs current" (what to update, how to
-  write a changelog entry, which doc covers what, a PR checklist) and a matching section in `AGENTS.md` (#30,
-  Gia).
-- `docs/ARCHITECTURE.md` (pipeline, request flows, module map, `config.py` layout, pages, tests), `docs/API.md`
-  (every route) and `docs/DATA_SOURCES.md` (every dataset and published figure; our "NASA data used" list)
-  (#30, Gia).
-- Changelog entries for every merged PR that had none: #2, #4, #6, #7, #13, #17 to #27 and #29 (#30, Gia).
+Branch `feat/Gk`.
 
 ### Fixed
 
-- README drift: "Who owns what" (no `physics.endurance`; gear, mission, weather and radiation owners), the honest
-  limits on oxygen and the return leg, the crew rover's numbers, the opening view, the season slider and the
-  sharp-imagery box; the README API table now points to `docs/API.md` (#30, Gia).
-
-## [Unreleased] - 2026-11-14, radiation layer
-
-PR #29 (Jason).
-
-### Added
-
-- **Radiation map, "Radiation · modeled GCR effective dose".** The published AtRIS surface effective dose
-  (Zhang and Guo 2022) interpolated at OpenMARS surface pressure, in µSv/h, for a 400, 700 or 1000 MV solar
-  scenario, with per-scenario or shared (12-30 µSv/h) colours. Hover shows the dose, pressure and dust context.
-  Open it directly with `?layer=radiation_dose` (#29, Jason).
-- `mars_radiation.py`, `radiation_data/` (source table, extraction notes, checksums) and `GET /api/radiation/method`
-  for the method and its limits; `tests/test_radiation.py`, 11 tests (#29, Jason).
-
-### Fixed
-
-- The globe waits until its panel is visible before placing the camera, so a page opened in a hidden panel no
-  longer starts with a broken view (#29, Jason).
-
-## [Unreleased] - 2026-11-14, one resource model, plan anywhere, plain language
-
-PRs #21 to #27.
-
-### Added
-
-- **Plan anywhere on Mars (#25, Darren).** The region menu starts on "Anywhere on Mars": planning loads a 0.8°
-  box around the view in seconds, with elevation from the globe's own 3D terrain (MDEM200M, decoded from LERC
-  tiles; `lerc` added to `requirements.txt`), THEMIS, TES albedo and the quadrangle's thermal inertia; CRISM
-  minerals follow in the background. New `GET /api/sites`, `POST /api/sites/build`, `GET /api/sites/build/{region}`;
-  `tests/test_sites.py`.
-- **No landing spot? It says why (#25, Darren)** (fine dust everywhere, too steep, ...) and, for dust, points to the
-  nearest firm ground with a "Go there and plan" button.
-- **"Gear for this mission" link on each mission card (#21, Gia).** Opens `kit.html` with the candidate's route,
-  vehicle and season; `tests/test_mission_gear_link.py`.
-- **Consumables panel shows the full model (#22, Gia):** the reserve and usable amount, O2 slope and ground factors,
-  climb energy, power source, sunlight and recharge time; `tests/test_cons_panel.py`.
-- **Plain language by default (#27, Darren).** Technical details sit behind the A key; server messages are
-  `"plain | detail"`. Plain names for minerals, tools, vehicles and seasons; `tests/test_plain_text.py`.
+- **Half the rover was missing while riding** (`frontend/game.html`). The riding view used a separate front-only
+  "cockpit" model, so there were no seats or rear, and it did not match the parked vehicle. Each vehicle is now one
+  complete model (`g3VehModel`) drawn around the driver's eye when riding and placed on the ground when parked.
 
 ### Changed
 
-- **Mission resources use the route planner's model (#23, Gia).** Out and back costed separately: Minetti slope cost
-  for walkers with the return leg reversed, carried tool mass, m g h for vehicle climbs, a reserve never below
-  15 % (20 % in dust season) and a recharge time for the buggy. The on-foot route cost uses the same up-and-back
-  oxygen; `tests/test_mission_resources.py`.
-- **Walk-back zone limited by suit O2 and battery as well as time (#24, Gia).** `/api/plan` adds
-  `walkback_basis`, `walkback_area_km2`, `walkback_reserve_pct`, `walkback_o2_usable_kg` and
-  `walkback_energy_usable_kwh`; `tests/test_walkback_o2.py`.
-- **One source for crewed vehicles (#26, Gia).** The mission planner's `on_foot`, `four_wheel` and `buggy` now read
-  `VEHICLES` (on foot: max slope 18° instead of 15°; open rover: Apollo LRV 8.71 kWh). The crew rover uses NASA's
-  Mars pressurized rover study (5,193 kg, 60 kWh, 1.85 kW idle, 0.80 kWh/km) instead of the 20 kWh estimate, and
-  mission ranges fit their batteries after a 25 % reserve (buggy 100 → 20 km, scout bike 15 → 14 km);
-  `tests/test_vehicle_lists.py`.
-- **Season slider drives missions (#27, Darren):** the season menu is gone; `POST /api/mission` takes `ls`
-  (`config.season_for_ls`). The weather timeline's own slider is hidden and the season slider shows the sol.
-- The page opens with no weather layer; "Whole Mars" only zooms out (#27, Darren).
-- Murray Lab background maps are radio buttons, one at a time (#27, Darren).
-- The sharp-imagery box shows the Murray Lab black-and-white CTX map instead of the coloured `/ctxtiles` copy
-  (#27, Darren).
-- Zoomed out over the whole planet, planning stays in the current area (#27, Darren).
+- Open rover: four wheels with hubs and fenders, two seats, console with display and hand controller, foot rest,
+  headlights, TV camera, tool pallet; the dish moved behind the driver, out of the forward view.
+- Bike: frame, fork, handlebar with grips and levers, display, headlight, fenders, seat, battery, panniers.
+- Pressurised rover: six wheels, nose, cabin with window frame, dash, yoke and two seats, rear module, roof gear.
+- Ground rings are thinner and their fill fainter; the parked vehicle has a ring and label but no light pillar.
+- Test hook `window.__MW.look(yawDeg, pitchDeg)`. 1 test.
 
-### Fixed
+### Verification
 
-- `build_cube.read_raster_into_grid` stretched a source covering only part of the grid over all of it. Jezero's
-  mineral class map covered 67 % of the box instead of its real 14 %; `cubes/jezero.npz` rebuilt (#25, Darren).
+- Headless Chrome screenshots: riding view forward, down, left and right for all three vehicles; the parked rover
+  and bike from three sides. Autopilot completes all 14 baked routes.
 
-## [Unreleased] - 2026-11-14, Murray Lab maps, route hover and cleanup
+### Limits
 
-PRs #17 to #20.
+- Models are flat-shaded boxes, beams and cylinders built in code. Wheels do not turn and the steering does not
+  move. The pressurised rover cannot be left, so it is never seen from outside.
+
+## [Unreleased] - 2026-11-15, game: leaderboard, callsigns and a "mission ready" button
+
+Branch `feat/Gk`.
 
 ### Added
 
-- **MarsMap features in the main app (#17, Darren):** calibrated Jezero thermal inertia (Zenodo 4931348), the
-  CRISM dominant-mineral map (Zenodo 5575824), TES albedo, the `air_column_vs_gale` shielding band, the "Mission
-  suitability" layer, `GET /api/point` (live lookup anywhere), `/ctxtiles` with a sharp-imagery box and
-  `/api/prefetch`, `GET /api/imagery/{region}`, and the `jezero_hirise` cube (1 m HiRISE DEM, built locally).
-- **Murray Lab maps (#17, Darren):** `murray.py` serves every layer of the Murray Lab CTX viewer: CTX 5 m, MOLA
-  colour, Viking, 3D terrain relay, Mars 2020 and MSL traverses, IAU names, craters, the CTX tile map and HiRISE
-  footprints. `certs/` holds the intermediate certificate Caltech's server omits.
-- **Hover over a route (#17, Darren):** a 3D model matching the vehicle stands at that point with a card of distance,
-  time, terrain and supplies used so far. `/api/plan` and mission routes carry per-point profiles; models made by
-  `tools/make_rover_glb.py`.
-- **New look (#17, Darren):** Mars landing page ("Start exploring"), Inter font, orange pill controls, card panel
-  (`tools/make_mars_disk.py`).
+- **Leaderboard and callsigns** (`leaderboard.py`, routes `/api/game/players`, `/api/game/scores`,
+  `/api/game/leaderboard`; one include line in `app.py`). A player claims a callsign on the game's title screen;
+  successful missions flown by hand at normal speed are posted; the end screen shows the rank and top ten for that
+  mission and route, the title screen the overall board. Stored in `game_state/leaderboard.sqlite3` (not in git,
+  folder set by `MARSWALK_GAME_STATE_DIR`). Browser storage: `marswalk.game.player`.
+- **"Mission ready · Play" button** (`frontend/game-launch.js`). A green pulsing button appears at the top right
+  of the planner map when a plan is ready and opens the selected route in the game. Hidden while planning.
+- 8 tests (174 total): `tests/test_leaderboard.py` (7) and one in `tests/test_game.py`.
+
+### Verification
+
+- Headless Chrome against the local server: claim a callsign, finish a mission by hand, see the rank and board;
+  duplicate and invalid callsigns refused with a message; autopilot runs not posted. On the planner: the button is
+  hidden before and during planning, appears when the plan is ready, overlaps no other control, and launches the
+  game with the selected route.
+
+### Limits
+
+- Scores come from the browser and can be faked; the server checks ranges, the callsign token and a 4 s gap.
+- A callsign has no password and cannot be recovered on another device. No name filter beyond the character rule,
+  no admin page. Each server keeps its own board.
+
+## [Unreleased] - 2026-11-15, game: vehicle handling, dismounting and a sample at B
+
+Branch `feat/Gk`.
 
 ### Changed
 
-- Firmness is rated on the log thermal-inertia scale again, keeping the gear oxygen scenario valid (#17, Darren).
-- `run.bat` / `run.sh` start `app:app` instead of `gear_server`; gear tests use a temporary state folder
-  (`tests/_gear_state.py`) instead of the real published kit (#19, Gia).
-- Gear page MER scenarios drive about one pixel (~110 m) from the landing site, a realistic one-sol drive, instead of
-  a 0.59 km trip at 222 % of a sol's energy; `tests/test_mer_demo.py` (#20, Gia).
-- Gear features, run scripts and app hookup documented in the README, `gear/README.md` and this changelog
-  (#18, Gia).
+- **Vehicles drive like vehicles** (`frontend/game.html`). W accelerates, S brakes and reverses, A / D steer; the
+  vehicle carries momentum, steering needs speed, loose ground gives less grip, and the cockpit stays fixed to the
+  vehicle while the mouse looks around.
+- **Dismount and mount** with V on the bike and the open rover. The parked vehicle is a model in the world; on
+  foot the crew moves and breathes at walking rates and the vehicle draws only its hotel load. Site work steps the
+  crew off automatically.
+
+### Fixed
+
+- **Nothing to sample at B.** On several plans every sampling spot lay 110 to 640 m from B, so pressing E at the
+  B marker did nothing. The nearest spot is now placed on B.
+
+### Verification
+
+- Headless Chrome: drive, steer, reverse, dismount, "too far to mount", remount and sampling at B on the open
+  rover; bike and pressurised rover load without errors; autopilot completes all 14 baked routes.
+- 1 test (166 total).
+
+### Limits
+
+- Handling is a feel model, not vehicle dynamics. Not driven by hand with a real mouse and keyboard.
+
+## [Unreleased] - 2026-11-15, the game goes first-person 3D
+
+Branch `feat/Gk`.
+
+### Changed
+
+- **First-person 3D view** (`frontend/game.html`, section 12b, raw WebGL, no libraries). The player sees Mars
+  through the visor or over the vehicle's hood: W / S move along the view, A / D strafe, mouse or arrow keys look.
+  The planned route is a chevron line on the ground coloured by the plan's risk; light pillars mark A, B, sampling
+  spots, shelters and the turn-back point; off-limits ground is hatched red; data layers paint the terrain. Storms
+  close the view in, night uses a headlamp. The simulation, tools, hazards and planner hand-off are unchanged.
+- **Lighter dialogue.** Blocking Houston cutscenes are cut to one or two lines around the mission and become radio
+  calls during it; the intro plays from its button only. `?story=1` restores the full scripts.
+
+- **Helmet AR HUD.** The helmet rim frames the view and the HUD panels sit inside it, stacked so they do not
+  overlap. The visor reacts to damage, low oxygen, storms, cold and lost signal.
+- **Easier to pick up.** Missions start facing down the route, the path arrows point the way you travel, a guide
+  light floats ahead on the route, one plain-language hint shows at a time, and Space hops in Mars gravity.
+- **Models.** Lander with legs, ladder, hatch and solar wings; science station at B; rover with wheels, fenders,
+  console, dish and camera; bike handlebars and front wheel; cabin window frame and dash; suit forearms and gloves.
+
+### Added
+
+- URL params `view=2d` (top-down renderer, also the fallback without WebGL), `story=1`, `gq=low`.
+- A heading pill with an arrow to the next point on the route.
+- 2 tests (149 total).
+
+### Verification
+
+- Headless Chrome: autopilot completes all 14 baked routes in 3D from `file://`; all six death causes fire; manual
+  walking and strafing work; 59-60 frames per second on Intel UHD.
+
+### Limits
+
+- Terrain shape is scenery generated over the game's hazard fields, not the real Jezero elevation.
+- Clicking the ground for point values needs `view=2d`. Not checked on a phone; mouse capture not exercised by hand.
+- Live-planning and hand-off checks were not re-run on the 3D build (their code did not change).
+## [Unreleased] - 2026-11-14, planner controls and game integration
+
+- Use one global Map view selector for imagery, terrain, weather and radiation;
+  keep annotation overlays independent and remove the OpenMARS reference option.
+- Prevent selected page text from canceling time-slider drags after one step.
+- Show the full published CTX photo grid and correct dateline tiles and lookup.
+- Integrate the teammate game into a collapsed section and Mission results action.
+  Preserve the saved route, region and exact season when launching it.
+- Place game imagery using its actual regional bounds and prevent canceled planning
+  responses from replacing a newly chosen mission.
+- Add map-selection, native slider and game-handoff browser regression checks.
+
+## [Unreleased] - 2026-11-14, survival game that plays the plan
+
+Branch `feat/Gk`.
+
+### Added
+
+- **Marswalk: Survive the Route** (`frontend/game.html`, one self-contained file, served at `/game.html`). The
+  player follows the planned route A to B and back with the plan's tools, oxygen, battery and reserve; six ways to
+  die (`oxygen`, `battery`, `integrity`, `tools`, `offlimits`, `storm`); Houston cutscenes with the signal delay.
+  The briefing shows the planner's settings, tools, decision matrix, candidate cards, dropped routes and notes;
+  layers, weather, rover tracks and clicked-point values are in a drawer. Plans live through
+  `/api/mission/stream`, or runs offline on five baked real plans.
+- **Play buttons** (`frontend/game-launch.js`). `kit.html` loads it and gets a Play button that opens the game with
+  the kit form's vehicle, season, region and goals. On the planner it adds "Play this mission", which saves the
+  plan and selected route to `localStorage["marswalk.game.mission"]` and opens `game.html?src=planner`.
+- URL params: `baked`, `cand`, `difficulty`, `src=planner`, `goal`, `vehicle`, `season`, `priority`, `green_only`,
+  `region`, `autopilot`, `speed`, `skip`, `mute`, `seed`, `touch`. Storage: `marswalk.game.mission`,
+  `marswalk.game.best`, `marswalk.game.last`, `marswalk.game.prefs`.
+- `docs/game/README.md` (player guide and hand-over) and `docs/game/smoke_test.js` (headless autopilot run).
+- 10 tests (136 total), `tests/test_game.py`. One fails if the game's vehicle table drifts from
+  `config.MISSION_VEHICLES`.
+
+### Verification
+
+- Headless Chrome: autopilot completes all 14 baked routes served and from `file://`; all six death causes fire;
+  42 UI checks and 16 planning and hand-off checks pass; no console errors; 59-60 frames per second on Intel UHD.
+
+### Limits
+
+- `frontend/index.html` is not edited, so the planner has no Play button until
+  `<script src="/game-launch.js" defer></script>` is added to its `<head>`.
+- Terrain away from the planned corridor is generated. Storms, breaches, tool charges and scoring are game rules,
+  not planner output. Time is compressed: a round trip takes about 2.5 to 6.5 minutes.
+- Baked missions and the embedded weather table are Jezero only. Not checked on a phone, Firefox or Safari.
 
 ## [Unreleased] - 2026-11-14, gear page, app hookup and run scripts
 

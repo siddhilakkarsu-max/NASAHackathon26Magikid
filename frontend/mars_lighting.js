@@ -30,6 +30,7 @@ function createMarsLighting(viewer, ellipsoid, sunElement) {
   skyAtmosphere.atmosphereLightIntensity = 24;
 
   const sunPosition = new Cesium.Cartesian3();
+  let sunAvailable = true;
   const look = new Cesium.Cartesian3();
   const pixel = new Cesium.Cartesian2();
   const globeHit = new Cesium.Cartesian3();
@@ -70,7 +71,7 @@ function createMarsLighting(viewer, ellipsoid, sunElement) {
   });
   scene.postRender.addEventListener(() => {
     let position;
-    if (globe.enableLighting && camera.positionCartographic.height > radius * 0.2) {
+    if (sunAvailable && globe.enableLighting && camera.positionCartographic.height > radius * 0.2) {
       Cesium.Cartesian3.subtract(sunPosition, camera.positionWC, look);
       if (Cesium.Cartesian3.dot(look, camera.directionWC) > 0) {
         position = Cesium.SceneTransforms.worldToWindowCoordinates(scene, sunPosition, pixel);
@@ -86,7 +87,18 @@ function createMarsLighting(viewer, ellipsoid, sunElement) {
   });
 
   return {
+    clearEphemeris() { sunAvailable = false; sunElement.hidden = true; },
+    updateFromPosition(position) {
+      // The overview supplies the geometric Mars-to-Sun vector in metres,
+      // expressed in the same rotating frame as the globe and moon positions.
+      Cesium.Cartesian3.clone(position, sunPosition);
+      sunAvailable = true;
+      Cesium.Cartesian3.normalize(position, light.direction);
+      Cesium.Cartesian3.negate(light.direction, light.direction);
+      scene.requestRender();
+    },
     update(hour, ls, referenceLongitude) {
+      sunAvailable = true;
       // Same obliquity and seasonal declination as physics.sun_position.
       const obliquity = Cesium.Math.toRadians(25.19);
       const latitude = Math.asin(Math.sin(obliquity) * Math.sin(Cesium.Math.toRadians(ls)));

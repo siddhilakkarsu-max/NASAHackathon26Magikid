@@ -21,12 +21,22 @@ import math
 import os
 import re
 import ssl
+import threading
 import time
 import urllib.error
 import urllib.request
 
 import numpy as np
 from scipy.ndimage import distance_transform_edt, uniform_filter
+
+try:                                     # Claude via the Anthropic API, used when ANTHROPIC_API_KEY is set
+    import claude_ai
+except ImportError:                      # the anthropic package isn't installed: OpenRouter / local model only
+    claude_ai = None
+
+
+def _use_claude():
+    return claude_ai is not None and claude_ai.enabled()
 
 from config import MARS_RADIUS_M, MINERALS
 
@@ -572,7 +582,40 @@ def _json_object(text):
 AI_REASONING = os.environ.get("AI_REASONING", "low")   # thinking effort when the page streams it ("none" = off)
 # Some models think for minutes on a short job; after this many seconds of thinking without an answer the
 # stream stops them and asks for the answer straight away, passing along the notes made so far.
-AI_THINK_SECONDS = float(os.environ.get("AI_THINK_SECONDS", "40"))
+AI_THINK_SECONDS = float(os.environ.get("AI_THINK_SECONDS", "15"))
+# A local model server (Ollama) answers one request at a time; queueing here lets each page say how many requests
+# are ahead of it instead of looking stuck. AI_PARALLEL raises the limit for a cloud provider.
+AI_PARALLEL = int(os.environ.get("AI_PARALLEL", "8" if _use_claude() else "1"))
+_ai_slots = threading.Semaphore(AI_PARALLEL)
+_ai_queue = [0]                                      # requests waiting for a slot
+_ai_queue_lock = threading.Lock()
+
+
+def _ai_call(url, body, headers, timeout):
+    """A non-streamed AI request that waits its turn like ai_stream (up to 2 minutes)."""
+    if not _ai_slots.acquire(timeout=120):
+        raise OSError("the AI model is busy with other requests")
+    try:
+        return _http_json(url, body, headers, timeout=timeout)
+    finally:
+        _ai_slots.release()
+
+
+def _ai_wait():
+    """Wait for a free AI slot: yields the number of requests ahead every 2 s until one is free (then returns)."""
+    if _ai_slots.acquire(blocking=False):
+        return
+    with _ai_queue_lock:
+        _ai_queue[0] += 1
+        ahead = _ai_queue[0]
+    try:
+        while not _ai_slots.acquire(timeout=2):
+            yield ahead
+            with _ai_queue_lock:
+                ahead = min(ahead, _ai_queue[0])
+    finally:
+        with _ai_queue_lock:
+            _ai_queue[0] -= 1
 FAIL = "so only built-in words were used"
 
 
@@ -622,6 +665,19 @@ def ai_parse(query):
     key = query.strip().lower()
     if key in _llm_cache:
         return _llm_cache[key], None
+    if _use_claude():
+        try:
+            if not _ai_slots.acquire(timeout=120):
+                return None, "the AI model is busy with other requests"
+            try:
+                text, model = claude_ai.write(_parse_messages(query), _llm_schema())
+            finally:
+                _ai_slots.release()
+            spec = _spec_from_text(text, model)
+        except (claude_ai.anthropic.APIError, ValueError) as e:
+            return None, str(e)
+        _llm_cache[key] = spec
+        return spec, None
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         return None, _no_key()
@@ -636,7 +692,7 @@ def ai_parse(query):
         "max_tokens": 3000,
     }
     try:
-        resp = _http_json(f"{OPENROUTER_URL}/chat/completions", body,
+        resp = _ai_call(f"{OPENROUTER_URL}/chat/completions", body,
                           {"Authorization": f"Bearer {api_key}"}, timeout=40)
     except (OSError, ValueError) as e:                  # HTTPError, URLError, timeout, bad JSON
         return None, _error_text(e)
@@ -652,7 +708,17 @@ def ai_parse(query):
 
 
 def ai_write(system, user, max_tokens=600):
-    """Free text from the same AI model as ai_parse (OpenRouter or a local server); None if unavailable."""
+    """Free text from the same AI model as ai_parse (Claude, OpenRouter or a local server); None if unavailable."""
+    if _use_claude():
+        if not _ai_slots.acquire(timeout=120):
+            return None
+        try:
+            return claude_ai.write([{"role": "system", "content": system}, {"role": "user", "content": user}],
+                                   max_tokens=max_tokens)[0] or None
+        except (claude_ai.anthropic.APIError, ValueError):
+            return None
+        finally:
+            _ai_slots.release()
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
     if not api_key:
         return None
@@ -660,20 +726,37 @@ def ai_write(system, user, max_tokens=600):
     body = {"model": models[0], "models": models, "max_tokens": max_tokens, "reasoning": {"effort": "none"},
             "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
     try:
-        resp = _http_json(f"{OPENROUTER_URL}/chat/completions", body, {"Authorization": f"Bearer {api_key}"}, timeout=40)
+        resp = _ai_call(f"{OPENROUTER_URL}/chat/completions", body, {"Authorization": f"Bearer {api_key}"}, timeout=40)
     except (OSError, ValueError):
         return None
     text = (((resp.get("choices") or [{}])[0].get("message") or {}).get("content") or "").strip()
     return text or None
 
 
-def ai_stream(messages, response_format=None, max_tokens=4000, reasoning=None, think_seconds=None):
-    """Stream an answer with the model's thinking. Yields ("reasoning", text) and ("content", text) pieces as
-    they arrive, then ("done", full_answer, model) - or ("error", reason) if it fails. Thinking is cut off after
-    think_seconds (default AI_THINK_SECONDS) without an answer; the answer is then asked for without thinking."""
+def ai_stream(messages, response_format=None, max_tokens=4000, reasoning=None, think_seconds=None, _slot=False):
+    """Stream an answer with the model's thinking. Yields ("waiting", requests_ahead) while other requests use the
+    model, ("reasoning", text) and ("content", text) pieces as they arrive, then ("done", full_answer, model) - or
+    ("error", reason) if it fails. Thinking is cut off after think_seconds (default AI_THINK_SECONDS) without an
+    answer; the answer is then asked for without thinking. Closing the generator (the page went away) closes the
+    connection, which stops the model."""
+    use_claude = _use_claude()
     api_key = os.environ.get("OPENROUTER_API_KEY", "").strip()
-    if not api_key:
+    if not api_key and not use_claude:
         yield ("error", _no_key())
+        return
+    if not _slot:
+        for ahead in _ai_wait():
+            yield ("waiting", ahead)
+        try:
+            yield from ai_stream(messages, response_format, max_tokens, reasoning, think_seconds, _slot=True)
+        finally:
+            _ai_slots.release()
+        return
+    if use_claude:                          # Claude: summarized thinking streamed, JSON schema via output_config
+        schema = ((response_format or {}).get("json_schema") or {}).get("schema")
+        think = (reasoning or AI_REASONING) != "none"
+        yield from claude_ai.stream(messages, schema, max_tokens, think,
+                                    AI_THINK_SECONDS if think_seconds is None else think_seconds)
         return
     models = free_models()
     effort = reasoning or AI_REASONING
@@ -721,7 +804,7 @@ def ai_stream(messages, response_format=None, max_tokens=4000, reasoning=None, t
         notes = "".join(thoughts)[-6000:]
         yield from ai_stream(messages + [{"role": "user", "content": f"Your notes so far:\n{notes}\n\n"
                                           "Now give only the final answer."}],
-                             response_format, max_tokens, reasoning="none", think_seconds=0)
+                             response_format, max_tokens, reasoning="none", think_seconds=0, _slot=True)
         return
     yield ("done", "".join(parts), model)
 

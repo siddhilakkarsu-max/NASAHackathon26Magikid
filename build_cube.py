@@ -350,15 +350,70 @@ def crism_read(label_url, params, grid):
     idx = [names.index(p) + 1 for p in params]
     with rasterio.Env(GDAL_DISABLE_READDIR_ON_OPEN="EMPTY_DIR"):
         with rasterio.open("/vsicurl/" + label_url) as src:
-            with WarpedVRT(src, crs=MARS_LONLAT_CRS, transform=grid["transform"], width=grid["width"],
-                           height=grid["height"], src_nodata=65535, nodata=np.nan,
-                           resampling=Resampling.average) as vrt:
-                data = vrt.read(idx).astype("float32")
+            data = _crism_read_bsq(src, label, idx, grid)
+            if data is None:                               # other layouts: let GDAL fetch what it needs
+                with WarpedVRT(src, crs=MARS_LONLAT_CRS, transform=grid["transform"], width=grid["width"],
+                               height=grid["height"], src_nodata=65535, nodata=np.nan,
+                               resampling=Resampling.average) as vrt:
+                    data = vrt.read(idx).astype("float32")
     data[~np.isfinite(data) | (np.abs(data) > 10)] = np.nan
     tmp = cache.with_name(cache.stem + ".part.npz")         # write then rename: no half-written cache
     np.savez_compressed(tmp, **{p: data[i] for i, p in enumerate(params)})
     tmp.rename(cache)
     return cache
+
+
+def _label_value(label, key):
+    m = re.search(rf"^\s*{re.escape(key)}\s*=\s*(.+?)\s*$", label, re.M)
+    return m.group(1).strip().strip('"') if m else None
+
+
+_range_slots = __import__("threading").BoundedSemaphore(12)   # all products together: be polite to PDS
+
+
+def _get_range(url, start, length, timeout=120):
+    import urllib.request
+    req = urllib.request.Request(url, headers={**UA, "Range": f"bytes={start}-{start + length - 1}"})
+    with _range_slots, urllib.request.urlopen(req, timeout=timeout, context=_ssl_ctx()) as resp:
+        data = resp.read()
+    if resp.status != 206 and start:                   # server ignored the range: cut it out ourselves
+        data = data[start:start + length]
+    if len(data) != length:
+        raise OSError(f"short read: {len(data)} of {length} bytes")
+    return data
+
+
+def _crism_read_bsq(src, label, idx, grid):
+    """Fast path for band-sequential float32 CRISM images. GDAL reads them scanline by scanline, about a
+    thousand 16 KB HTTP requests per product (~2 minutes from PDS); here the rows over the region are one
+    contiguous byte range per band, fetched in parallel (seconds). None when the layout is anything else."""
+    from rasterio.warp import reproject, transform_bounds
+    from rasterio.windows import Window
+    if (_label_value(label, "BAND_STORAGE_TYPE") != "BAND_SEQUENTIAL" or _label_value(label, "SAMPLE_TYPE") != "PC_REAL"
+            or _label_value(label, "SAMPLE_BITS") != "32" or not re.fullmatch(r'"?[\w.]+"?', _label_value(label, "^IMAGE") or "")
+            or int(_label_value(label, "LINE_PREFIX_BYTES") or 0) or int(_label_value(label, "LINE_SUFFIX_BYTES") or 0)
+            or src.crs is None or len(src.files) < 2):
+        return None
+    image_url = src.files[1].removeprefix("/vsicurl/")         # the .IMG (case as on the server); data at byte 0
+    lines, samples = src.height, src.width
+    w, s, e, n = transform_bounds(MARS_LONLAT_CRS, src.crs, *grid["bounds"], densify_pts=21)
+    win = src.window(w, s, e, n)
+    r0 = max(0, int(math.floor(win.row_off)) - 2)
+    r1 = min(lines, int(math.ceil(win.row_off + win.height)) + 2)
+    if r1 <= r0:
+        return np.full((len(idx), grid["height"], grid["width"]), np.nan, "float32")
+    row_bytes = samples * 4
+
+    def band(b):
+        raw = _get_range(image_url, ((b - 1) * lines + r0) * row_bytes, (r1 - r0) * row_bytes)
+        return np.frombuffer(raw, "<f4").reshape(r1 - r0, samples)
+    with ThreadPoolExecutor(len(idx)) as pool:
+        block = np.stack(list(pool.map(band, idx)))
+    out = np.full((len(idx), grid["height"], grid["width"]), np.nan, "float32")
+    reproject(source=block, destination=out, src_transform=src.window_transform(Window(0, r0, samples, r1 - r0)),
+              src_crs=src.crs, src_nodata=65535, dst_transform=grid["transform"], dst_crs=MARS_LONLAT_CRS,
+              dst_nodata=np.nan, resampling=Resampling.average)
+    return out
 
 
 def _km_corr(a, b, k):
@@ -491,6 +546,7 @@ def build(region, bands=None, px_per_deg=None):
     srcs = sources_for(region)
     wanted = list(bands or srcs.keys())
     crism = [n for n in wanted if any(spec["kind"] == "crism" for spec in srcs[n])]
+    print(f"STAGE layers {len(wanted) - len(crism)}", flush=True)     # lets the server show a progress bar
     for name in wanted:
         if name in crism:
             continue

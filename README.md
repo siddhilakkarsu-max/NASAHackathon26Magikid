@@ -1,5 +1,19 @@
 # Marswalk Planner — Python back end + Cesium front end
 
+**NASA Space Apps Challenge 2026 · team MagiKid · Martian Map challenge.** Plan a safe Marswalk from real NASA data:
+type a goal ("find clay where water once flowed"), answer the assistant's questions, and get up to three routes
+checked for oxygen, storm shelter, radiation and the walk back, with eye-height views along the way.
+
+![Marswalk Planner: the assistant has planned a walk to clay deposits at Jezero crater](docs/images/planner.png)
+
+**Try it in two minutes** (Python 3.10+ and internet for the NASA map tiles):
+```bash
+git clone https://github.com/siddhilakkarsu-max/NASAHackathon26Magikid && cd NASAHackathon26Magikid
+./run.sh          # Windows: double-click run.bat. Then open http://localhost:8000
+```
+Type `I want to find clay` in the search bar, answer the two questions, then try `Walker's view`.
+Data sources: [docs/SUBMISSION_REFERENCES.md](docs/SUBMISSION_REFERENCES.md) · AI use: [AI_DISCLOSURE.md](AI_DISCLOSURE.md).
+
 Every pixel of Mars holds a vector of values (elevation, slope, roughness, ground firmness, …).
 User inputs (time of day, season, vehicle, EVA budget) are applied per pixel to produce
 a cost map, a safe route, a walk-back zone and a time-to-shelter map.
@@ -129,9 +143,9 @@ Datasets in the Jezero cube (all fetched automatically by `build_cube.py`; downl
   >600 bedrock (log scale, 150 → 0 ... 600 → 1), plus local THEMIS night-IR detail; night IR alone where TI is missing.
 - **Mission suitability** layer = 0.45 × safety (slope + firmness) + 0.35 × science (CRISM detections)
   + 0.20 × radiation shielding (`suitability()` in `app.py`).
-- **Sharp imagery (5 m)**: the global CTX mosaic (Murray Lab, Caltech), black and white straight from Esri's
-  OnMars tiles, loads inside the selected region or any box you draw ("Box a sharp area"). "Pre-load box" caches
-  the Viking-coloured copy served by `/ctxtiles`, which the page no longer displays. Clicking outside every cube does a live global lookup (`/api/point`).
+- **Sharp imagery (5 m)**: the Murray Lab black-and-white CTX mosaic (Caltech; Esri OnMars tiles) loads inside the
+  selected region or any box you draw ("Box a sharp area"), above every background map. Clicking outside every
+  cube does a live global lookup (`/api/point`).
 - **Murray Lab maps** (panel section, all off by default): every map from the
   [Murray Lab CTX viewer](https://murray-lab.caltech.edu/CTX/V01/SceneView/MurrayLabCTXmosaic.html) -
   CTX 5 m mosaic, MOLA colour topography and Viking MDIM tiles (straight from Esri's OnMars services),
@@ -206,6 +220,11 @@ from within the EVA budget rank first.
 - **Minerals:** clay, carbonate, olivine, pyroxene, sulfate, opal/hydrated silica, "water" (water-bearing
   minerals) and "minerals" (any detection) use the CRISM bands, matching only above the detection limit. A region
   without CRISM bands falls back to the approximate zones in `config.SEARCH_ZONES`.
+- **Claude (recommended):** with `ANTHROPIC_API_KEY` set, every AI job (reading a goal, explaining the plan, writing
+  the map labels) uses Claude through the Anthropic API (`claude_ai.py`, model `claude-haiku-5-5` by default;
+  `CLAUDE_MODEL` and `CLAUDE_EFFORT`, default `medium`, change it). Claude's summarized thinking streams to the page,
+  and a full mission takes ~15 s. Keep the key in the server's environment (e.g. an `ai.env` sourced before
+  uvicorn), never in the repo. Without it, the OpenRouter / local-model options below are used.
 - Words the built-in parser doesn't know go to a **free AI model on OpenRouter** if `OPENROUTER_API_KEY` is set
   (free key at openrouter.ai, `export OPENROUTER_API_KEY=...` before starting uvicorn). It picks the current
   `:free` models automatically, falling back from one to the next; set `OPENROUTER_MODELS=a:free,b:free` to choose.
@@ -216,7 +235,7 @@ from within the EVA budget rank first.
   `OPENROUTER_BASE_URL=http://<host>:11434/v1 OPENROUTER_API_KEY=local OPENROUTER_MODELS=gemma4:26b-a4b`.
   Tested on a laptop with a 4 GB T1200 GPU: `gemma4:26b-a4b` ~9 s per query, `gemma4:e4b` ~4 s.
 - The mission panel streams the AI's thinking. `AI_REASONING` sets the thinking effort (`low` by default, `none` to
-  turn it off); `AI_THINK_SECONDS` (default 40) stops a model that is still thinking after that long and asks for
+  turn it off); `AI_THINK_SECONDS` (default 15) stops a model that is still thinking after that long and asks for
   the answer right away. With the local gemma4:26b a full mission with AI takes ~2 min (thinking is visible
   throughout); give Ollama at least an 8k context (`OLLAMA_CONTEXT_LENGTH=8192`) so the thinking fits.
 

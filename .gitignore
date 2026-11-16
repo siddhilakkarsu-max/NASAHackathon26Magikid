@@ -12,3 +12,7 @@ cubes/*.tif
 cubes/tilecache/
 cubes/jezero_hirise.npz
 cubes/murraycache/
+# game leaderboard database (leaderboard.py)
+game_state/
+# Cloudflare Pages build output (python3 tools/build_pages.py)
+dist/

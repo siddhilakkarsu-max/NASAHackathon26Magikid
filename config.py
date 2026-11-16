@@ -44,6 +44,19 @@ SITES = {
     "holden": dict(label="Holden crater", lat=-26.4, lon=-34.0),
     "melas": dict(label="Melas Chasma (Valles Marineris)", lat=-9.8, lon=-76.5),
     "arcadia": dict(label="Arcadia Planitia (shallow ice)", lat=40.0, lon=-160.0),
+    # The shortcuts in Caltech Murray Lab's Global CTX Mosaic viewer that aren't above (Jezero, Gale, Gusev,
+    # Meridiani and Eberswalde are). Box centres are on each feature; ~0.05 deg.
+    "olympus_mons": dict(label="Olympus Mons (summit caldera)", lat=18.65, lon=-133.8),
+    "capri": dict(label="Capri Chasma", lat=-7.39, lon=-44.83),
+    "coloe": dict(label="Coloe Fossae", lat=42.18, lon=55.13),
+    "shalbatana": dict(label="Shalbatana Vallis", lat=5.95, lon=-42.75),
+    "valles": dict(label="Valles Marineris (Coprates / Eos)", lat=-15.12, lon=-50.95),
+    "cavi_angusti": dict(label="Cavi Angusti (south polar)", lat=-77.01, lon=-79.04),
+    "medusae": dict(label="Medusae Fossae", lat=-0.78, lon=175.94),
+    "nicholson": dict(label="Nicholson crater", lat=-0.44, lon=-164.61),
+    "zunil": dict(label="Zunil crater", lat=7.43, lon=166.47),
+    "milankovic": dict(label="Milankovič crater (ice scarps)", lat=54.34, lon=-147.69),
+    "terra_sirenum": dict(label="Terra Sirenum (gullies)", lat=-39.47, lon=-157.36),
 }
 _SITE_ID = r"site_(-?\d+(?:\.\d+)?)_(-?\d+(?:\.\d+)?)"
 
@@ -514,7 +527,17 @@ ESSENTIALS = [
 
 # Landing rules for a safe touchdown spot A (checked over a circle of area_radius_m around the spot).
 LANDING_RULES = dict(max_slope_deg=5.0, max_rough_percentile=60, min_ti=200.0, max_elevation_m=-500.0,
-                     max_abs_lat=50.0, area_radius_m=500.0)
+                     max_abs_lat=50.0, area_radius_m=500.0,
+                     # team design rule: land at least this far from the science target B, so the lander's engine
+                     # plume doesn't blast or contaminate what the crew came to sample (and the trip isn't 0 km)
+                     min_standoff_m=500.0)
+
+# Route safety checks added to the mission planner (team assumptions, not NASA limits):
+# - shelter: during a solar particle event the crew should reach cover (a steep wall, the lander, or a pressurized
+#   rover) within this many minutes from any point of the route
+# - walk-back: if a vehicle fails at the far end, the crew must be able to walk back to A on the suit oxygen left
+SHELTER_MAX_MIN = 30.0
+MIN_SUN_ELEV_DEG = 10.0      # walks are restricted when the sun is this low (dawn / dusk)
 
 # NASA's known sites per region. Spots inside a landing site / landing ellipse are "NASA candidate";
 # exploration zones are shown on the detail card for context.

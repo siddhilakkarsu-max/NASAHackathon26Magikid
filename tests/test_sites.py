@@ -17,6 +17,31 @@ import app  # noqa: E402
 import config  # noqa: E402
 
 
+class BuildProgress(unittest.TestCase):
+    """The loading bar's numbers come from the builder's log lines."""
+    LOG = ["Region 'site_1_2': 410 x 410 px, bounds (...)", "STAGE layers 5",
+           "  [ok] elevation     from terrain (1.0s)", "  [ok] themis_night  from wms (1.2s)",
+           "  [--] themis_day    skipped. Tried: wms"]
+
+    def test_terrain_stage_counts_layers_and_leaves_room_for_the_save(self):
+        p = app._build_progress(self.LOG, False, "terrain", 0, 0)
+        self.assertEqual((p["layers_done"], p["layers_total"]), (3, 5))
+        self.assertAlmostEqual(p["terrain_progress"], 3 / 6, places=3)
+        self.assertEqual(p["minerals_progress"], 0.0)
+
+    def test_mineral_stage_after_the_terrain_is_saved(self):
+        log = self.LOG + ["  [ok] albedo        from download", "  [ok] thermal_inertia from download",
+                          "Saved cubes/site_1_2.npz", "STAGE terrain ready; reading CRISM minerals next",
+                          "  CRISM: 3 products over the region", "    [ok] a.lbl", "  [ok] crism  clay"]
+        p = app._build_progress(log, True, "minerals", 1, 3)
+        self.assertEqual((p["layers_done"], p["terrain_progress"]), (5, 1.0))   # the crism line isn't a layer
+        self.assertAlmostEqual(p["minerals_progress"], 1 / 4, places=3)
+        self.assertEqual(app._build_progress(log, True, "done", 3, 3)["minerals_progress"], 1.0)
+
+    def test_old_log_without_layer_count(self):
+        self.assertEqual(app._build_progress(self.LOG[2:], False, "terrain", 0, 0)["terrain_progress"], 0.0)
+
+
 class SiteRegions(unittest.TestCase):
     def test_quadrangles(self):
         # Jezero is in MC-13 Syrtis Major, Gale and Gusev in MC-23 Aeolis, Meridiani in MC-19 Margaritifer Sinus

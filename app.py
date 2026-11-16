@@ -5,9 +5,12 @@ The Cesium front end only displays what this returns.
 Run:   uvicorn app:app --reload --port 8000
 Open:  http://localhost:8000
 """
+import asyncio
+import logging
 import base64
 import io
 import json
+import logging
 import math
 import subprocess
 import sys
@@ -19,7 +22,8 @@ from pathlib import Path
 from typing import Literal
 
 import numpy as np
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,14 +32,22 @@ from matplotlib.colors import LinearSegmentedColormap, to_hex
 from PIL import Image
 from pydantic import BaseModel, Field
 
+import annotate
+import assistant
 import mission
 import murray
+import jezero_terrain
+import global_terrain
+import game_routes
 import physics
 import search
 from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
                     PRIORITIES, SCIENCE_TARGETS, SEARCH_ZONES, SEASONS, SITE_SIZE_DEG, BASE_SEASONS, season_for_ls, SITES, VEHICLES,
                     region_box, region_label, site_id)
 from gear.api import router as gear_router
+from frontend_delivery import VersionedFrontend
+from leaderboard import router as game_router
+from mars_moons import router as moons_router
 from mars_weather import GLOBAL_RECT, WEATHER_LAYERS, weather_layer, wind_components
 import mars_radiation
 from surface_temperature import temperature_overlay
@@ -71,7 +83,8 @@ class Cube:
         z = np.load(path, allow_pickle=False)
         self.region = region
         self.names = [str(n) for n in z["band_names"]]
-        self.bands = {n: z["bands"][i] for i, n in enumerate(self.names)}
+        bands = z["bands"]           # read ONCE: each z["bands"] decompresses every band again, and indexing it
+        self.bands = {n: bands[i] for i, n in enumerate(self.names)}   # per band kept 20 full copies alive
         self.coverage = z["coverage_fraction"]
         self.w, self.s, self.e, self.n = [float(v) for v in z["bounds"]]
         self.H, self.W = self.bands["elevation"].shape
@@ -119,7 +132,12 @@ def _cube_meta(region, mtime):
     w, s, e, n = [float(v) for v in z["bounds"]]
     H, W = z["coverage_fraction"].shape
     mid = math.radians((s + n) / 2)
-    return {"region": region, "label": region_label(region), "rect": {"west": w, "south": s, "east": e, "north": n},
+    label = region_label(region)
+    if region.startswith("site_"):                   # name an area after the IAU place it is in or near
+        place = murray.place_name((s + n) / 2, (w + e) / 2)
+        if place:
+            label = f"{place} ({label.removeprefix('Site ')})"
+    return {"region": region, "label": label, "rect": {"west": w, "south": s, "east": e, "north": n},
             "size": [W, H], "bands": names,
             "pixel_m": [round((e - w) / W * math.pi / 180 * MARS_RADIUS_M * math.cos(mid)),
                         round((n - s) / H * math.pi / 180 * MARS_RADIUS_M)],
@@ -241,6 +259,8 @@ class MissionRequest(BaseModel):
     ls: float | None = Field(None, ge=0, le=360, description="season slider (solar longitude); overrides 'season'")
     priority: str = "safety"
     green_only: bool = Field(False, description="stick to green, rover-verified tracks where possible")
+    local_hour: float | None = Field(None, ge=0, le=24, description="Mars local solar time the walk starts "
+                                     "(the time slider); default 11:00")
 
 
 class FindRequest(Conditions):
@@ -985,6 +1005,23 @@ def find(req: FindRequest):
 _missions = {}   # mission id -> facts for the explanation (last 50)
 
 
+class ChatMessage(BaseModel):
+    role: Literal["user", "assistant"] = "user"
+    text: str = Field(..., max_length=1000)
+
+
+class AssistantRequest(BaseModel):
+    messages: list[ChatMessage] = Field(..., min_length=1, max_length=40)
+    state: dict = Field(default_factory=dict, description="what the page shows: region, hour, vehicle, has_mission, places")
+    memo: dict = Field(default_factory=dict, description="what this chat has settled; sent back each turn")
+
+
+@app.post("/api/assistant")
+def assistant_reply(req: AssistantRequest):
+    """Chat box: a sentence in, a reply + suggested answers + map actions out (built-in rules; AI if configured)."""
+    return assistant.reply([m.model_dump() for m in req.messages], req.state, req.memo)
+
+
 @app.get("/api/mission/options")
 def mission_options():
     return {"vehicles": {k: {"label": v["label"], "max_slope": v["max_slope"], "range_km": v["range_km"]}
@@ -999,13 +1036,14 @@ def plan_mission(req: MissionRequest):
     """Goal + vehicle + season + priority -> 3 candidate missions, the decision matrix and the winner."""
     c = _mission_cube(req)
     try:
-        res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only)
+        res = mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
+                           local_hour=req.local_hour)
     except mission.NoLandingSpot as e:
         nl = _no_landing(c, e)
         raise HTTPException(400, f"{nl['text']} | {nl['detail']}")
     except ValueError as e:
         raise HTTPException(400, _loading_hint(c.region, str(e)))
-    return _finish_mission(res)
+    return _finish_mission(res, c)
 
 
 def _no_landing(cube, err):
@@ -1049,25 +1087,40 @@ def _mission_cube(req):
     return get_cube(req.region)
 
 
-def _finish_mission(res):
-    """Give the plan an id (for the explanation) and turn its maps into PNG overlays."""
+def _finish_mission(res, cube=None):
+    """Give the plan an id (for the explanation), add the map notes along each route (cliffs, soft sand,
+    minerals; annotate.py) and turn its maps into PNG overlays."""
     score, red = res.pop("_score"), res.pop("_red")
+    if cube is not None:
+        v = MISSION_VEHICLES[res["settings"]["vehicle"]["key"]]
+        for c in res["candidates"]:
+            c["map_notes"] = annotate.route_notes(cube, c, v)
     res["id"] = uuid.uuid4().hex[:12]
     _missions[res["id"]] = mission.explain_facts(res)
     while len(_missions) > 50:
         _missions.pop(next(iter(_missions)))
     res["science_image"] = to_png(np.where(score >= 0.15, score, np.nan), "plasma", 0.15, 1, alpha=0.55)
     res["offlimits_image"] = to_png(np.where(red, 0.8, np.nan), "Reds", 0, 1, alpha=0.45)
+    # Save the exact planner result for the game's optional route comparison.
+    # A storage failure must not prevent the original mission from being played.
+    try:
+        game_routes.capture_plan(res, cube)
+    except Exception:
+        logging.getLogger(__name__).exception("Could not save mission %s for route comparison", res["id"])
     return res
 
 
+log = logging.getLogger("marswalk")
+STREAM_KEEPALIVE_S = 15            # seconds of silence before the plan stream sends a keep-alive
+
+
 @app.post("/api/mission/stream")
-def plan_mission_stream(req: MissionRequest):
+async def plan_mission_stream(req: MissionRequest, request: Request):
     """The same plan as /api/mission, as a stream of server-sent events, with the AI model's thinking live:
     {"type": "status"|"ai"|"result"|"explanation"|"note"|"error"|"done", ...}
     "ai" events carry phase ("goal" = reading the goal, "explain" = explaining the choice), kind ("reasoning" =
     the model's thinking, "content" = its answer) and a piece of text."""
-    c = _mission_cube(req)
+    c = await run_in_threadpool(_mission_cube, req)
 
     def event(**data):
         return f"data: {json.dumps(data, default=lambda o: o.item() if hasattr(o, 'item') else str(o))}\n\n"
@@ -1077,7 +1130,9 @@ def plan_mission_stream(req: MissionRequest):
         if spec["unknown"] or not spec["criteria"]:
             yield event(type="status", text="The AI is reading your goal…")
             for kind, *rest in search.ai_parse_stream(req.goal):
-                if kind in ("reasoning", "content"):
+                if kind == "waiting":
+                    yield event(type="ai_wait", phase="goal", ahead=rest[0])
+                elif kind in ("reasoning", "content"):
                     yield event(type="ai", phase="goal", kind=kind, text=rest[0])
                 elif kind == "spec" and rest[0]["criteria"]:
                     spec, parser = rest[0], "ai"
@@ -1086,7 +1141,7 @@ def plan_mission_stream(req: MissionRequest):
         yield event(type="status", text="Finding the best places, landing spots and routes…")
         try:
             res = _finish_mission(mission.plan(c, req.goal, req.vehicle, req.season, req.priority, req.green_only,
-                                               goal_spec=(spec, parser, notes)))
+                                               goal_spec=(spec, parser, notes), local_hour=req.local_hour), c)
         except mission.NoLandingSpot as e:
             yield event(type="status", text=str(e).split(" | ")[0] + " Looking for the nearest firm ground…")
             yield event(type="error", **_no_landing(c, e))
@@ -1099,16 +1154,58 @@ def plan_mission_stream(req: MissionRequest):
             yield event(type="status", text="The AI is explaining the choice…")
             text = None
             for kind, *rest in mission.explain_stream(_missions[res["id"]]):
-                if kind in ("reasoning", "content"):
+                if kind == "waiting":
+                    yield event(type="ai_wait", phase="explain", ahead=rest[0])
+                elif kind in ("reasoning", "content"):
                     yield event(type="ai", phase="explain", kind=kind, text=rest[0])
                 elif kind == "done":
                     text = rest[0].strip() or None
                 elif kind == "error":
                     yield event(type="note", text=rest[0])
             yield event(type="explanation", text=text or res["explanation"], source="ai" if text else "template")
+            notes_all = [n for cand in res["candidates"] for n in cand.get("map_notes", [])]
+            if notes_all:                           # the AI words the map notes along the routes
+                yield event(type="status", text="The AI is labelling the map…")
+                for kind, *rest in annotate.captions_stream(notes_all, req.goal, res["settings"]["vehicle"]["label"]):
+                    if kind == "waiting":
+                        yield event(type="ai_wait", phase="annotate", ahead=rest[0])
+                    elif kind in ("reasoning", "content"):
+                        yield event(type="ai", phase="annotate", kind=kind, text=rest[0])
+                    elif kind == "labels":
+                        yield event(type="annotations", labels=rest[0], source="ai")
+                    elif kind == "error":
+                        yield event(type="note", phase="annotate", text=f"| map labels: {rest[0]}")
         yield event(type="done")
 
-    return StreamingResponse(events(), media_type="text/event-stream",
+    async def guarded():
+        """Pass events on until the page goes away; then close the generator, which closes the AI connection
+        and stops the model, so an abandoned plan doesn't hold up everyone else's."""
+        gen, end, pending = events(), object(), None
+        try:
+            while not await request.is_disconnected():
+                if pending is None:
+                    pending = asyncio.ensure_future(run_in_threadpool(next, gen, end))
+                done, _ = await asyncio.wait({pending}, timeout=STREAM_KEEPALIVE_S)
+                if not done:                  # still working: an SSE comment keeps the page's watchdog and proxies happy
+                    yield ": working\n\n"
+                    continue
+                item, pending = pending.result(), None
+                if item is end:
+                    break
+                yield item
+        except Exception as ex:               # never just drop the stream: the page would wait forever
+            log.exception("mission stream failed")
+            yield event(type="error", text="Planning failed on the server. Press Plan mission to try again.",
+                        detail=f"{type(ex).__name__}: {ex}")
+        finally:                              # the generator may still be busy in a worker thread: retry
+            for _ in range(600):
+                try:
+                    gen.close()
+                    break
+                except ValueError:                # "generator already executing"
+                    await asyncio.sleep(0.1)
+
+    return StreamingResponse(guarded(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
@@ -1162,13 +1259,16 @@ def trek_tile(layer: str, z: int, y: int, x: int):
                 _tile_cache[key] = r.read()
         except Exception as ex:
             raise HTTPException(404, f"no tile: {ex}")
-        if len(_tile_cache) > 5000:
+        if len(_tile_cache) > 1500:             # tiles also live on disk; memory keeps the recent ones
             _tile_cache.pop(next(iter(_tile_cache)))
     return Response(_tile_cache[key], media_type="image/jpeg",
                     headers={"Cache-Control": "public, max-age=86400"})
 
 
 app.include_router(gear_router)
+app.include_router(game_router)          # game callsigns + leaderboard (leaderboard.py)
+app.include_router(game_routes.router)   # compare edits to the exact selected planner route
+app.include_router(moons_router)
 
 
 # ------------------------------------- global 5 m CTX mosaic, colourised ----
@@ -1211,7 +1311,7 @@ def _fast_lowpass(img, factor=16):
     return np.asarray(small.resize((w, h), Image.BILINEAR), dtype="float32") / 255.0
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=32)                       # ~0.8 MB each decoded: 256 of them were ~200 MB on a 2 GB server
 def _viking_tile(row, col):
     url = (f"https://trek.nasa.gov/tiles/Mars/EQ/{VIKING}/1.0.0/default/default028mm/"
            f"{VIKING_LEVEL}/{row}/{col}.jpg")
@@ -1263,7 +1363,7 @@ def ctx_tile(z: int, y: int, x: int):
     Image.fromarray(out).save(buf, format="JPEG", quality=82)
     data = buf.getvalue()
     _ctx_cache[key] = data
-    if len(_ctx_cache) > 3000:
+    if len(_ctx_cache) > 1000:
         _ctx_cache.pop(next(iter(_ctx_cache)))
     try:
         TILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1326,6 +1426,8 @@ def prefetch_status():
 _builds = {}                 # region -> {"proc", "log", "started"}
 _builds_lock = threading.Lock()
 MAX_BUILDS = 2
+TERRAIN_TIMEOUT_S = 300           # planning can start once the terrain is in: normally 5-20 s
+BUILD_TIMEOUT_S = 900             # the mineral maps after it: normally under a minute
 
 
 class SiteRequest(BaseModel):
@@ -1342,17 +1444,46 @@ def _build_status(region):
                 "ready": ready}
     log = b["log"].read_text(errors="replace") if b["log"].exists() else ""
     code = b["proc"].poll()
+    age = time.time() - b["started"]
+    if code is None and (age > BUILD_TIMEOUT_S or (not ready and age > TERRAIN_TIMEOUT_S)):
+        # a stuck download must not leave the page waiting forever: stop the build and report it
+        b["proc"].kill()
+        try:
+            b["proc"].wait(5)
+        except subprocess.TimeoutExpired:
+            pass
+        code = b["proc"].poll() if b["proc"].poll() is not None else -9
+        b["timed_out"] = True
     if code is None:
         status = "minerals" if "STAGE terrain ready" in log else "terrain"
     else:
         status = "done" if code == 0 and ready else "failed"
     lines = [l for l in log.splitlines() if l.strip() and "Warning" not in l and "DatasetReader" not in l]
+    if b.get("timed_out"):
+        lines.append(f"Stopped: loading took longer than {round(age / 60)} min. Try again, or plan somewhere nearby.")
     crism = next((l for l in lines if "CRISM:" in l), "")
     done_products = sum(1 for l in lines if l.startswith("    [ok]") or l.startswith("    [--]"))
     total = int(crism.split("CRISM:")[1].split()[0]) if crism else 0
     return {"region": region, "label": region_label(region), "status": status, "ready": ready,
             "seconds": round(time.time() - b["started"]), "crism_done": done_products, "crism_total": total,
-            "log": lines[-6:]}
+            **_build_progress(lines, ready, status, done_products, total), "log": lines[-6:]}
+
+
+def _build_progress(lines, ready, status, crism_done, crism_total):
+    """0..1 progress of the two build stages, from the builder's log: the map layers (then the save) before
+    planning can start, and the CRISM mineral observations after it."""
+    stage = next((i for i, l in enumerate(lines) if l.startswith("STAGE terrain ready")), len(lines))
+    total = next((int(l.split()[2]) for l in lines if l.startswith("STAGE layers ")), 0)
+    done = sum(1 for l in lines[:stage] if l.startswith("  [ok]") or l.startswith("  [--]"))
+    terrain = 1.0 if ready or status == "done" else round(min(done, total) / (total + 1), 3) if total else 0.0
+    if status == "done":
+        minerals = 1.0
+    elif crism_total:
+        minerals = round(min(crism_done, crism_total) / (crism_total + 1), 3)
+    else:
+        minerals = 0.0
+    return {"layers_done": min(done, total), "layers_total": total,
+            "terrain_progress": terrain, "minerals_progress": minerals}
 
 
 def covering_cube(lat, lon, margin=0.12):
@@ -1419,9 +1550,11 @@ def build_site_status(region: str):
 
 
 app.include_router(murray.router)          # every map from the Murray Lab CTX viewer (murray.py)
+app.include_router(jezero_terrain.router)  # genuine 20 m Jezero elevation tiles, where surveyed
+app.include_router(global_terrain.router)  # published CTX/HRSC surveys across Mars with real global fallback
 
 (ROOT / "cubes").mkdir(exist_ok=True)
 app.mount("/cubes", StaticFiles(directory=ROOT / "cubes"), name="cubes")   # hi-res photo overlays
 
 # Serve the front end from the same server (one command = whole app)
-app.mount("/", StaticFiles(directory=ROOT / "frontend", html=True), name="frontend")
+app.mount("/", VersionedFrontend(directory=ROOT / "frontend", html=True), name="frontend")
