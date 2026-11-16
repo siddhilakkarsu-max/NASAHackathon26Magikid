@@ -19,10 +19,10 @@ import time
 import uuid
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 import numpy as np
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
@@ -501,8 +501,13 @@ def _wms_point(layer, lat, lon, d=0.01):
     return float(img.mean())
 
 
+# A real place on Mars (NaN and out-of-range numbers fail these checks with 422 instead of a 500)
+Latitude = Annotated[float, Query(ge=-90, le=90)]
+Longitude = Annotated[float, Query(ge=-360, le=360)]
+
+
 @app.get("/api/point")
-def point_query(lat: float, lon: float):
+def point_query(lat: Latitude, lon: Longitude):
     """Live lookup anywhere on Mars (no cube needed). Lower resolution than the Jezero cubes."""
     vals, notes = {}, []
     try:
@@ -544,7 +549,7 @@ def point_query(lat: float, lon: float):
 
 
 @app.get("/api/pixel")
-def pixel(lat: float, lon: float, region: str = "jezero"):
+def pixel(lat: Latitude, lon: Longitude, region: str = "jezero"):
     """Values stored in a cube pixel. Falls back to other regions, then a live global lookup."""
     metas = cube_metas()
     candidates = [m["region"] for m in metas if m["region"] == region] + \
