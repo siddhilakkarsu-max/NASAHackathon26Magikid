@@ -16,7 +16,7 @@
     if (typeof window === "undefined" || typeof document === "undefined") return;
     if (window.MarswalkGameLaunch) return;                       // already loaded on this page
 
-    var VERSION = "1.1.0";
+    var VERSION = "1.2.0";
     var GAME = "game.html";
     var STORE_KEY = "marswalk.game.mission";                     // read by game.html when the URL has ?src=planner
     var MAX_WITH_IMAGES = 1500000;                               // characters of JSON; above this the two PNGs are left out
@@ -170,6 +170,11 @@
       try { window.open(url, "_blank", "noopener"); } catch (_) { /* pop-up blocked: nothing else to do */ }
       return url;
     }
+    function openCompetition() {
+      var url = GAME + "?mode=competition";
+      try { window.open(url, "_blank", "noopener"); } catch (_) {}
+      return url;
+    }
 
     window.MarswalkGameLaunch = {
       version: VERSION,
@@ -181,13 +186,29 @@
         } catch (_) { /* fall through */ }
         return null;
       },
-      open: function () { try { return openGame(); } catch (_) { return null; } }
+      open: function () { try { return openGame(); } catch (_) { return null; } },
+      openCompetition: openCompetition
     };
 
     // ------------------------------------------------------------ planner page UI
 
     function mountPlanner() {
       var result = byId("mResult"), run = byId("runMission");
+      // The bounded competition is available before a planet-wide plan exists.
+      // Keep that plan's original survival hand-off intact: it is a different mode.
+      var setup = byId("missionSetup");
+      if (setup && !byId("routeCompetition")) {
+        var competition = document.createElement("div");
+        competition.className = "game-actions";
+        var competeButton = document.createElement("button");
+        competeButton.id = "routeCompetition"; competeButton.type = "button"; competeButton.className = "secondary";
+        competeButton.textContent = "Route competition · Jezero";
+        competeButton.addEventListener("click", openCompetition);
+        var competeNote = document.createElement("span"); competeNote.className = "small";
+        competeNote.textContent = "Design a route on measured terrain. Compete on simulated travel time. Opens a new tab.";
+        competition.appendChild(competeButton); competition.appendChild(competeNote);
+        setup.appendChild(competition);
+      }
       var btn = byId("playMission"), note = byId("playMissionNote");
       var style = document.createElement("style");
       style.textContent = ".game-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:10px 0}" +
@@ -221,7 +242,7 @@
       if (!note) {
         note = document.createElement("span");
         note.id = "playMissionNote"; note.className = "small";
-        note.textContent = "Survival game · opens a new tab";
+        note.textContent = "Original survival mode · separate leaderboard · opens a new tab";
         actions.appendChild(note);
       }
       var fab = byId("playFab"), fabText;
