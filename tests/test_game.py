@@ -37,11 +37,12 @@ class GameTest(unittest.TestCase):
         cls.baked = json.loads("[" + cls.html[start:end] + "]")
 
     def test_served(self):
-        for path in ("/game.html", "/game-launch.js"):
+        for path in ("/game.html", "/game-launch.js", "/game-route-map.js"):
             self.assertEqual(self.client.get(path).status_code, 200, path)
 
-    def test_single_self_contained_file(self):
-        self.assertIsNone(re.search(r"<script[^>]+src=", self.html))
+    def test_game_uses_local_map_helper_without_external_dependencies(self):
+        scripts = re.findall(r'<script[^>]+src=[\"\x27]([^\"\x27]+)', self.html)
+        self.assertEqual(scripts, ["game-route-map.js"])
         self.assertIsNone(re.search(r"<link[^>]+rel=[\"']?stylesheet", self.html))
         self.assertEqual(len(re.findall(r"<script>", self.html)), 1)
         # the only network calls are this app's own API
