@@ -4271,6 +4271,9 @@ function startMission(N, ci, diffKey, options) {
   G.N = N; G.ci = ci; G.diffKey = DIFF[diffKey] ? diffKey : 'astronaut';
   GameTools.remember(N,ci); GameTools.loadPlan(N,ci); RouteFlight.reset(); G.modal=''; G.driveReady=!!(options&&options.ready);
   const W = G.W = buildWorld(N, ci, G.diffKey, seed); W.fresh = true;
+  // Route edits must not change the mission's vehicle or presentation clock.
+  W.comparisonBaseline=GameTools.baseline(W);
+  Object.assign(W,W.comparisonBaseline.calibration);
   if (!G.tracksLL) G.tracksLL = tracksDecode();
   tracksToWorld(W); G.pixels = [];
   const R = G.R = newRun(W);
@@ -4557,12 +4560,12 @@ function benchmarkSteer(R,dt){
   R.mvx=Math.sin(R.driveYaw)*throttle;R.mvy=Math.cos(R.driveYaw)*throttle;
 }
 const DriveBenchmark={
-  version:'fixed-step-drive-v1',
+  version:'fixed-step-drive-v2-planner-baseline',
   async run(payload){
     if(!G.benchmark)throw Error('Driving comparisons require an isolated simulator.');
     G.skip=true;G.mute=true;G.autopilot=true;G.speed=1;G.wxLive=payload.weather||{};
     const W=G.W=buildWorld(payload.mission,payload.candidate,payload.difficulty,payload.seed);
-    // Hold the player's vehicle/time calibration fixed when comparing the other route.
+    // Both routes use the original planner mission's fixed calibration.
     Object.assign(W,payload.calibration);G.N=W.N;
     const R=G.R=newRun(W);R.aiDriving=payload.driving3d&&!!W.veh.bat;
     R.driveYaw=Math.atan2(W.X[1]-W.X[0],W.Y[1]-W.Y[0]);R.driveSpeedLimit=payload.speedLimit;
@@ -4580,17 +4583,16 @@ const DriveBenchmark={
   },
   async compare(R){
     if(R.aiComparison)return;R.aiComparison={status:'running'};
+    const W=R.W,baseline=W.comparisonBaseline,mode=G3.on?'3d':'2d';
     const frame=D.createElement('iframe');frame.hidden=true;frame.setAttribute('aria-hidden','true');frame.tabIndex=-1;
     const url=new URL('game.html',location.href);url.search='?drive-benchmark=1';
     try{
       await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Simulator could not load.')),20000);frame.onload=()=>{clearTimeout(timer);resolve();};frame.onerror=()=>{clearTimeout(timer);reject(Error('Simulator could not load.'));};frame.src=url.href;D.body.append(frame);});
       const driver=frame.contentWindow.__MW?.runDriveBenchmark;if(!driver)throw Error('Simulator unavailable.');
-      const W=R.W,key=GameTools.key(W.N,W.ci),calibration={};
-      for(const k of ['TS','kSpeed','kDist','kO2','kWh'])calibration[k]=W[k];
-      const common={candidate:W.ci,difficulty:W.diffKey,seed:W.seed,calibration,weather:JSON.parse(JSON.stringify(G.wxLive)),driving3d:G3.on,speedLimit:R.routeAttemptId?45:0};
-      const original=GameTools.referenceMissions.get(key)||W.N;
+      const common={candidate:W.ci,difficulty:W.diffKey,seed:baseline.seed,calibration:baseline.calibration,weather:baseline.weather,driving3d:mode==='3d',speedLimit:45};
       const own=await driver({...common,mission:JSON.parse(JSON.stringify(W.N))});
-      const reference=await driver({...common,mission:JSON.parse(JSON.stringify(original))});
+      let reference=baseline.results.get(mode);
+      if(!reference){reference=await driver({...common,mission:JSON.parse(JSON.stringify(baseline.original))});if(reference.status==='complete')baseline.results.set(mode,reference);}
       R.aiComparison={status:'complete',own,reference,benchmarkVersion:this.version};
     }catch(error){R.aiComparison={status:'failed',reason:error.message};}
     finally{frame.remove();if(G.R===R&&R.over)RouteFlight.renderEnd(R);}
@@ -4598,7 +4600,16 @@ const DriveBenchmark={
 };
 // Compact planning tools around the original game world and simulation.
 const GameTools={
-  references:new Map(),referenceMissions:new Map(),referenceMetrics:new Map(),planLoads:new Map(),pauseRevision:0,
+  references:new Map(),referenceMissions:new Map(),referenceMetrics:new Map(),baselines:new Map(),planLoads:new Map(),pauseRevision:0,
+  baseline(W){
+    const key=this.key(W.N,W.ci)+'|'+W.diffKey+'|'+W.seed;
+    if(!this.baselines.has(key)){
+      const original=this.referenceMissions.get(this.key(W.N,W.ci)),base=buildWorld(original,W.ci,W.diffKey,W.seed),calibration={};
+      for(const field of ['TS','kSpeed','kDist','kO2','kWh','vNom'])calibration[field]=base[field];
+      this.baselines.set(key,{original,calibration,seed:W.seed,weather:JSON.parse(JSON.stringify(G.wxLive)),results:new Map()});
+    }
+    return this.baselines.get(key);
+  },
   captureControls(){
     const c=G3.on?$('gl'):cv;c.tabIndex=-1;c.focus({preventScroll:true});
     if(G3.on&&!G.autopilot&&!G.touch&&!D.pointerLockElement&&c.requestPointerLock){
@@ -4607,7 +4618,7 @@ const GameTools={
   },
   pauseIntent(){this.pauseRevision++;},
   key(N=G.N,ci=G.ci){return N?N.id+'|'+ci:'';},
-  remember(N,ci){const key=this.key(N,ci);if(!this.references.has(key)){this.referenceMissions.set(key,JSON.parse(JSON.stringify(N)));this.referenceMetrics.set(key,{one_way_time_s:N.cands[ci].route.one_way_h*3600});const c=N.cands[ci],points=c.route.points.length>=2?c.route.points:[c.A,c.B];this.references.set(key,points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));}},
+  remember(N,ci){const key=this.key(N,ci);if(!this.referenceMissions.has(key)){this.referenceMissions.set(key,JSON.parse(JSON.stringify(N)));this.referenceMetrics.set(key,{one_way_time_s:N.cands[ci].route.one_way_h*3600});}if(!this.references.has(key)){const c=N.cands[ci],points=c.route.points.length>=2?c.route.points:[c.A,c.B];this.references.set(key,points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));}},
   planData(N=G.N,ci=G.ci){return N?.planDataByCandidate?.[ci]||(N?.planData?.candidate===ci?N.planData:null);},
   async loadPlan(N,ci){if(!API.on||!N||N.src==='baked')return null;const key=this.key(N,ci);if(!this.planLoads.has(key))this.planLoads.set(key,apiJSON('/api/game/plans/'+encodeURIComponent(N.id)+'?candidate='+ci,undefined,12000));const pending=this.planLoads.get(key);let data;try{data=await pending;}catch(e){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);throw e;}if(!data){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);return null;}N.planDataByCandidate=N.planDataByCandidate||{};N.planDataByCandidate[ci]=data;if(N===G.N&&ci===G.ci)N.planData=data;if(data.reference&&data.reference.points)this.references.set(key,data.reference.points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));return data;},
   context(){if(!G.N)return null;this.remember(G.N,G.ci);return{N:G.N,C:G.N.cands[G.ci],W:G.W,R:G.R,region:G.N.region,referenceRoute:this.references.get(this.key()).map(p=>({...p})),imagery:G.imgs.imagery,imageryRect:G.imageryRect,planData:this.planData(),paused:G.paused};},

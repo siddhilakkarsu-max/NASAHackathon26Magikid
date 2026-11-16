@@ -26,8 +26,8 @@ import physics
 from config import MARS_RADIUS_M, MISSION_VEHICLES, SITE_HOURS, region_box
 
 router = APIRouter(prefix="/api/game", tags=["game routes"])
-MODEL_VERSION = "planner-route-comparison-v3-ai-driving"
-BENCHMARK_VERSION = "fixed-step-drive-v1"
+MODEL_VERSION = "planner-route-comparison-v4-fixed-baseline"
+BENCHMARK_VERSION = "fixed-step-drive-v2-planner-baseline"
 MAX_POINTS = 5000
 MAX_DRIVE_M_S = 60.0  # Above the game's 45 m/s presentation cap, including storm drift.
 MAX_HEARTBEAT_GAP_S = 4.0
@@ -436,7 +436,7 @@ class ClaimAttemptRequest(Credentials):
 class FinishRequest(Credentials):
     ai_drive_ticks: int=Field(gt=0,le=54000,strict=True)
     route_hash: str=Field(min_length=64,max_length=64)
-    benchmark_version: Literal["fixed-step-drive-v1"]
+    benchmark_version: Literal["fixed-step-drive-v2-planner-baseline"]
 
 
 class ProgressRequest(Credentials):

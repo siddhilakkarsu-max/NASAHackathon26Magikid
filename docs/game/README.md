@@ -48,7 +48,10 @@ their original gameplay.
 
 The large results board shows total gameplay time, driving time, and measured AI driving on your route and on
 the original route. Both AI runs use the same fixed 30 Hz simulation, vehicle handling, difficulty, seed and
-time compression as the player. Sampling is excluded from AI driving; pauses and menus are excluded from
+time compression as the player. Calibration and comparison weather are captured from the original planner
+mission when it first starts, and preserved across route edits and retries. Editing your route changes only
+the player-route AI drive; the original planner route remains the fixed benchmark for that mission and difficulty.
+Sampling is excluded from AI driving; pauses and menus are excluded from
 all four times. A failed simulation is shown as unavailable or unfinished, never replaced with a planner
 estimate or a forced faster time. Oxygen, electricity and distance follow, then cost. User price assumptions
 remain in the separate expandable cost model. The simulated surface clock remains internal to resource/cost calculations.
@@ -268,6 +271,7 @@ node docs/game/start_pause_test.mjs                     # late start/resume cann
 node docs/game/mission_results_test.mjs                 # cost units, sources, unknown resources, mobile layout
 node docs/game/single_site_test.mjs                     # sampling, clocks, refills, cancel, retry and next objective
 node docs/game/ai_driver_test.mjs                       # actual AI driving on all 14 baked routes
+node docs/game/ai_baseline_test.mjs                     # original benchmark unchanged after edits and retries
 node docs/game/single_site_live_test.mjs                # normal keyboard drive + sample + ranking; isolated :8014
 node docs/game/planner_flow_test.mjs                    # real assistant and game; isolated server at :8012
 ```
