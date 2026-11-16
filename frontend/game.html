@@ -269,6 +269,24 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
   #site{bottom:60px} #mgCv{height:64px}
 }
 @media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+/* Keep the flight view and its corner minimap; planning tools stay compact. */
+#hudBtns,body.v3d #hudBtns{position:static;display:block;margin-top:6px;width:100%;max-width:100%}
+#hudBtns .hudPrimary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:4px}
+#hudBtns .hudPrimary #btnLeaderboard{grid-column:1/-1}
+#hudBtns .hudSecondary{display:flex;gap:4px;margin-top:4px}
+#hudBtns .hudSecondary button{flex:1;min-width:0}
+#hudBtns button,body.v3d #hudBtns button{font-size:10px;letter-spacing:0;padding:6px 3px;white-space:normal;line-height:1.2;min-height:27px}
+#hudBtns #btnDrive,body.v3d #hudBtns #btnDrive{background:#8bc7a1;color:#102b1a;border-color:#a5e4bc;font-weight:750}
+#hudTR #mini{width:100%;height:auto} #hudTR{max-width:calc(100vw - 20px)}
+#brief .wrap{max-width:900px;padding:24px 24px 30px} #brief #bGoal{font-size:clamp(22px,3.2vw,34px);line-height:1.18;margin:7px 0 6px}
+.briefMain{margin-top:18px} #brief #bMap{width:100%;height:min(54vh,480px);cursor:default}
+#brief .launch{position:static;background:none;padding:12px 0 0;margin:0} #brief #bLaunch{font-size:16px;text-transform:none;letter-spacing:0;background:#84bd96;color:#102117}
+.briefOptions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;align-items:flex-start}.briefOptions>details{position:relative;flex:1 1 180px;border:1px solid var(--line);border-radius:7px;background:var(--bg)}
+.briefOptions>details>summary{padding:9px 12px;cursor:pointer;font-size:12px;color:var(--muted)}.briefOptions>details[open]{flex-basis:100%}.briefOptions .detailBody{padding:0 12px 12px;max-height:42vh;overflow:auto}
+.gamePopup{position:fixed;inset:0;z-index:55;display:flex;align-items:center;justify-content:center;padding:18px;background:rgba(4,7,10,.72);user-select:text}
+.gamePopup>.pane{width:min(650px,94vw);max-height:82vh;overflow:auto;padding:18px}.popupHead{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:12px}.popupHead h2{margin:0;font-size:18px;color:var(--fg);text-transform:none}
+#driveNote{font-size:10px;color:#b9dae0;line-height:1.35;margin-top:5px}#boardTabs{display:flex;gap:6px;margin-bottom:12px}#boardTabs button{font-size:11px}
+@media(max-width:760px){#brief .wrap{padding:16px}#brief #bMap{max-height:48vh}.briefOptions{gap:5px}.briefOptions>details{flex-basis:140px}body.v3d #hudTR{right:3vw;top:12vh}#hudBtns button,body.v3d #hudBtns button{font-size:9px;padding:5px 2px;min-height:25px}#driveNote{font-size:9px}}
 </style>
 </head>
 <body>
@@ -294,11 +312,14 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
   <div id="hudTR" class="hb">
     <canvas id="mini" width="380" height="256" aria-label="Route minimap"></canvas>
     <div id="wx"><span id="wxT"></span><svg id="windArrow" viewBox="0 0 10 10" aria-hidden="true"><path d="M5 0.5 L8.5 9 L5 7 L1.5 9 Z" fill="#f3e7dd"/></svg><span id="wxT2"></span></div>
-  </div>
   <div id="hudBtns">
+    <div class="hudPrimary"><button id="btnEditMap" type="button" title="Pause and edit the route on the overhead map">Edit map</button><button id="btnDrive" type="button">Start driving</button><button id="btnLeaderboard" type="button">Leaderboard</button></div>
+    <div class="hudSecondary">
     <button id="btnPause" type="button" title="Pause (P / Esc)">PAUSE</button>
     <button id="btnDrawer" type="button" title="Planner data (Tab)">DATA</button>
     <button id="btnMute" type="button" title="Sound (M)">SOUND</button>
+    </div><div id="driveNote" hidden></div>
+  </div>
   </div>
   <div id="comms" class="hb">
     <div id="pip" class="quiet">
@@ -336,7 +357,7 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
   <div class="wrap">
     <div class="kick">Marswalk Planner · field simulation</div>
     <h1>MARSWALK: <span>SURVIVE THE ROUTE</span></h1>
-    <p class="tag">You are the astronaut. Houston has the plan the Marswalk AI generated: follow the route from landing spot A to destination B, do the science with the tools it packed, and get back to A alive. Run out of oxygen, power, suit integrity or tools, and the mission ends on Mars.</p>
+    <p class="tag">Choose one destination, follow your route from A to B and complete one sample. Compare your time and resources, then choose your next objective.</p>
     <div class="foot" style="margin-top:8px"><span id="netChip" class="chip">checking link…</span><span id="titleNote" class="warn"></span></div>
     <div class="cols">
       <div class="pane">
@@ -346,7 +367,7 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
         <h2 style="margin-top:12px">Best runs</h2>
         <div id="bests" class="small"></div>
         <h2 style="margin-top:12px">Leaderboard</h2>
-        <div id="lb" class="small"></div>
+        <div id="lbHomeSlot"><div id="lb" class="small"></div></div>
       </div>
       <div class="pane">
         <h2>Mission Planner console</h2>
@@ -375,22 +396,17 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
 <section id="brief" class="screen" hidden>
   <div class="wrap">
     <div id="bHead">
-      <div style="min-width:0;flex:1"><div class="kick">Mission dossier · Houston briefing</div><h1 id="bGoal"></h1><div id="bSub" class="small"></div></div>
+      <div style="min-width:0;flex:1"><div class="kick">Your mission</div><h1 id="bGoal"></h1><div id="bSub" class="small"></div></div>
       <div class="btnrow" style="margin:0"><button id="bBack" type="button" class="secondary">Back to title</button></div>
     </div>
-    <div class="cols">
-      <div>
+    <div class="briefMain">
         <canvas id="bMap" width="1040" height="760" aria-label="Overview map of candidate routes"></canvas>
-        <div class="small" id="bMapNote" style="margin:4px 0 8px"></div>
-        <div id="bCands" class="dos"></div>
-        <div class="launch">
-          <label>Difficulty</label>
-          <div class="seg" id="bDiff"></div>
-          <div class="small" id="bDiffNote" style="margin:4px 0 8px"></div>
-          <button id="bLaunch" type="button" class="big">BEGIN EVA</button>
+        <div class="launch"><button id="bLaunch" type="button" class="big">Play game</button></div>
+        <div class="briefOptions">
+          <details><summary>Mission details &amp; tools</summary><div class="detailBody dos" id="bDos"></div></details>
+          <details><summary>Other routes</summary><div class="detailBody dos" id="bCands"></div></details>
+          <details><summary>Options &amp; map legend</summary><div class="detailBody"><label>Difficulty</label><div class="seg" id="bDiff"></div><div class="small" id="bDiffNote" style="margin:5px 0 10px"></div><div class="small" id="bMapNote"></div></div></details>
         </div>
-      </div>
-      <div class="pane dos" id="bDos"></div>
     </div>
   </div>
 </section>
@@ -430,7 +446,10 @@ pre.term b{color:var(--fg);font-weight:600} pre.term .e{color:var(--bad)} pre.te
   <div id="cutHint">Space / Enter / click: next · Esc: skip</div>
 </div>
 <div id="toast"></div>
+<section id="gameBoard" class="gamePopup" role="dialog" aria-modal="true" aria-labelledby="boardTitle" hidden><div class="pane"><div class="popupHead"><h2 id="boardTitle">Leaderboard</h2><button id="boardClose" class="secondary" type="button">Close</button></div><div id="boardTabs"><button id="boardSurvival" type="button">Survival scores</button><button id="boardRoutes" type="button">Route comparison</button></div><div id="boardContent"></div><div id="routeBoardContent" hidden></div></div></section>
 
+<script src="game-route-map.js" defer></script>
+<script src="game-mission-results.js" defer></script>
 <script>
 (function () {
 'use strict';
@@ -873,7 +892,7 @@ function normMission(raw, meta) {
     src: str(meta.src, 'baked'), note: str(meta.note), plannerView: meta.view || null, selected: clamp(num(meta.selected, 0) | 0, 0, Math.max(0, cands.length - 1))
   };
 }
-function missionKey(N, ci) { return [N.goal.toLowerCase(), N.veh.key, N.season.key, N.priority.key, 'r' + ((N.cands[ci] && N.cands[ci].rank) || ci + 1)].join('|'); }
+function missionKey(N, ci) { return ['single-site-v2', N.goal.toLowerCase(), N.veh.key, N.season.key, N.priority.key, 'r' + ((N.cands[ci] && N.cands[ci].rank) || ci + 1)].join('|'); }
 
 // =====================================================================================================================
 // 7. world / terrain — route geometry, distance-to-route grid, deterministic hazard fields, cached terrain tiles
@@ -989,7 +1008,9 @@ function buildWorld(N, ci, diffKey, seed) {
   const spur = (x0, y0, x1, y1, sAt, id) => { const d = Math.hypot(x1 - x0, y1 - y0), k = Math.max(1, Math.ceil(d / CFG.STEP_M)); for (let j = 1; j <= k; j++) { ex.push(lerp(x0, x1, j / k)); ey.push(lerp(y0, y1, j / k)); es.push(sAt); esp.push(id); } };
   const Bx = sx[n - 1], By = sy[n - 1];
   W.spots = [];
-  const smp = C.card.sampling.length ? C.card.sampling : [{ lat: C.B.lat, lon: C.B.lon, score: clamp(C.science, 0.3, 1), what: C.card.target[0] || 'target material' }];
+  // One mission has one destination. Other candidate destinations stay in the briefing.
+  const closest = C.card.sampling.reduce((best, s) => !best || Math.hypot(s.lat-C.B.lat,s.lon-C.B.lon) < Math.hypot(best.lat-C.B.lat,best.lon-C.B.lon) ? s : best, null);
+  const smp = [{ lat: C.B.lat, lon: C.B.lon, score: closest?.score ?? clamp(C.science, 0.3, 1), what: closest?.what || C.card.target[0] || 'target material' }];
   let snapK = -1, snapD = 1e18;                    // [G] the planner's spots can all lie 100-600 m from B: the nearest one is worked at B
   if (!W.synthetic) smp.forEach((s, k) => { const d = Math.hypot(toX(s.lon) - Bx, toY(s.lat) - By); if (d < snapD) { snapD = d; snapK = k; } });
   smp.forEach((s, k) => {
@@ -1465,6 +1486,7 @@ function chargesMax(R) { let n = 0; for (let i = 0; i < R.tools.length; i++) n +
 function newRun(W) {
   const R = {
     W: W, rng: mulberry32(W.rngSeed), phase: 'outbound', over: false, outcome: '', cause: '', t: 0, tick: 0, real: 0,
+    elapsedS: 0, drivingElapsedS: 0, oxygenUsedKg: 0, energyUsedWh: 0, completedSamples: 0,
     x: W.A.x, y: W.A.y, px: W.A.x, py: W.A.y, hd: Math.atan2(W.Y[1] - W.Y[0], W.X[1] - W.X[0]), vx: 0, vy: 0, mvx: 0, mvy: 0, careful: false,
     kmh: 0, step: 0, moving: false, i: 0, s: 0, d: 0, main: true, sMax: 0, onRoute: true, offK: 0, slope: W.SL[0], firm: W.FI[0], rough: W.RO[0], red: false,
     hasO2: !!W.itO2, hasBat: !!W.itBat, o2: W.o2Cap, bat: W.batCap, integ: 100, o2Rate: 0, batW: 0,
@@ -1528,11 +1550,15 @@ function envTick(R) {
 }
 
 // ---- helpers
+// Accumulate consumption, including supplies later replenished by a bottle/pack.
+function consumeOxygen(R, amount) { if (!(amount > 0) || !isFinite(amount)) return; R.oxygenUsedKg += Math.min(Math.max(0,R.o2),amount); R.o2 -= amount; }
+function consumeEnergy(R, amount) { if (!(amount > 0) || !isFinite(amount)) return; R.energyUsedWh += Math.min(Math.max(0,R.bat),amount); R.bat -= amount; }
 function clockLump(R, minutes, instrumentW) {       // discrete site-work time: advance the clock and burn at rest rates
   const W = R.W, dtH = minutes / 60, burn = W.diff.burn;
   R.t += dtH; R.siteMin += minutes; R.siteH += dtH;
-  if (R.hasO2) R.o2 -= (CFG.O2_SITE + (R.leak ? CFG.LEAK_KG_H : 0)) * burn * dtH;
-  if (R.hasBat && !R.abandoned) R.bat -= (W.veh.hotel * (1 + CFG.COLD_HOTEL * R.env.cold) + instrumentW) * burn * dtH;
+  if (R.hasO2) consumeOxygen(R, (CFG.O2_SITE + (R.leak ? CFG.LEAK_KG_H : 0)) * burn * dtH);
+  if (R.hasBat && !R.abandoned) consumeEnergy(R, (W.veh.hotel * (1 + CFG.COLD_HOTEL * R.env.cold) + instrumentW) * burn * dtH);
+  else R.energyUsedWh += Math.max(0,instrumentW) * burn * dtH;
 }
 function shake(a) { if (!G.reduced) G.cam.shake = Math.max(G.cam.shake, a); }
 function damage(R, why) {                  // breach / wheel damage: needs the Repair kit
@@ -1571,11 +1597,13 @@ function simStep() {
   if (!R || R.over) return;
   const W = R.W, dt = SIM_DT, dtH = dt * W.TS / 3600;
   const o2p = R.o2, batp = R.bat, intp = R.integ;
-  R.tick++; R.real += dt; R.t += dtH; R.px = R.x; R.py = R.y;
-  if (G.autopilot) { botThink(R); R.bot = true; }
+  R.tick++; R.real += dt; R.elapsedS += dt; if(!R.site)R.drivingElapsedS += dt;
+  R.t += dtH; R.px = R.x; R.py = R.y;
+  if (G.autopilot) { botThink(R); if(R.aiDriving) benchmarkSteer(R,dt); R.bot = true; }
   if (G.speed > 1) R.fast = true;
-  else { R.mvx = IN.mx; R.mvy = IN.my; R.careful = IN.careful; }
+  if (!G.autopilot) { R.mvx = IN.mx; R.mvy = IN.my; R.careful = IN.careful; }
   if (R.site) { siteTick(R, dt); R.mvx = 0; R.mvy = 0; }
+  if (R.over) return;
   if (R.phase === 'site') R.siteH += dtH;                    // everything at the site (walking between spots, mini-games) is site time, not travel
   if (R.tick % 6 === 1) envTick(R);
   moveTick(R, dt);
@@ -1623,7 +1651,7 @@ function moveTick(R, dt) {
   kmh *= 1 - CFG.STORM_SPEED_LOSS * R.stormK;
   if (R.red) kmh *= 0.4;
   const vW = kmh / 3.6 * W.TS / W.kDist;                   // world metres per real second
-  const drv = !!veh.bat && G3.on && !G.autopilot;         // driven by hand: momentum, and less grip on loose ground
+  const drv = !!veh.bat && (R.aiDriving || G3.on && !G.autopilot); // identical momentum and grip for the comparison driver
   const k = Math.min(1, (drv ? (want ? CFG.DRIVE_ACCEL : CFG.DRIVE_COAST) * (0.55 + 0.45 * R.firm) : CFG.ACCEL) * dt);
   R.vx += ((want ? mx * vW : 0) - R.vx) * k; R.vy += ((want ? my * vW : 0) - R.vy) * k;
   let nx = R.x + R.vx * dt, ny = R.y + R.vy * dt;
@@ -1635,6 +1663,7 @@ function moveTick(R, dt) {
     const j = idxAt(W, nx, ny), dx = W.X[j] - nx, dy = W.Y[j] - ny, l = Math.hypot(dx, dy) || 1, sp = 0.2 * (vW / 0.4) * CFG.RED_PUSH * dt;
     nx += dx / l * sp; ny += dy / l * sp;
   }
+  if(RouteFlight.attempt||R.driveSpeedLimit){const d=Math.hypot(nx-R.x,ny-R.y),limit=(R.driveSpeedLimit||45)*dt;if(d>limit){nx=R.x+(nx-R.x)*limit/d;ny=R.y+(ny-R.y)*limit/d;}}
   const stepM = Math.hypot(nx - R.x, ny - R.y);
   R.x = nx; R.y = ny; R.step = stepM; R.moving = stepM > 0.02;
   R.kmh = stepM / dt / W.TS * 3.6 * W.kDist;
@@ -1675,13 +1704,13 @@ function burnTick(R, dt, dtH) {
     if (afoot(R) || !veh.bat) rate *= 1 + CFG.COLD_O2 * cold + 0.15 * sk;
     if (R.stuck) rate *= 1.15;
     if (R.leak) rate += CFG.LEAK_KG_H;
-    rate *= burn; R.o2Rate = rate; R.o2 -= rate * dtH;
+    rate *= burn; R.o2Rate = rate; consumeOxygen(R, rate * dtH);
   }
   if (R.hasBat && !R.abandoned) {
     const lo = 1 - R.firm, km = R.dis ? 0 : R.step / 1000 * W.kDist;      // parked: hotel load only
     const perKm = veh.whkm * (1 + CFG.WH_SLOPE_K * R.slope) * (1 + CFG.WH_SAND_K * veh.sand * lo * lo) * W.load * W.kWh * asym * off;
     const hotel = veh.hotel * (1 + CFG.COLD_HOTEL * cold + CFG.STORM_BURN_GAIN * sk);
-    R.bat -= (km * perKm + hotel * dtH) * burn;
+    consumeEnergy(R, (km * perKm + hotel * dtH) * burn);
     R.batW = (perKm * Math.max(R.kmh, 0) + hotel) * burn;          // instantaneous draw (W) for the HUD estimate
   }
   let drain = 0;
@@ -1736,7 +1765,7 @@ function gprPing(R) {
 function mash(R) {
   if (!R.stuck) return;
   R.stuckP += CFG.TRAP_FREE_PER_MASH;
-  if (R.hasBat && !afoot(R)) R.bat -= CFG.TRAP_MASH_WH; else if (R.hasO2) R.o2 -= CFG.TRAP_MASH_O2;
+  if (R.hasBat && !afoot(R)) consumeEnergy(R, CFG.TRAP_MASH_WH); else if (R.hasO2) consumeOxygen(R, CFG.TRAP_MASH_O2);
   Snd.tick();
   if (R.stuckP >= 1) freeStuck(R, 'Free of the sand. That patch is marked on your map.');
 }
@@ -1928,7 +1957,7 @@ function useTool(R, slot) {
       return;
     }
     case 'gpr': {
-      spend(R, slot); if (R.hasBat && !R.abandoned) R.bat -= CFG.GPR_WH;
+      spend(R, slot); if (R.hasBat && !R.abandoned) consumeEnergy(R, CFG.GPR_WH); else R.energyUsedWh += CFG.GPR_WH;
       const n = gprPing(R); Snd.ping();
       suitSay(n ? 'GPR: ' + n + ' soft-sand void' + (n > 1 ? 's' : '') + ' marked within ' + CFG.GPR_RANGE_M + ' m.' : 'GPR: no hidden voids within ' + CFG.GPR_RANGE_M + ' m.', false);
       return;
@@ -2054,12 +2083,16 @@ function siteClose(R, finished) {
   const st = R.site; if (!st) return;
   const W = R.W;
   R.site = null; R.sag = false; G.hudDirty = true;
-  if (st.extracted) {
+  if (finished && st.extracted) {
     R.spotDone[st.k] = true;
-    const all = R.spotDone.every(Boolean);
-    if (R.samples.length === 1 && !all) call('sample1', st.sample); else if (!all) call('sample', st.sample);
-    if (all && !R.flag.allDone) { R.flag.allDone = 1; R.phase = 'return'; scene('objective'); }
-  } else if (!finished) suitSay('Left ' + W.spots[st.k].label + ' without a sample.', false);
+    R.completedSamples = 1;
+    R.flag.allDone = 1;
+    deathChecks(R);
+    if (!R.over) win(R, 'success');
+  } else if (!finished) {
+    if (st.sample) R.samples = R.samples.filter(sample => sample !== st.sample);
+    suitSay('Sampling unfinished. Return to B to complete this objective.', false);
+  }
 }
 
 // ---- autopilot: follows the centreline, works the site, comes home. Uses the same inputs a player has.
@@ -2147,7 +2180,7 @@ function scoreRun(R) {
     safety: 1 + 4 * clamp(R.integ / 100 - 0.3 * offFrac - 0.04 * R.hits, 0, 1),
     resources: clamp(1 + 4 * clamp(minLeft / planLeft, 0, 1) - (minLeft < W.reserve ? 1 : 0), 1, 5),
     green: 1 + 4 * clamp(1 - offFrac, 0, 1),
-    time: clamp(5 * 2 * W.oneWayH / Math.max(0.01, R.t - R.siteH), 1, 5),      // travel legs vs the planner's 2 x one_way_h
+    time: clamp(5 * W.oneWayH / Math.max(0.01, R.t - R.siteH), 1, 5),      // one-way travel vs the selected route
     landing: clamp((dead ? 1 : R.outcome === 'abort' ? 3 : 5) - (R.turnBlown ? 2 : 0), 1, 5),
     confidence: 1 + 4 * (cm ? chargesLeft(R) / cm : 0)
   };
@@ -2164,7 +2197,9 @@ function scoreRun(R) {
   return { s: s, total: Math.round(tot * 10) / 10, grade: grade, sci: sci, offFrac: offFrac, minLeft: minLeft, planLeft: planLeft, pen: pen };
 }
 function finishRun(R) {
+  if(G.benchmark)return;
   const W = R.W, N = W.N;
+  RouteFlight.finish(R);
   R.score = scoreRun(R);
   const key = missionKey(N, W.ci);
   const rec = { key: key, goal: N.goal, vehicle: N.veh.label, season: N.season.label, priority: N.priority.label, cand: W.C.rank, difficulty: W.diff.label, outcome: R.outcome, cause: R.cause,
@@ -2181,7 +2216,7 @@ function finishRun(R) {
   G.lastRun = rec; G.hudDirty = true;
   Snd.windLevel(0);
   if (R.outcome === 'dead') { Snd.alarm(3); scene('death_' + R.cause, null, showEnd); }
-  else if (R.outcome === 'success') { Snd.win(); scene('success', null, showEnd); }
+  else if (R.outcome === 'success') { Snd.win(); showEnd(); }
   else scene('abort', null, showEnd);
 }
 
@@ -2378,6 +2413,7 @@ function call(key, arg) {
 const STORY = new URLSearchParams(location.search).get('story') === '1';
 const SCENE_SKIP = { briefing: 1, loadout: 1 }, SCENE_RADIO = { storm: 1, arrival: 1, objective: 1, abandon: 1 }, SCENE_MAX = { intro: 3, landing: 1 };
 function scene(key, arg, onDone) {
+  if(G.benchmark){if(onDone)onDone();return;}
   const R = G.R, f = SCENES[key];
   let lines = f ? f(R, arg) : null;
   if (!STORY && lines && lines.length) {
@@ -2490,7 +2526,7 @@ const SCENES = {
     if (cd.confidence || cd.terrain.length) L.push({ who: 'CAPCOM', text: (cd.confidence ? 'Data confidence ' + cd.confidence + '. ' : '') + (cd.terrain.length ? 'Terrain: ' + cd.terrain.join('; ') + '.' : '') });
     if (cd.conditions.length || cd.nearby.length) L.push({ who: 'FLIGHT', text: (cd.conditions.join('; ') || '') + (cd.nearby.length ? '. Nearby: ' + cd.nearby.join('; ') : '') + '.' });
     L.push({ who: 'FLIGHT', text: W.spots.length + ' sampling spot' + (W.spots.length > 1 ? 's' : '') + ' marked ' + W.spots.map((s) => s.label + ' (' + fx(s.score, 2) + ')').join(', ') + '. ' + (cd.protection[0] ? cd.protection[0] + '. ' : '') +
-      'One sample completes the objective; all of them is the bonus. Site budget: ' + Math.round(CFG.SITE_HOURS * 60) + ' minutes.' });
+      'Complete this sample to finish the mission and see your results. Site budget: ' + Math.round(CFG.SITE_HOURS * 60) + ' minutes.' });
     return L;
   },
   objective(R) {
@@ -2616,6 +2652,7 @@ function resize() {
   if (cv.width !== w || cv.height !== hh) { cv.width = w; cv.height = hh; }
   V.w = w; V.h = hh; G.miniDirty = true; G.hudDirty = true;
   g3Resize();
+  if(G.screen==='brief')drawBriefMap();
 }
 function spriteInit() {
   const mkS = (stops) => { const c = D.createElement('canvas'); c.width = c.height = 256; const x = c.getContext('2d'), g = x.createRadialGradient(128, 128, 0, 128, 128, 128);
@@ -3243,7 +3280,7 @@ function g3Coach(R) {                      // one plain-language hint at a time,
   if (R.storm) return ['warn', 'DUST STORM · stay on the line · hold Shift on rough ground'];
   if (!R.onRoute) return ['warn', 'OFF THE LINE · oxygen and power drain faster · steer back to the arrows'];
   if ((W.RISK[R.i] | 0) >= 1 && R.main) return ['warn', 'FLAGGED GROUND · hold Shift for a careful pace'];
-  if (R.phase === 'site') return ['', R.samples.length ? 'Sample more cyan pillars, or press H to head home' : 'Walk to a cyan pillar and press E to take a sample'];
+  if (R.phase === 'site') return ['', 'Complete the sample at B to finish this objective'];
   if (R.dis) { const d = Math.hypot(R.x - R.vehX, R.y - R.vehY); if (R.phase !== 'site' || R.samples.length >= W.spots.length) return ['', d <= CFG.MOUNT_M ? 'Press V to mount your ' + vehName(R) : 'On foot · your ' + vehName(R) + ' is ' + Math.round(d) + ' m away (blue ring) · press V beside it']; }
   if (R.real < 18 && W.veh.bat && !afoot(R)) return ['', G.touch ? 'Stick up to drive, sideways to steer · drag the view to look' : 'W accelerate · A / D steer · S brake and reverse · mouse to look' + (W.veh.suited ? ' · V to step off' : '')];
   if (R.real < 16) return ['', G.touch ? 'Left stick to move · drag the view to look · follow the green arrows to B' : 'W to move · mouse to look · Space to hop · follow the green arrows to B'];
@@ -3430,8 +3467,8 @@ function render3d(dt) {
     if (G.autopilot || R.over) { if (spd > 0.4) { let dy = Math.atan2(R.vx, R.vy) - G3.yaw; dy = Math.atan2(Math.sin(dy), Math.cos(dy)); G3.yaw += dy * Math.min(1, dt * 3.2); } G3.pitch += (-0.07 - G3.pitch) * Math.min(1, dt * 2); }
     else if (!G.paused && !G.cut) {
       if (g3Driving()) {                                  // steering only bites while rolling; reversing flips it
-        const vn = Math.max(0.5, W.vNom / 3.6 * W.TS / W.kDist), fwd = R.vx * Math.sin(G3.vyaw) + R.vy * Math.cos(G3.vyaw);
-        const rate = (W.veh.key === 'two_wheel' ? 1.15 : W.veh.key === 'buggy' ? 0.5 : 0.8) * (IN.steer || 0) * clamp(spd / (0.3 * vn), 0, 1) * (fwd < -0.05 ? -1 : 1);
+        const vn=Math.max(.5,W.vNom/3.6*W.TS/W.kDist);
+        const rate = drivingTurnRate(R,G3.vyaw,IN.steer||0);
         G3.vyaw += rate * dt; G3.yaw += rate * dt; G3.lean = (G3.lean || 0) + (-(IN.steer || 0) * 0.03 * clamp(spd / vn, 0, 1) - (G3.lean || 0)) * Math.min(1, dt * 5);
       } else { const turn = (K.ArrowRight ? 1 : 0) - (K.ArrowLeft ? 1 : 0); G3.yaw += turn * 2.0 * dt; G3.lean = 0; }
     }
@@ -3549,7 +3586,7 @@ function render3d(dt) {
       if (G3.lastInt !== undefined && integ < G3.lastInt - 0.4) { vf.classList.remove('hit'); void vf.offsetWidth; vf.classList.add('hit'); } G3.lastInt = integ;
       setCls(vf, 'lowo2', o2f < 0.2 && !R.over); vf.style.setProperty('--dust', clamp(R.stormK, 0, 1).toFixed(2)); vf.style.setProperty('--frost', clamp(R.env.cold || 0, 0, 1).toFixed(2));
       $('crack').style.opacity = clamp((62 - integ) / 45, 0, 1).toFixed(2); setCls($('hud'), 'glitch', !R.comms && !G.reduced); }
-    if (G3.locked && (G.paused || G.cut || R.site || G.drawer || R.over) && D.exitPointerLock) D.exitPointerLock();
+    if (G3.locked && !GameTools.starting && (G.paused || G.cut || R.site || G.drawer || R.over) && D.exitPointerLock) D.exitPointerLock();
   }
 }
 
@@ -3638,7 +3675,7 @@ function hudUpdate(R) {
     cls = left < 0 ? 'late' : left < W.turn.h * 0.15 ? 'soon' : '';
   } else if (R.phase === 'site') {
     ph = 'SITE WORK · ' + R.samples.length + '/' + W.spots.length + ' samples';
-    tn = 'SITE BUDGET ' + Math.round(R.siteMin) + ' / ' + Math.round(CFG.SITE_HOURS * 60) + ' min · H: head home';
+    tn = 'Complete one sample to see your results';
     cls = R.siteMin > CFG.SITE_HOURS * 60 ? 'late' : '';
   } else {
     ph = 'RETURN · ' + fx(R.s / 1000 * W.kDist, 2) + ' km to A' + (R.samples.length ? ' · ' + R.samples.length + ' sample' + (R.samples.length > 1 ? 's' : '') : ' · NO SAMPLE');
@@ -3663,7 +3700,7 @@ function hudUpdate(R) {
   else if (ks >= 0) pr = '<kbd>E</kbd> work sampling spot ' + W.spots[ks].label;
   else if (R.leftA && R.distA < CFG.A_ZONE_M && !R.samples.length) pr = '<kbd>E</kbd> end the EVA here (abort: no sample aboard)';
   else if (R.stormK > 0.3 && !R.sheltered && R.shelterD < CFG.SHELTER_ZONE_M) pr = 'Stop here to shelter from the storm';
-  else if (R.phase === 'site' && !R.spotDone.every(Boolean)) pr = 'Sampling spots marked S1–S' + W.spots.length + ' · <kbd>H</kbd> head home';
+  else if (R.phase === 'site' && !R.spotDone.every(Boolean)) pr = 'Sample at B · <kbd>E</kbd> interact';
   else if (R.phase === 'outbound' && R.real < 7 && !G.autopilot) pr = 'Follow the dashed route to B · <kbd>Shift</kbd> careful pace · <kbd>Tab</kbd> planner data';
   const pe = $('prompt'); setHidden(pe, !pr); if (pr) setHTML(pe, pr);
   // banner
@@ -3740,6 +3777,7 @@ function miniStatic(W, R) {
   const mxo = w / 2 - (x0 + x1) / 2 * sc, myo = hh / 2 + (y0 + y1) / 2 * sc;
   HUD.mt = { sc: sc, ox: mxo, oy: myo };
   c.setTransform(1, 0, 0, 1, 0, 0); c.fillStyle = '#1a110d'; c.fillRect(0, 0, w, hh);
+  if(W_.MarswalkRouteMap){const rect={west:W.toLon(-mxo/sc),east:W.toLon((w-mxo)/sc),north:W.toLat(myo/sc),south:W.toLat((myo-hh)/sc)};W_.MarswalkRouteMap.paintImagery(c,rect,()=>{if(G.W===W)G.miniDirty=true;});}
   c.lineCap = 'round'; c.lineJoin = 'round';
   c.strokeStyle = 'rgba(255,255,255,0.10)'; c.lineWidth = Math.max(8, 2 * W.halfW * sc);
   c.beginPath(); c.moveTo(X[0] * sc + mxo, myo - Y[0] * sc); for (let i = 1; i < n; i++) c.lineTo(X[i] * sc + mxo, myo - Y[i] * sc); c.stroke();
@@ -3819,6 +3857,7 @@ function pixelSamples(N, W) {                 // a handful of real /api/pixel sa
 function show(name) {
   if (name === 'title') cancelPlan();
   G.screen = name;
+  if(name!=='play'){RouteFlight.pause();GameTools.closeBoard();if(W_.MarswalkRouteMap&&W_.MarswalkRouteMap.isOpen())W_.MarswalkRouteMap.close();G.modal='';}
   setHidden($('title'), name !== 'title'); setHidden($('brief'), name !== 'brief'); setHidden($('end'), name !== 'end');
   setHidden($('hud'), name !== 'play'); setHidden($('touch'), !(name === 'play' && G.touch));
   setHidden($('cmp'), !(name === 'play' && G3.on)); setHidden($('visor'), !(name === 'play' && G3.on)); if (name !== 'play') setHidden($('coach'), true);
@@ -3838,7 +3877,7 @@ function candCardHTML(N, i, sel, pick) {
   let s = '<details class="card' + (sel ? ' sel' : '') + '"' + (sel ? ' open' : '') + '><summary>#' + esc(C.rank) + ' · ' + (isFinite(C.total) ? fx(C.total, 1) + '/100' : 'unscored') + ' · B ' + degTxt(C.B) + ' ' + chipA(C) +
     (sel ? ' <span class="chip good">selected</span>' : '') + '</summary>';
   s += ln('Target', esc(cd.target.join('; '))) + ln('Data confidence', esc(cd.confidence)) + ln('Terrain', esc(cd.terrain.join('; '))) + ln('Conditions', esc(cd.conditions.join('; '))) + ln('Nearby', esc(cd.nearby.join('; ')));
-  s += ln('Sampling spots', cd.sampling.map((p, k) => 'S' + (k + 1) + ' ' + degTxt(p) + ' (score ' + fx(p.score, 2) + (p.what ? ', ' + esc(p.what) : '') + ')').join('; '));
+  s += ln('Objective', 'Complete one sample at destination B. Choose another route afterward for a new objective.');
   s += ln('Protection', esc(cd.protection.join('; ')));
   s += ln('Landing spot A', esc(C.A.kind) + (C.A.site ? ': ' + esc(C.A.site) : '') + ' at ' + degTxt(C.A) + (cd.from_A ? ' · ' + esc(cd.from_A) : ''));
   s += ln('Route', fx(r.distance_km, 2) + ' km, ' + fx(r.one_way_h, 2) + ' h one way, ' + fx(r.round_trip_h, 2) + ' h round trip incl. sampling; max slope ' + fx(r.max_slope, 1) + '°, mean ' + fx(r.mean_slope, 1) +
@@ -3996,7 +4035,7 @@ function titleRender() {
   if (hN) { const b = mk('button', 'qm'); b.type = 'button'; b.appendChild(mk('span', 'chip nasa', 'from the planner')); b.appendChild(mk('b', '', '“' + hN.goal + '”')); b.appendChild(mk('span', '', hN.veh.label + ' · ' + hN.season.label.replace(/:.*/, '') + ' · ' + hN.cands.length + ' route(s) · route #' + (hN.selected + 1) + ' selected')); b.addEventListener('click', () => openBriefing(hN)); hf.appendChild(b); }
   const best = store.get('marswalk.game.best', {}), be = $('bests'); be.textContent = '';
   const rows = (best && typeof best === 'object') ? Object.keys(best).map((k) => best[k]).filter((r) => r && typeof r === 'object').sort((a, b) => num(b.score, 0) - num(a.score, 0)).slice(0, 5) : [];
-  if (!rows.length) be.textContent = 'No completed missions yet. Come home alive to set one.';
+  if (!rows.length) be.textContent = 'No completed missions yet. Complete a sample at your destination to set one.';
   rows.forEach((r) => be.appendChild(mk('div', '', str(r.grade, '?') + ' · ' + fx(num(r.score, 0), 1) + ' · “' + str(r.goal).slice(0, 60) + '” · ' + str(r.vehicle) + ' #' + num(r.cand, 1) + ' · ' + str(r.difficulty) + ' · ' + fmtHM(num(r.met_h, 0)) + ' h')));
   setText($('netChip'), API.ok ? 'ONLINE · live planner linked' : API.on ? 'OFFLINE · planner API not answering' : 'OFFLINE · opened from a file');
   $('netChip').className = 'chip ' + (API.ok ? 'good' : 'over');
@@ -4015,12 +4054,13 @@ function titleInit() {
     planLive({ region: G.N ? G.N.region : (new URLSearchParams(location.search).get('region') || 'jezero'), goal: goal, vehicle: $('fVehicle').value, season: $('fSeason').value, priority: $('fPriority').value, green_only: $('fGreen').checked }, false);
   });
   $('btnIntro').addEventListener('click', () => { Snd.init(); const sk = G.skip; G.skip = false; scene('intro', null, () => { G.skip = sk; }); });
-  $('bBack').addEventListener('click', () => { show('title'); titleRender(); });
-  $('bLaunch').addEventListener('click', () => { Snd.init(); if (G.N) startMission(G.N, G.ci, G.diffKey); });
+  $('bBack').addEventListener('click', () => { if(G.N&&G.N.src==='planner'){location.href='index.html';return;}show('title'); titleRender(); });
+  $('bLaunch').addEventListener('click', () => { Snd.init(); if (G.N) { startMission(G.N, G.ci, G.diffKey, {ready:true}); GameTools.startDriving(); } });
   $('bCands').addEventListener('click', (ev) => { const b = ev.target.closest ? ev.target.closest('[data-cand]') : null; if (b) { G.ci = clamp(parseInt(b.getAttribute('data-cand'), 10) || 0, 0, G.N.cands.length - 1); briefRender(); } });
   const seg = $('bDiff');
   Object.keys(DIFF).forEach((k) => { const b = mk('button', '', DIFF[k].label); b.type = 'button'; b.setAttribute('data-d', k); b.addEventListener('click', () => { G.diffKey = k; briefRender(); }); seg.appendChild(b); });
   $('bMap').addEventListener('click', (ev) => {
+    if(W_.MarswalkRouteMap)return; // Route selection belongs in the collapsed alternatives panel.
     const m = BMAP.t, N = G.N; if (!m || !N) return;
     const rc = $('bMap').getBoundingClientRect(), mx = (ev.clientX - rc.left) * ($('bMap').width / rc.width), my = (ev.clientY - rc.top) * ($('bMap').height / rc.height);
     let best = 1e18, bi = -1;
@@ -4137,8 +4177,8 @@ function briefRender() {
   const N = G.N; if (!N) return;
   const C = N.cands[G.ci];
   setText($('bGoal'), '“' + N.goal + '”');
-  setText($('bSub'), (N.src === 'planner' ? 'Handed off from the planner' : N.src === 'live' ? 'Planned live just now' : 'Baked real plan') + ' · mission ' + N.id + ' · ' + N.veh.label + ' · ' + N.season.label + ' · priority ' + N.priority.label +
-    ' · signal delay to Houston 4–24 min');
+  setText($('bSub'), N.veh.label + ' · route #' + C.rank + ' · ' + fx(C.route.distance_km,2) + ' km to the target');
+  setText($('bBack'),N.src==='planner'?'Back to planner':'Other missions');
   let ch = '';
   N.cands.forEach((c, i) => { ch += candCardHTML(N, i, i === G.ci, true); });
   $('bCands').innerHTML = '<h3>Candidates: pick the route you will fly</h3>' + ch;
@@ -4147,12 +4187,13 @@ function briefRender() {
   for (let i = 0; i < seg.length; i++) seg[i].setAttribute('aria-pressed', seg[i].getAttribute('data-d') === G.diffKey ? 'true' : 'false');
   const df = DIFF[G.diffKey], best = store.get('marswalk.game.best', {}), bk = best && typeof best === 'object' ? best[missionKey(N, G.ci)] : null;
   setText($('bDiffNote'), df.note + ' Corridor ±' + Math.round(df.corridor * N.veh.corr) + ' m.' + (bk && typeof bk === 'object' ? ' Best on this route: ' + str(bk.grade) + ' ' + fx(num(bk.score, 0), 1) + '.' : ''));
-  setText($('bLaunch'), 'BEGIN EVA · ROUTE #' + C.rank + ' · ' + fx(C.route.distance_km, 2) + ' km · ' + fx(C.route.round_trip_h, 2) + ' h');
+  setText($('bLaunch'), 'Play game');
   drawBriefMap();
 }
 function openBriefing(N) {
   cancelPlan();
   G.N = N; G.ci = clamp(N.selected | 0, 0, N.cands.length - 1); G.imgs.science = null; G.imgs.off = null;
+  GameTools.remember(N,G.ci); GameTools.loadPlan(N,G.ci);
   show('brief'); $('brief').scrollTop = 0; briefRender();
   loadImg(N.scienceImg).then((im) => { if (G.N === N) { G.imgs.science = im; if (G.screen === 'brief') drawBriefMap(); } });
   loadImg(N.offImg).then((im) => { if (G.N === N) { G.imgs.off = im; if (G.screen === 'brief') drawBriefMap(); } });
@@ -4161,6 +4202,8 @@ function openBriefing(N) {
 }
 function drawBriefMap() {
   const N = G.N, cvs = $('bMap'); if (!N || !cvs) return;
+  const box=cvs.getBoundingClientRect();if(box.width>0&&box.height>0){cvs.width=1040;cvs.height=Math.round(1040*box.height/box.width);}
+  if(W_.MarswalkRouteMap){const C=N.cands[G.ci];W_.MarswalkRouteMap.render(cvs,{route:C.route.points.length>=2?C.route.points:[C.A,C.B],imagery:G.imgs.imagery,imageryRect:G.imageryRect});setText($('bMapNote'),'Selected route from A to B over real Mars satellite imagery. Edit map is available after Play.');return;}
   const c = cvs.getContext('2d'), w = cvs.width, hh = cvs.height, rc = N.rect;
   let lo0 = 1e9, lo1 = -1e9, la0 = 1e9, la1 = -1e9;
   const ext = (p) => { if (!p) return; if (p.lon < lo0) lo0 = p.lon; if (p.lon > lo1) lo1 = p.lon; if (p.lat < la0) la0 = p.lat; if (p.lat > la1) la1 = p.lat; };
@@ -4205,7 +4248,6 @@ function drawBriefMap() {
   drawRoute(N.cands[G.ci], true);
   N.cands.forEach((cd, i) => { const sel = i === G.ci; pin(cd.A, sel ? '#2f8fff' : 'rgba(47,143,255,0.7)', 'A' + cd.rank, sel); pin(cd.B, sel ? '#ff9a1f' : 'rgba(255,154,31,0.7)', 'B' + cd.rank, sel); });
   const cs = N.cands[G.ci];
-  cs.card.sampling.forEach((s) => { c.fillStyle = '#ffe1a8'; c.beginPath(); c.arc(X(s.lon), Y(s.lat), 5, 0, 6.2832); c.fill(); });
   const tn = cs.resources.turnaround;
   if (!tn.at_B) { const x = X(tn.lon), y = Y(tn.lat); c.fillStyle = '#ff3b30'; c.beginPath(); c.moveTo(x, y - 12); c.lineTo(x + 12, y); c.lineTo(x, y + 12); c.lineTo(x - 12, y); c.closePath(); c.fill(); c.fillStyle = '#fff'; c.font = '700 13px system-ui,sans-serif'; c.textAlign = 'center'; c.fillText('turn back', x, y + 26); }
   N.dropped.forEach((dp) => { if (!dp.B) return; const x = X(dp.B.lon), y = Y(dp.B.lat); c.strokeStyle = '#ff8a7a'; c.lineWidth = 4; c.beginPath(); c.moveTo(x - 9, y - 9); c.lineTo(x + 9, y + 9); c.moveTo(x + 9, y - 9); c.lineTo(x - 9, y + 9); c.stroke(); c.fillStyle = '#ff8a7a'; c.font = '600 13px system-ui,sans-serif'; c.textAlign = 'center'; c.fillText('B' + dp.id + ' dropped', x, y + 24); });
@@ -4219,12 +4261,13 @@ function drawBriefMap() {
 }
 
 // ---- mission start
-function startMission(N, ci, diffKey) {
+function startMission(N, ci, diffKey, options) {
   cancelPlan();
   ci = clamp(ci | 0, 0, N.cands.length - 1);
   worldDispose(G.W); worldDispose(G.attract);
   const seed = isFinite(G.seedParam) ? (G.seedParam >>> 0) : hashStr(N.id + '|' + N.cands[ci].id + '|' + ci);
   G.N = N; G.ci = ci; G.diffKey = DIFF[diffKey] ? diffKey : 'astronaut';
+  GameTools.remember(N,ci); GameTools.loadPlan(N,ci); RouteFlight.reset(); G.modal=''; G.driveReady=!!(options&&options.ready);
   const W = G.W = buildWorld(N, ci, G.diffKey, seed); W.fresh = true;
   if (!G.tracksLL) G.tracksLL = tracksDecode();
   tracksToWorld(W); G.pixels = [];
@@ -4234,9 +4277,10 @@ function startMission(N, ci, diffKey) {
   loadImg(N.scienceImg).then((im) => { if (G.N === N) G.imgs.science = im; });
   loadImg(N.offImg).then((im) => { if (G.N === N) G.imgs.off = im; });
   decorFetch(N); pixelSamples(N, W);
-  show('play'); drawerRender(); G.acc = 0;
+  show('play'); drawerRender(); G.acc = 0; G.paused=G.driveReady; setHidden($('pause'),true);GameTools.driveButton();
   if (N.note) suitSay(N.note, false);
-  scene('loadout', null, () => scene('landing', null, () => { Snd.windLevel(0.12); }));
+  if(G.driveReady){Snd.windLevel(.12);suitSay('Ready at A. Start driving when you are ready; Edit map is optional.',false);}
+  else scene('loadout', null, () => scene('landing', null, () => { Snd.windLevel(0.12); }));
 }
 
 // ---- planner-data drawer (Tab): layers, live consumables + weather, compare, full dossier
@@ -4300,21 +4344,21 @@ function showEnd() {
     '<div class="small">' + esc(N.veh.label) + ' · route #' + esc(C.rank) + ' · ' + esc(W.diff.label) + ' · score <b class="mono">' + fx(sc.total, 1) + '</b> / 100' + (R.newBest ? ' <span class="chip good">new best</span>' : R.best ? ' · best ' + fx(num(R.best.score, 0), 1) : '') + '</div></div></div>';
   if (dead) s += '<p class="bad" style="margin-top:8px">' + esc((CAUSE[R.cause] || ['', ''])[1]) + '</p>';
   else if (!ok) s += '<p class="warn" style="margin-top:8px">You came home alive without a sample. The objective needs at least one.</p>';
-  s += '<h3>What the plan said vs what happened</h3><table class="stat"><tr><th></th><th>Planner</th><th>You</th></tr>';
-  s += row('Round trip incl. site', fmtHM(W.rtH) + ' h', fmtHM(R.t) + ' h', '');
-  s += row('Travel legs', fmtHM(2 * W.oneWayH) + ' h', fmtHM(Math.max(0, R.t - R.siteH)) + ' h', R.t - R.siteH > 2 * W.oneWayH * 1.1 ? 'bad' : 'ok');
-  s += row('Distance travelled', fx(2 * C.route.distance_km, 2) + ' km', fx(R.odo / 1000 * W.kDist, 2) + ' km (' + Math.round(sc.offFrac * 100) + '% off route)', sc.offFrac > 0.15 ? 'bad' : '');
-  if (R.hasO2) s += row('Oxygen used / left', fx(W.itO2.used, 2) + ' kg · ' + fx(W.itO2.left_pct, 0) + '% left', fx(W.o2Cap - R.o2, 2) + ' kg · ' + Math.round(100 * R.o2 / W.o2Cap) + '% left', R.o2 < W.reserve * W.o2Cap ? 'bad' : 'ok');
-  if (R.hasBat) s += row('Battery used / left', fx(W.itBat.used, 0) + ' Wh · ' + fx(W.itBat.left_pct, 0) + '% left', fx(W.batCap - R.bat, 0) + ' Wh · ' + Math.round(100 * R.bat / W.batCap) + '% left' + (R.abandoned ? ' (vehicle abandoned)' : ''), R.bat < W.reserve * W.batCap ? 'bad' : 'ok');
+  s += '<div id="endRouteComparison"></div><details style="margin-top:14px"><summary style="cursor:pointer;color:var(--muted)">Survival results, resources &amp; scoring details</summary><h3>What the plan said vs what happened</h3><table class="stat"><tr><th></th><th>Planner</th><th>You</th></tr>';
+  s += row('A to B incl. site', fmtHM(W.oneWayH + CFG.SITE_HOURS) + ' h', fmtHM(R.t) + ' h', '');
+  s += row('Travel to B', fmtHM(W.oneWayH) + ' h', fmtHM(Math.max(0, R.t - R.siteH)) + ' h', R.t - R.siteH > W.oneWayH * 1.1 ? 'bad' : 'ok');
+  s += row('Distance travelled', fx(C.route.distance_km, 2) + ' km', fx(R.odo / 1000 * W.kDist, 2) + ' km (' + Math.round(sc.offFrac * 100) + '% off route)', sc.offFrac > 0.15 ? 'bad' : '');
+  if (R.hasO2) s += row('Oxygen used / left', fx(num(W.itO2.out,0) + num(W.itO2.site,0), 2) + ' kg · ' + fx(W.itO2.left_pct, 0) + '% left', fx(R.oxygenUsedKg, 2) + ' kg · ' + Math.round(100 * R.o2 / W.o2Cap) + '% left', R.o2 < W.reserve * W.o2Cap ? 'bad' : 'ok');
+  if (R.hasBat) s += row('Battery used / left', fx(num(W.itBat.out,0) + num(W.itBat.site,0), 0) + ' Wh · ' + fx(W.itBat.left_pct, 0) + '% left', fx(R.energyUsedWh, 0) + ' Wh · ' + Math.round(100 * R.bat / W.batCap) + '% left' + (R.abandoned ? ' (vehicle abandoned)' : ''), R.bat < W.reserve * W.batCap ? 'bad' : 'ok');
   s += row('Reserve line', Math.round(W.reserve * 100) + '% held back', (R.resHit.o2 || R.resHit.bat) ? 'breached' : 'intact', (R.resHit.o2 || R.resHit.bat) ? 'bad' : 'ok');
   s += row('Turn-back deadline', 'T+' + fmtHM(W.turn.h) + (W.turn.atB ? ' (after B)' : ' (before B)'), R.turnBlown ? 'missed' : 'respected', R.turnBlown ? 'bad' : 'ok');
-  s += row('Samples', W.spots.length + ' spots, 1 required', R.samples.length + ' taken' + (R.samples.length ? ' (' + R.samples.map((x) => esc(x.label) + ' ' + Math.round(x.q * 100) + '%').join(', ') + ')' : ''), R.samples.length ? 'ok' : 'bad');
+  s += row('Samples', 'One destination, one completed sample', R.completedSamples + ' complete' + (R.samples.length ? ' (' + R.samples.map((x) => esc(x.label) + ' ' + Math.round(x.q * 100) + '%').join(', ') + ')' : ''), R.completedSamples ? 'ok' : 'bad');
   s += row('Site time', Math.round(CFG.SITE_HOURS * 60) + ' min budget', Math.round(R.siteMin) + ' min', R.siteMin > CFG.SITE_HOURS * 60 + 0.5 ? 'bad' : '');
   s += row(W.veh.suited ? 'Suit integrity' : 'Hull integrity', '100%', Math.round(R.integ) + '% · ' + R.hits + ' strike' + (R.hits === 1 ? '' : 's'), R.integ < 50 ? 'bad' : '');
   s += row('Tools', chargesMax(R) + ' charges packed (' + fx(N.tools.kg, 1) + ' kg)', chargesLeft(R) + ' charges left', chargesLeft(R) === 0 ? 'bad' : '');
   s += row('Route score (planner)', isFinite(C.total) ? fx(C.total, 1) + ' / 100' : '–', fx(sc.total, 1) + ' / 100' + (sc.pen ? ' (−' + sc.pen + ' penalties)' : ''), '');
   s += '</table><h3>Score: the decision-matrix criteria, applied to your EVA</h3><table class="stat"><tr><th>Criterion</th><th>Weight</th><th>Plan (1-5)</th><th>You (1-5)</th><th>Points</th></tr>';
-  const yours = { science: 'science collected', safety: 'integrity, strikes, off-route', resources: 'supply left vs plan', green: 'share on the surveyed corridor', time: 'travel legs vs plan', landing: 'return to A, turn-back', confidence: 'tool charges left' };
+  const yours = { science: 'science collected', safety: 'integrity, strikes, off-route', resources: 'supply left vs plan', green: 'share on the surveyed corridor', time: 'travel legs vs plan', landing: 'objective reached, reserve deadline', confidence: 'tool charges left' };
   let wsum = 0; Object.keys(CRITERIA).forEach((k) => { wsum += N.weights[k]; });
   Object.keys(CRITERIA).forEach((k) => { s += '<tr><td>' + esc(N.criteria[k]) + ' <span class="small">→ ' + yours[k] + '</span></td><td>' + fx(N.weights[k], 1) + '%</td><td>' + fx(C.scores[k], 1) + '</td><td>' + fx(sc.s[k], 1) + '</td><td>' + fx(N.weights[k] * sc.s[k] / 5 * (wsum ? 100 / wsum : 0), 1) + '</td></tr>'; });
   s += '</table>';
@@ -4325,14 +4369,15 @@ function showEnd() {
       row('Score', fx(num(pv.score, 0), 1) + ' ' + esc(str(pv.grade)), fx(sc.total, 1) + ' ' + esc(sc.grade)) + row('Mission time', fmtHM(num(pv.met_h, 0)) + ' h', fmtHM(R.t) + ' h') +
       row('Samples', esc(num(pv.samples, 0)), R.samples.length) + row('Integrity', esc(num(pv.integrity, 0)) + '%', Math.round(R.integ) + '%') + row('Tool charges left', esc(num(pv.tools_left, 0)), chargesLeft(R)) + '</table>';
   }
-  s += '<div id="endLB"></div>';
-  s += '<div class="btnrow"><button type="button" id="eRetry">Retry this route</button>' + (N.cands.length > 1 ? '<button type="button" id="eNext" class="secondary">Fly route #' + esc(N.cands[(W.ci + 1) % N.cands.length].rank) + '</button>' : '') +
+  s += '<div id="endLB"></div></details>';
+  s += '<div class="btnrow"><button type="button" id="eRetry">Retry this route</button>' + (N.cands.length > 1 ? '<button type="button" id="eNext" class="secondary">Next objective · route #' + esc(N.cands[(W.ci + 1) % N.cands.length].rank) + '</button>' : '') +
     '<button type="button" id="eDossier" class="secondary">Mission dossier</button><button type="button" id="eTitle" class="secondary">New mission</button></div>' +
     '<p class="small" style="margin-top:10px"><a href="' + esc(kitHref(N, C)) + '" target="_blank" rel="noopener">Gear for this route</a> · <a href="index.html">Back to the Marswalk Planner</a> · seed ' + W.seed + '</p>';
   $('endBody').innerHTML = s;
   lbEnd(R);
-  $('eRetry').onclick = () => startMission(N, W.ci, W.diffKey);
-  if ($('eNext')) $('eNext').onclick = () => startMission(N, (W.ci + 1) % N.cands.length, W.diffKey);
+  RouteFlight.renderEnd(R);
+  $('eRetry').onclick = () => startMission(N, W.ci, W.diffKey,{ready:true});
+  if ($('eNext')) $('eNext').onclick = () => startMission(N, (W.ci + 1) % N.cands.length, W.diffKey,{ready:true});
   $('eDossier').onclick = () => { N.selected = W.ci; openBriefing(N); };
   $('eTitle').onclick = () => { show('title'); titleRender(); };
   show('end'); $('end').scrollTop = 0;
@@ -4341,7 +4386,9 @@ function showEnd() {
 // ---- pause / drawer / mute
 function setPaused(p) {
   if (G.screen !== 'play' || !G.R || G.R.over) { p = false; }
+  if(!p&&G.screen==='play'&&G.R&&!G.R.over&&G.paused&&(RouteFlight.attempt||G.driveReady)){GameTools.startDriving();return;}
   G.paused = !!p; setHidden($('pause'), !G.paused);
+  if(G.paused){GameTools.pauseIntent();RouteFlight.pause();}GameTools.driveButton();
   if (G.paused) { $('pSound').checked = !G.mute; $('pAuto').checked = G.autopilot; $('pFx').checked = G.reduced; $('pResume').focus(); }
 }
 function toggleDrawer() { if (G.screen !== 'play') return; G.drawer = !G.drawer; setHidden($('drawer'), !G.drawer); if (G.drawer && G.R) drawerLive(G.R); }
@@ -4360,6 +4407,12 @@ function pauseInit() {
   $('btnPause').addEventListener('click', (ev) => { ev.currentTarget.blur(); setPaused(true); });
   $('btnDrawer').addEventListener('click', (ev) => { ev.currentTarget.blur(); toggleDrawer(); });
   $('btnMute').addEventListener('click', (ev) => { ev.currentTarget.blur(); Snd.init(); toggleMute(); });
+  $('btnEditMap').addEventListener('click',()=>{if(W_.MarswalkRouteMap)W_.MarswalkRouteMap.open();else suitSay('The map could not load. You can still start driving.',false);});
+  $('btnDrive').addEventListener('click',()=>GameTools.startDriving());
+  $('btnLeaderboard').addEventListener('click',()=>GameTools.openBoard());
+  $('boardClose').addEventListener('click',()=>GameTools.closeBoard());
+  $('boardSurvival').addEventListener('click',()=>GameTools.boardTab(false));
+  $('boardRoutes').addEventListener('click',()=>GameTools.boardTab(true));
   $('siteLeave').addEventListener('click', (ev) => { ev.currentTarget.blur(); if (G.R) siteClose(G.R, false); });
   const mb = $('mgBtn');
   mb.addEventListener('pointerdown', (ev) => { ev.preventDefault(); if (G.R && G.R.site) mgAction(G.R, true); });
@@ -4375,6 +4428,7 @@ function onKeyDown(e) {
   const k = e.key || '', kl = k.length === 1 ? k.toLowerCase() : k;
   if (isField(e.target)) { if (k === 'Escape') e.target.blur(); return; }
   if (e.ctrlKey || e.metaKey || e.altKey) return;
+  if(G.modal){if(k==='Escape'){e.preventDefault();if(G.modal==='board')GameTools.closeBoard();else if(W_.MarswalkRouteMap)W_.MarswalkRouteMap.close();}return;}
   Snd.init();
   if (G.cut) {
     if (k === 'Escape') { cutSkipAll(); e.preventDefault(); } else if (k === ' ' || k === 'Enter') { if (!e.repeat) cutAdvance(); e.preventDefault(); }
@@ -4465,6 +4519,7 @@ function frame(ts) {
   G.frame++;
   inputUpdate();
   const R = G.R, play = G.screen === 'play' && !!R;
+  RouteFlight.beforeStep();
   if (play && !R.over && !G.paused && !G.cut) {
     G.acc += dt; let ticks = 0;
     while (G.acc >= SIM_DT && ticks < CFG.MAX_TICKS_PER_FRAME) {
@@ -4474,6 +4529,7 @@ function frame(ts) {
     if (ticks >= CFG.MAX_TICKS_PER_FRAME) G.acc = 0;
     G.alpha = G.acc / SIM_DT;
   } else G.alpha = 1;
+  RouteFlight.tick(dt);
   cutTick(dt); radioTick(dt);
   render(dt);
   if (play) {
@@ -4484,6 +4540,159 @@ function frame(ts) {
   const pf = G.perf, ms = performance.now() - t0;
   pf.buf[pf.bi] = ms; pf.bi = (pf.bi + 1) % pf.buf.length; if (pf.n < pf.buf.length) pf.n++;
 }
+
+// Both drivers use the same steering, acceleration, grip, terrain and fixed 30 Hz clock.
+function drivingTurnRate(R,yaw,steer){
+  const W=R.W,vn=Math.max(.5,W.vNom/3.6*W.TS/W.kDist),spd=Math.hypot(R.vx,R.vy),fwd=R.vx*Math.sin(yaw)+R.vy*Math.cos(yaw);
+  return (W.veh.key==='two_wheel'?1.15:W.veh.key==='buggy'?.5:.8)*steer*clamp(spd/(.3*vn),0,1)*(fwd<-.05?-1:1);
+}
+function benchmarkSteer(R,dt){
+  if(!R.W.veh.bat||afoot(R))return;
+  const magnitude=Math.hypot(R.mvx,R.mvy);if(!magnitude)return;
+  const target=Math.atan2(R.mvx,R.mvy),delta=Math.atan2(Math.sin(target-R.driveYaw),Math.cos(target-R.driveYaw));
+  R.driveYaw+=drivingTurnRate(R,R.driveYaw,clamp(delta*3,-1,1))*dt;
+  const throttle=Math.min(magnitude,clamp(1-Math.abs(delta)/1.5,.15,1));
+  R.mvx=Math.sin(R.driveYaw)*throttle;R.mvy=Math.cos(R.driveYaw)*throttle;
+}
+const DriveBenchmark={
+  async run(payload){
+    if(!G.benchmark)throw Error('Driving comparisons require an isolated simulator.');
+    G.skip=true;G.mute=true;G.autopilot=true;G.speed=1;G.wxLive=payload.weather||{};
+    const W=G.W=buildWorld(payload.mission,payload.candidate,payload.difficulty,payload.seed);
+    // Hold the player's vehicle/time calibration fixed when comparing the other route.
+    Object.assign(W,payload.calibration);G.N=W.N;
+    const R=G.R=newRun(W);R.aiDriving=payload.driving3d&&!!W.veh.bat;
+    R.driveYaw=Math.atan2(W.X[1]-W.X[0],W.Y[1]-W.Y[0]);R.driveSpeedLimit=payload.speedLimit;
+    const maxTicks=30*1800;
+    while(R.tick<maxTicks&&!R.over){
+      for(let n=0;n<300&&!R.over;n++){
+        if(Math.hypot(R.x-W.B.x,R.y-W.B.y)<CFG.SPOT_ZONE_M){
+          return {status:'complete',seconds:R.real,ticks:R.tick,distanceM:R.odo*W.kDist,end:{x:R.x,y:R.y},destination:{x:W.B.x,y:W.B.y},seed:W.seed};
+        }
+        simStep();
+      }
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
+    return {status:'failed',reason:R.cause||'The driver did not reach the destination.',ticks:R.tick};
+  },
+  async compare(R){
+    if(R.aiComparison)return;R.aiComparison={status:'running'};
+    const frame=D.createElement('iframe');frame.hidden=true;frame.setAttribute('aria-hidden','true');frame.tabIndex=-1;
+    const url=new URL('game.html',location.href);url.search='?drive-benchmark=1';
+    try{
+      await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error('Simulator could not load.')),20000);frame.onload=()=>{clearTimeout(timer);resolve();};frame.onerror=()=>{clearTimeout(timer);reject(Error('Simulator could not load.'));};frame.src=url.href;D.body.append(frame);});
+      const driver=frame.contentWindow.__MW?.runDriveBenchmark;if(!driver)throw Error('Simulator unavailable.');
+      const W=R.W,key=GameTools.key(W.N,W.ci),calibration={};
+      for(const k of ['TS','kSpeed','kDist','kO2','kWh'])calibration[k]=W[k];
+      const common={candidate:W.ci,difficulty:W.diffKey,seed:W.seed,calibration,weather:JSON.parse(JSON.stringify(G.wxLive)),driving3d:G3.on,speedLimit:R.routeAttemptId?45:0};
+      const original=GameTools.referenceMissions.get(key)||W.N;
+      const own=await driver({...common,mission:JSON.parse(JSON.stringify(W.N))});
+      const reference=await driver({...common,mission:JSON.parse(JSON.stringify(original))});
+      R.aiComparison={status:'complete',own,reference};
+    }catch(error){R.aiComparison={status:'failed',reason:error.message};}
+    finally{frame.remove();if(G.R===R&&R.over)RouteFlight.renderEnd(R);}
+  }
+};
+// Compact planning tools around the original game world and simulation.
+const GameTools={
+  references:new Map(),referenceMissions:new Map(),referenceMetrics:new Map(),planLoads:new Map(),pauseRevision:0,
+  captureControls(){
+    const c=G3.on?$('gl'):cv;c.tabIndex=-1;c.focus({preventScroll:true});
+    if(G3.on&&!G.autopilot&&!G.touch&&!D.pointerLockElement&&c.requestPointerLock){
+      try{const request=c.requestPointerLock();if(request?.catch)request.catch(()=>{});}catch(_){}
+    }
+  },
+  pauseIntent(){this.pauseRevision++;},
+  key(N=G.N,ci=G.ci){return N?N.id+'|'+ci:'';},
+  remember(N,ci){const key=this.key(N,ci);if(!this.references.has(key)){this.referenceMissions.set(key,JSON.parse(JSON.stringify(N)));this.referenceMetrics.set(key,{one_way_time_s:N.cands[ci].route.one_way_h*3600});const c=N.cands[ci],points=c.route.points.length>=2?c.route.points:[c.A,c.B];this.references.set(key,points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));}},
+  planData(N=G.N,ci=G.ci){return N?.planDataByCandidate?.[ci]||(N?.planData?.candidate===ci?N.planData:null);},
+  async loadPlan(N,ci){if(!API.on||!N||N.src==='baked')return null;const key=this.key(N,ci);if(!this.planLoads.has(key))this.planLoads.set(key,apiJSON('/api/game/plans/'+encodeURIComponent(N.id)+'?candidate='+ci,undefined,12000));const pending=this.planLoads.get(key);let data;try{data=await pending;}catch(e){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);throw e;}if(!data){if(this.planLoads.get(key)===pending)this.planLoads.delete(key);return null;}N.planDataByCandidate=N.planDataByCandidate||{};N.planDataByCandidate[ci]=data;if(N===G.N&&ci===G.ci)N.planData=data;if(data.reference&&data.reference.points)this.references.set(key,data.reference.points.map(p=>Object.freeze({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green})));return data;},
+  context(){if(!G.N)return null;this.remember(G.N,G.ci);return{N:G.N,C:G.N.cands[G.ci],W:G.W,R:G.R,region:G.N.region,referenceRoute:this.references.get(this.key()).map(p=>({...p})),imagery:G.imgs.imagery,imageryRect:G.imageryRect,planData:this.planData(),paused:G.paused};},
+  pauseForMap(){if(G.screen!=='play'||!G.R)return;this.pauseIntent();G.modal='map';G.paused=true;clearKeys();setHidden($('pause'),true);if(D.pointerLockElement&&D.exitPointerLock)D.exitPointerLock();RouteFlight.pause();this.driveButton();},
+  closeMap(){G.modal='';this.driveButton();},
+  unrankedEvaluation(points,C,N){const rect=N.rect;if(!rect||points.some(p=>p.lon<rect.west||p.lon>rect.east||p.lat<rect.south||p.lat>rect.north))throw new Error('Keep the route inside the mission map boundary.');let distance=0;const radius=CFG.DEG_M/DEG;for(let i=1;i<points.length;i++){const a=points[i-1],b=points[i],dl=(b.lat-a.lat)*DEG,dn=(b.lon-a.lon)*DEG,q=Math.sin(dl/2)**2+Math.cos(a.lat*DEG)*Math.cos(b.lat*DEG)*Math.sin(dn/2)**2;distance+=2*radius*Math.asin(Math.sqrt(clamp(q,0,1)));}if(distance<1||distance>Math.max(10000,Math.min(200000,C.route.distance_km*1000*4)))throw new Error('Keep the edited route within four times the original distance (maximum 200 km).');const ratio=distance/Math.max(1,C.route.distance_km*1000),oneWay=C.route.one_way_h*3600*ratio;return{unranked:true,points,metrics:{distance_m:distance,one_way_time_s:oneWay,round_trip_time_s:oneWay*2,science_time_s:Math.max(0,C.route.round_trip_h-C.route.one_way_h*2)*3600},distance_ratio:ratio};},
+  async applyRoute(points,evaluation){
+    if(!G.N||!G.R)throw new Error('Open the mission before editing its route.');if(!Array.isArray(points)||points.length<2||points.length>5000||points.some(p=>!ll(p)))throw new Error('The route needs valid points.');
+    const run=G.R,generation=RouteFlight.generation;
+    const old=G.N.cands[G.ci],same=(a,b)=>Math.abs(a.lat-b.lat)<1e-7&&Math.abs(a.lon-b.lon)<1e-7;if(!same(points[0],old.A)||!same(points[points.length-1],old.B))throw new Error('Keep the original start and destination.');
+    if(!evaluation){const data=this.planData();if(!API.on||G.N.src==='baked'||data?.available===false)evaluation=this.unrankedEvaluation(points,old,G.N);else try{evaluation=await RouteFlight.request('/api/game/plans/'+encodeURIComponent(G.N.id)+'/evaluate',{candidate:G.ci,points:points.map(p=>({lat:p.lat,lon:p.lon}))});}catch(e){if(e.status!==404)throw e;evaluation=this.unrankedEvaluation(points,old,G.N);}}
+    if(G.R!==run||RouteFlight.generation!==generation)throw new Error('The mission changed. Reopen the map for the current route.');
+    await RouteFlight.retire();if(G.R!==run||RouteFlight.generation!==generation)throw new Error('The mission changed. Reopen the map for the current route.');const N={...G.N,cands:G.N.cands.map(c=>JSON.parse(JSON.stringify(c)))},C=N.cands[G.ci],m=evaluation.metrics;
+    C.route.points=points.map(p=>({lat:p.lat,lon:p.lon,risk:p.risk||0,green:!!p.green}));C.route.distance_km=m.distance_m/1000;C.route.one_way_h=m.one_way_time_s/3600;C.route.round_trip_h=(m.round_trip_time_s+(m.science_time_s||CFG.SITE_HOURS*3600))/3600;
+    if(evaluation.unranked){const ratio=evaluation.distance_ratio;for(const item of C.resources.items){const site=num(item.site,0),travel=Math.max(0,item.used-site);item.used=site+travel*ratio;if(isFinite(item.out))item.out*=ratio;if(isFinite(item.back))item.back*=ratio;if(item.capacity>0)item.left_pct=clamp(100*(1-item.used/item.capacity),0,100);}}
+    N.routeEvaluations={...(N.routeEvaluations||{}),[G.ci]:evaluation};N.selected=G.ci;startMission(N,G.ci,G.diffKey,{ready:true});if(evaluation.unranked){RouteFlight.unranked=true;RouteFlight.note='Route changed; comparison unavailable for this saved mission. Travel and energy are distance-scaled estimates.';suitSay(RouteFlight.note,false);}return{ok:true,context:this.context()};
+  },
+  driveButton(){const b=$('btnDrive');if(!b)return;b.disabled=!!(G.R&&G.R.over)||!!this.starting;setText(b,G.paused||G.driveReady?'Start driving':'Driving');},
+  async startDriving(){if(this.starting||G.screen!=='play'||!G.R||G.R.over||(!G.paused&&!G.driveReady))return;const run=G.R,generation=RouteFlight.generation,pauseRevision=this.pauseRevision;this.starting=true;this.driveButton();this.captureControls();
+    const canResume=()=>this.pauseRevision===pauseRevision&&!G.modal&&!D.hidden;
+    try{if(W_.MarswalkRouteMap)W_.MarswalkRouteMap.close();this.closeBoard();if(G.cut)cutSkipAll();G.modal='';clearKeys();setHidden($('pause'),true);await RouteFlight.start();if(G.R!==run||RouteFlight.generation!==generation||G.screen!=='play')return;if(!canResume()){G.paused=true;RouteFlight.pause();return;}if(G.driveReady&&$('toast').textContent.startsWith('Ready at A.')){Radio.toastT=0;$('toast').classList.remove('on');}G.driveReady=false;G.paused=false;G.acc=0;}
+    catch(e){if(G.R===run&&RouteFlight.generation===generation&&G.screen==='play'){suitSay('Route comparison unavailable: '+e.message+'. You can continue the mission.',false);RouteFlight.unranked=true;RouteFlight.retire().catch(()=>{});if(canResume()){G.driveReady=false;G.paused=false;}}}
+    finally{this.starting=false;this.driveButton();if(G.R===run&&!G.paused&&!G.modal){const c=G3.on?$('gl'):cv;c.tabIndex=-1;c.focus({preventScroll:true});}}
+  },
+  openBoard(){if(G.screen==='play'&&G.R){this.pauseIntent();G.paused=true;RouteFlight.pause();clearKeys();if(D.pointerLockElement&&D.exitPointerLock)D.exitPointerLock();}G.modal='board';setHidden($('pause'),true);$('boardContent').appendChild($('lb'));this.boardTab(false);setHidden($('gameBoard'),false);$('boardClose').focus();lbRender();lbLoad();this.driveButton();},
+  closeBoard(){if($('lb')&&$('lbHomeSlot'))$('lbHomeSlot').appendChild($('lb'));setHidden($('gameBoard'),true);if(G.modal==='board')G.modal='';this.driveButton();},
+  boardTab(routes){setHidden($('boardContent'),routes);setHidden($('routeBoardContent'),!routes);$('boardSurvival').setAttribute('aria-pressed',String(!routes));$('boardRoutes').setAttribute('aria-pressed',String(routes));if(routes)RouteFlight.board();},
+  async restorePlan(id,candidate){const data=await apiJSON('/api/game/plans/'+encodeURIComponent(id)+'?candidate='+candidate,undefined,12000);if(!data||!data.plan)return null;const N=normMission(data.plan,{src:'planner',region:data.region||data.plan.request_region||data.plan.settings?.region||'jezero',selected:data.candidate??candidate});if(!N||!N.cands.length)return null;N.planData=data;this.planLoads.set(this.key(N,N.selected),Promise.resolve(data));return N;}
+};
+const RouteFlight={
+  attempt:null,generation:0,queue:Promise.resolve(),pendingRetire:null,elapsed:0,lastMode:'paused',unranked:false,note:'',recovering:null,
+  async request(path,body){if(!API.on)throw new Error('The server is unavailable offline');const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);try{const response=await fetch(path,{method:body===undefined?'GET':'POST',headers:{'Content-Type':'application/json'},body:body===undefined?undefined:JSON.stringify(body),signal:controller.signal});const data=await response.json();if(!response.ok){const error=new Error(detailText(data.detail)||'Request failed ('+response.status+')');error.status=response.status;throw error;}return data;}finally{clearTimeout(timer);}},
+  credentials(){const player=lbPlayer();if(!player)throw new Error('Claim a callsign in Leaderboard to rank this route');return{name:player.name,token:player.token};},
+  reset(){this.generation++;if(this.attempt&&this.attempt.status==='active'){const id=this.attempt.id;try{this.request('/api/game/route-attempts/'+encodeURIComponent(id)+'/restart',this.credentials()).catch(()=>{});}catch(_){}}this.attempt=null;this.elapsed=0;this.lastMode='paused';this.unranked=false;this.note='';this.recovering=null;},
+  async retire(){const generation=this.generation;await this.queue.catch(()=>{});if(generation!==this.generation)return;if(this.attempt&&this.attempt.status==='active'){this.pendingRetire=this.attempt.id;this.attempt=null;}if(this.pendingRetire){const id=this.pendingRetire;await this.request('/api/game/route-attempts/'+encodeURIComponent(id)+'/restart',this.credentials());if(this.pendingRetire===id)this.pendingRetire=null;}},
+  async start(){
+    if(this.unranked||G.autopilot||G.speed!==1)return;if(!lbPlayer()){this.unranked=true;this.note='Claim a callsign in Leaderboard before starting your next ranked run.';return;}const generation=this.generation,data=await GameTools.loadPlan(G.N,G.ci);if(generation!==this.generation)return;if(!data||!data.available){this.unranked=true;this.note=data?.reason||'Route comparison is unavailable for this mission.';return;}
+    await this.queue.catch(()=>{});if(generation!==this.generation)return;if(this.recovering)await this.recovering;if(generation!==this.generation)return;
+    if(this.attempt){const id=this.attempt.id,fresh=await this.request('/api/game/route-attempts/'+encodeURIComponent(id)+'/resume',this.credentials());if(generation!==this.generation||this.attempt?.id!==id)return;this.attempt=fresh;this.snap(fresh.position);}else{const points=G.N.cands[G.ci].route.points.map(p=>({lat:p.lat,lon:p.lon}));const attempt=await this.request('/api/game/route-attempts',{...this.credentials(),plan_id:G.N.id,candidate:G.ci,points,idempotency_key:crypto.randomUUID?crypto.randomUUID():Date.now()+'-'+Math.random()});if(generation!==this.generation)return;this.attempt=attempt;this.snap(attempt.position);}
+    const mode=G.R.site?'paused':'driving';await this.sync(mode);if(generation!==this.generation)return;this.lastMode=mode;this.elapsed=0;this.note='';
+  },
+  position(){const R=G.R;return R?{lat:R.W.toLat(R.y),lon:R.W.toLon(R.x)}:null;},
+  snap(position){if(!position||!G.R)return;const R=G.R;R.x=R.px=R.W.toX(position.lon);R.y=R.py=R.W.toY(position.lat);R.vx=R.vy=0;},
+  sync(mode){const attempt=this.attempt,position=this.position(),samples=G.R?.completedSamples||0,generation=this.generation;const job=async()=>{if(!attempt||this.attempt?.id!==attempt.id||generation!==this.generation)return;const response=await this.request('/api/game/route-attempts/'+encodeURIComponent(attempt.id)+'/progress',{...this.credentials(),sequence:this.attempt.sequence+1,position,mode,samples});if(this.attempt?.id===attempt.id&&generation===this.generation)this.attempt=response;return response;};this.queue=this.queue.catch(()=>{}).then(job);return this.queue;},
+  heartbeat(mode){if(mode==='driving'&&this.heartbeatPending)return;const generation=this.generation,id=this.attempt?.id,task=this.sync(mode);this.heartbeatPending=task;task.catch(e=>this.failed(e,generation,id)).finally(()=>{if(this.heartbeatPending===task)this.heartbeatPending=null;});},
+  beforeStep(){if(this.attempt&&!this.unranked&&this.lastMode==='paused'&&G.screen==='play'&&G.R&&!G.R.over&&!G.R.site&&!G.paused&&!G.cut&&!GameTools.starting){G.paused=true;GameTools.startDriving();}},
+  pause(){if(!this.attempt||this.lastMode==='paused')return;this.lastMode='paused';this.heartbeat('paused');},
+  tick(dt){if(!this.attempt||!G.R||G.R.over||this.unranked)return;if(G.speed!==1||G.autopilot){this.unranked=true;this.retire().catch(()=>{});return;}const active=G.screen==='play'&&!G.paused&&!G.cut&&!G.R.site&&!D.hidden;if(!active){this.pause();return;}if(this.lastMode!=='driving'){this.lastMode='driving';this.heartbeat('driving');}this.elapsed+=dt;if(this.elapsed>=.5){this.elapsed=0;this.heartbeat('driving');}},
+  async failed(error,generation=this.generation,id=this.attempt?.id){if(generation!==this.generation||this.attempt?.id!==id||!id)return;if(this.recovering)return this.recovering;G.paused=true;clearKeys();this.lastMode='paused';this.note='Route tracking paused: '+error.message;GameTools.driveButton();suitSay(this.note,false);const recovery=(async()=>{try{await this.queue.catch(()=>{});if(generation!==this.generation||this.attempt?.id!==id)return;const fresh=await this.request('/api/game/route-attempts/'+encodeURIComponent(id)+'/resume',this.credentials());if(generation===this.generation&&this.attempt?.id===id){this.attempt=fresh;this.snap(fresh.position);}}catch(_){}finally{if(this.recovering===recovery)this.recovering=null;}})();this.recovering=recovery;return recovery;},
+  async finish(R){if(!this.attempt||R.outcome!=='success'){this.pause();return;}const id=this.attempt.id,generation=this.generation;R.routeAttemptId=id;R.routeFinalConfirmed=false;this.lastMode='paused';try{await this.sync('paused');if(generation===this.generation&&this.attempt?.id===id){R.routePreview=this.attempt;R.routeFinalConfirmed=true;}}catch(e){if(generation===this.generation&&G.R===R){R.routeReceiptError='Final position could not be confirmed: '+e.message;R.routePreview=this.attempt;}}this.renderEnd(R);},
+  async submit(R){if(R!==G.R||R.routeSubmitting||!R.routeAttemptId||R.routeReceipt)return;const id=R.routeAttemptId,generation=this.generation;R.routeSubmitting=true;R.routeReceiptError='';this.renderEnd(R);try{await this.queue.catch(()=>{});if(generation!==this.generation||R!==G.R||this.attempt?.id!==id)return;if(!R.routeFinalConfirmed)try{await this.sync('paused');R.routeFinalConfirmed=true;}catch(_){}if(generation!==this.generation||R!==G.R||this.attempt?.id!==id)return;const result=await this.request('/api/game/route-attempts/'+encodeURIComponent(id)+'/finish',this.credentials());if(generation===this.generation&&G.R===R&&this.attempt?.id===id){this.attempt=result;R.routeReceipt=result;}}catch(e){if(generation===this.generation&&G.R===R)R.routeReceiptError=e.message;}finally{R.routeSubmitting=false;this.renderEnd(R);}},
+  async resumeApproach(R){if(R!==G.R||R.routeSubmitting||!R.routeAttemptId)return;const id=R.routeAttemptId,generation=this.generation;R.routeSubmitting=true;this.renderEnd(R);try{await this.queue.catch(()=>{});const fresh=await this.request('/api/game/route-attempts/'+encodeURIComponent(id)+'/resume',this.credentials());if(generation!==this.generation||R!==G.R||this.attempt?.id!==id)return;this.attempt=fresh;if(fresh.objective_complete&&fresh.status==='active'){R.routePreview=fresh;R.routeFinalConfirmed=true;R.routeReceiptError='';return;}if(fresh.status==='finished'){R.routeReceipt=fresh;R.routeReceiptError='';return;}if(fresh.status!=='active')throw new Error('This attempt is no longer active. Retry the route to start again.');this.snap(fresh.position);this.lastMode='paused';R.over=false;R.outcome='';R.cause='';R.score=null;R.phase='site';R.completedSamples=0;R.spotDone=R.spotDone.map(()=>false);R.samples=[];R.routeReceiptError='';R.routeAttemptId=null;R.routePreview=null;G.paused=true;G.driveReady=true;show('play');setHidden($('pause'),true);GameTools.driveButton();suitSay('Restored the last server-confirmed position. Start driving to complete the sample at B.',false);}catch(e){if(generation===this.generation&&G.R===R)R.routeReceiptError=e.message;}finally{R.routeSubmitting=false;this.renderEnd(R);}},
+  async board(){const el=$('routeBoardContent'),requestId=this.boardRequest=(this.boardRequest||0)+1,mission=G.N,candidate=G.ci;el.replaceChildren(mk('p','small','Loading route comparison…'));try{const data=GameTools.planData(mission,candidate)||await GameTools.loadPlan(mission,candidate);if(G.N!==mission||G.ci!==candidate||requestId!==this.boardRequest)return;if(!data||!data.available){el.replaceChildren(mk('p','small',data?.reason||'Route comparison is unavailable for this mission. Survival scores are still available.'));return;}const board=await this.request('/api/game/route-leaderboard?key='+encodeURIComponent(data.key));if(G.N!==mission||G.ci!==candidate||requestId!==this.boardRequest)return;el.replaceChildren(mk('p','small','Same mission, vehicle and model. Lower modeled A-to-B travel time is better; driving time is shown separately.'));if(!lbPlayer())el.append(mk('p','small','Choose Survival scores to claim a callsign before starting a ranked run.'));const table=mk('table','stat');const head=mk('tr');['Rank','Callsign','Simulated travel','Active driving'].forEach(x=>head.append(mk('th','',x)));table.append(head);(board.board||[]).forEach(row=>{const tr=mk('tr');[row.rank,row.name,fmtHM(row.simulated_time_s/3600)+' h',Math.round(row.actual_driving_time_s??row.active_drive_s)+' s'].forEach(x=>tr.append(mk('td','',String(x))));table.append(tr);});el.append(table);if(!(board.board||[]).length)el.append(mk('p','small','No completed routes yet. Reach B and complete its sample.'));}catch(e){if(G.N===mission&&G.ci===candidate&&requestId===this.boardRequest)el.replaceChildren(mk('p','small',e.message));}},
+  renderEnd(R){
+    const el=$('endRouteComparison');if(!el||G.R!==R)return;el.replaceChildren();
+    const receipt=R.routeReceipt,preview=receipt||R.routePreview||(R.routeAttemptId===this.attempt?.id?this.attempt:null);
+    const cabinEstimate=!R.hasO2&&R.W.veh.key==='buggy';
+    const summary={
+      totalElapsedS:R.elapsedS,drivingElapsedS:R.drivingElapsedS,
+      missionElapsedS:R.t*3600,aiComparison:R.aiComparison,
+      oxygenKg:R.hasO2?R.oxygenUsedKg:cabinEstimate?W_.MarswalkMissionResults?.cabinOxygenKg(R.t*3600,1):null,energyWh:R.energyUsedWh,
+      oxygenBasis:cabinEstimate?'cabin-estimate':'game-model',crewCount:1,
+    distanceM:R.odo*R.W.kDist,vehicleLabel:R.W.N.veh.label,vehicleKey:R.W.veh.key,drivingMissionS:Math.max(0,R.t-R.siteH)*3600,
+      resourceNote:(R.hasO2?'Oxygen is the game model consumption, including leaks and replenished supplies. ':cabinEstimate?'Cabin oxygen estimates one crew member at the NASA daily average over the simulated mission clock; it does not drain a gameplay tank. ':'Oxygen is not modeled for this vehicle. ')+(R.hasBat?'Energy includes modeled driving, hotel load and instruments.':'Energy covers modeled instruments only; suit power is not modeled.')
+    };
+    const result=mk('div');result.id='missionResultsSummary';el.append(result);
+    if(W_.MarswalkMissionResults)W_.MarswalkMissionResults.render(result,summary);
+    if(!R.aiComparison)DriveBenchmark.compare(R);
+    if(receipt)el.append(mk('p','good','Leaderboard rank #'+receipt.rank));
+    if(preview&&!receipt&&R.outcome==='success'){
+      const submit=mk('button','',R.routeSubmitting?'Submitting…':'Submit route score');
+      submit.id='submitRouteScore';submit.disabled=!!R.routeSubmitting;submit.onclick=()=>this.submit(R);el.append(submit);
+    }else if(!preview&&this.note)el.append(mk('p','small',this.note));
+    if(R.routeReceiptError)el.append(mk('p','warn','Route score was not recorded: '+R.routeReceiptError));
+    if(!receipt&&R.routeAttemptId&&!R.routeFinalConfirmed&&R.routeReceiptError){
+      const resume=mk('button','secondary','Resume final approach');resume.id='resumeRouteApproach';
+      resume.disabled=!!R.routeSubmitting;resume.onclick=()=>this.resumeApproach(R);
+      el.append(resume,mk('p','small','Resume from the last confirmed position to complete the objective at B.'));
+    }
+    const actions=mk('div','btnrow'),board=mk('button','secondary','View leaderboard');
+    board.onclick=()=>{GameTools.openBoard();GameTools.boardTab(true);};actions.append(board);
+    if(R.outcome==='success'){
+      const edit=mk('button','secondary','Edit route');edit.id='editCompletedRoute';
+      edit.onclick=()=>{startMission(R.W.N,R.W.ci,R.W.diffKey,{ready:true});W_.MarswalkRouteMap?.open();};actions.append(edit);
+    }
+    el.append(actions);
+  }
+};
 
 // =====================================================================================================================
 // 16. debug hook — the only global: window.__MW
@@ -4513,7 +4722,10 @@ function findRed(W, x, y) {           // nearest solid patch of off-limits groun
   return null;
 }
 W_.__MW = {
-  version: CFG.VERSION, state: G, CFG: CFG,
+  version: CFG.VERSION, state: G,
+  runDriveBenchmark:payload=>DriveBenchmark.run(payload), CFG: CFG,
+  mapBridge:{getContext:()=>GameTools.context(),pauseForMap:()=>GameTools.pauseForMap(),closeMap:()=>GameTools.closeMap(),applyRoute:(points,evaluation)=>GameTools.applyRoute(points,evaluation),startDriving:()=>GameTools.startDriving(),loadPlan:()=>GameTools.loadPlan(G.N,G.ci)},
+  routeTracking(){return{attempt:RouteFlight.attempt?JSON.parse(JSON.stringify(RouteFlight.attempt)):null,unranked:RouteFlight.unranked,note:RouteFlight.note,generation:RouteFlight.generation};}, // Read-only audit view; completion still requires the server.
   startBaked(i, cand, diff) { const N = G.baked[i | 0]; if (!N) return false; N.briefed = true; startMission(N, cand | 0, diff || G.diffKey); return true; },
   setSpeed(n) { G.speed = clamp(Math.round(+n) || 1, 1, 200); return G.speed; },
   kill(cause) { const R = G.R; if (!R || R.over || G.screen !== 'play') return false; cause = CAUSE[cause] ? cause : 'oxygen'; if (cause === 'oxygen') R.o2 = 0; else if (cause === 'battery') R.bat = 0; else if (cause === 'integrity') R.integ = 0; die(R, cause); return true; },
@@ -4527,8 +4739,24 @@ W_.__MW = {
 };
 
 // ---- boot
-function routeStart() {
+function routeStart(skipSavedPlan) {
   const Q = new URLSearchParams(location.search), cand = Math.max(0, parseInt(Q.get("cand"), 10) || 0), direct = G.autopilot;       // autopilot demos start straight away; skip=1 only skips cutscenes
+  if(Q.get('src')==='planner'){
+    const handed=readHandoff();
+    if(handed&&(!Q.get('plan')||handed.id===Q.get('plan'))){
+      if(Q.has('cand'))handed.selected=clamp(cand,0,handed.cands.length-1);
+      if(direct){handed.briefed=true;startMission(handed,handed.selected,G.diffKey);}else openBriefing(handed);
+      return;
+    }
+  }
+  if(!skipSavedPlan&&Q.get('plan')){
+    show('brief');setText($('bGoal'),'Loading your mission…');setText($('bSub'),'Restoring the selected planner route');$('bLaunch').disabled=true;
+    GameTools.restorePlan(Q.get('plan'),cand).then(N=>{
+      $('bLaunch').disabled=false;
+      if(N){if(direct){N.briefed=true;startMission(N,N.selected,G.diffKey);}else openBriefing(N);}
+      else {setText($('bGoal'),'Your saved mission could not load');setText($('bSub'),'Return to the planner and use Play route again.');$('bLaunch').disabled=true;}
+    });return;
+  }
   if (Q.has('baked')) {
     const N = G.baked[clamp(parseInt(Q.get('baked'), 10) || 0, 0, G.baked.length - 1)];
     if (N) { N.briefed = true; startMission(N, cand, G.diffKey); return; }
@@ -4542,6 +4770,7 @@ function routeStart() {
       priority: PRIORITIES[Q.get('priority')] ? Q.get('priority') : 'safety', green_only: Q.get('green_only') === '1' || Q.get('green_only') === 'true' };
     const ls = Q.has('ls') && Q.get('ls').trim() !== '' ? Number(Q.get('ls')) : NaN;
     if (isFinite(ls) && ls >= 0 && ls <= 360) req.ls = ls;
+    const hour=Number(Q.get('local_hour'));if(Q.has('local_hour')&&isFinite(hour)&&hour>=0&&hour<24)req.local_hour=hour;
     show('title'); titleRender(); $('fGoal').value = req.goal; $('fVehicle').value = req.vehicle; $('fSeason').value = req.season; $('fPriority').value = req.priority; $('fGreen').checked = req.green_only;
     planLive(req, true, cand).then((N) => { if (N && direct) { N.briefed = true; startMission(N, N.selected, G.diffKey); } });
     return;
@@ -4552,6 +4781,7 @@ function routeStart() {
 }
 function boot() {
   const Q = new URLSearchParams(location.search);
+  if(Q.get('drive-benchmark')==='1'){G.benchmark=true;API.on=false;API.ok=false;G.mute=true;G.skip=true;return;}
   G.skip = Q.get('skip') === '1'; G.autopilot = Q.get('autopilot') === '1'; G.mute = Q.get('mute') === '1';
   G.speed = clamp(parseInt(Q.get('speed'), 10) || 1, 1, 200); G.seedParam = Q.has('seed') ? parseInt(Q.get('seed'), 10) : NaN;
   if (DIFF[Q.get('difficulty')]) G.diffKey = Q.get('difficulty');

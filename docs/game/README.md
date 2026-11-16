@@ -1,12 +1,13 @@
 # Marswalk: Survive the Route
 
 A first-person 3D survival game that plays the plan the Marswalk planner generates. You are the astronaut (or
-driver), seeing Mars through the visor or over the rover's hood: follow the planned path from landing spot A to destination B, do the science with the planner's tool list, and get back to A
-alive. Run out of oxygen, battery or suit integrity, or use up every tool, and you die. Houston stays on the radio
+driver), seeing Mars through the visor or over the rover's hood: follow the planned path from landing spot A to destination B and complete one sample with the planner's tools. The mission finishes at B; choose the next objective afterward.
+Run out of oxygen, battery or suit integrity, or use up every tool, and you die. Houston stays on the radio
 in short calls with the Earth-Mars signal delay; the long cutscenes are off unless you add `?story=1`.
 
-Everything is in one file, `frontend/game.html` (no libraries, no build step). This document is both the player
-guide and the hand-over for the next developer or agent.
+The original game is in `frontend/game.html`; `frontend/game-route-map.js` supplies the satellite map popup,
+and `frontend/game-mission-results.js` supplies time/resource comparisons and the player's surface-cost model.
+These need no library or build step. This document is both the player guide and the hand-over for developers.
 
 ## Launch
 
@@ -15,12 +16,48 @@ guide and the hand-over for the next developer or agent.
 | `run.bat` / `./run.sh`, then `http://localhost:8000/game.html` | Online mode: plan any mission on the title screen, real weather, pixel values and rover tracks |
 | **Play** button on the gear page (`kit.html`) | Opens the game and plans a mission from the kit form's vehicle, season, region and goals |
 | **Play route #N** in the planner's Mission results | Opens the exact plan and selected route in a new tab |
+| **MISSION READY · PLAY ROUTE** after chatting with the Planner assistant | Opens that generated mission, with its saved goal, start time, vehicle and selected route |
 | **Game · Survive the route** on the planner | A collapsed section for playing the selected route or browsing ready-made missions |
 | Double-click `frontend/game.html` | Offline mode: five baked real missions, embedded Jezero weather tables, generated terrain |
 
 ## How to play
 
-Pick a mission (or plan one), read the briefing, choose route #1, #2 or #3 and a difficulty, press **Begin EVA**.
+Use the existing Planner assistant to choose a goal, time and vehicle. Press the green **MISSION READY · PLAY ROUTE**
+button, then **Play game** under the route preview. Play captures the mouse and starts driving directly.
+Mission details, tools, alternative routes and difficulty stay in collapsed panels.
+
+**Edit map** pauses driving and opens a contained popup over real Mars satellite imagery. Drag an interior point
+or click the route to insert one. Undo, remove and reset are available without coordinate entry. **Use route**
+checks the new path against the saved mission terrain and restarts the original game at A; closing an uncommitted
+edit preserves the current route. Satellite, topography, slope and Ground firmness share the same geographic coordinates.
+Ground firmness uses thermal observations and the planner's derived firmness, with explicit unknown areas and source links. It estimates material categories, not measured bearing strength or individual rocks.
+Zoomed views request the local planner pixels before downsampling. Finer saved observations take precedence over coarser regional data; no detail is invented below the source resolution.
+The relief slider changes shading only. The game keeps its storms, shelters, rocks, vehicles, sampling and tools.
+
+**Leaderboard** is available beside the corner minimap. Survival scores remain available; the Route comparison
+tab ranks completed runs on the same saved mission and vehicle by modeled one-way travel time. Claim a
+callsign before starting a ranked run, reach B and complete its sample, then explicitly press **Submit
+route score**. Active driving time is shown separately. Missing source data disables route ranking, while the
+original game stays playable. Offline baked missions retain their original gameplay.
+
+The large results board shows total gameplay time, driving time, and measured AI driving on your route and on
+the original route. Both AI runs use the same fixed 30 Hz simulation, vehicle handling, difficulty, seed and
+time compression as the player. Sampling is excluded from AI driving; pauses and menus are excluded from
+all four times. A failed simulation is shown as unavailable or unfinished, never replaced with a planner
+estimate or a forced faster time. Oxygen, electricity and distance follow, then cost. User price assumptions
+remain in the separate expandable cost model. The simulated surface clock remains internal to resource/cost calculations.
+
+### Persistent leaderboard database
+
+The existing server stores callsigns and survival scores in `game_state/leaderboard.sqlite3`, and captured
+plans, terrain, route attempts and completed route rankings in `game_state/game_routes.sqlite3`. SQLite WAL
+transactions commit scores to disk; browser storage only remembers the player's token. Tests cover reopening
+the database and reading a committed score from a separate application process.
+
+Set `MARSWALK_GAME_STATE_DIR` to a persistent writable directory on the backend host (mount a persistent
+volume if using containers). Preserve the entire directory during deployment. Use SQLite's backup API or
+stop the service before copying the files; copying only an active `.sqlite3` file can miss WAL transactions.
+Cloudflare Pages hosts the UI; both leaderboard tabs use the same configured FastAPI backend database.
 
 | Key | Action |
 |---|---|
@@ -109,7 +146,9 @@ file. Each server has its own board.
 | `cand=<0-2>` | Route index |
 | `difficulty=cadet\|astronaut\|commander` | Burn x0.90 / 1.00 / 1.15, corridor 16 / 12 / 9 m, hazards x0.6 / 1 / 1.5 |
 | `src=planner` | Load the hand-off from `localStorage["marswalk.game.mission"]` |
+| `plan=<saved mission id>` | Restore the exact server-saved mission and selected candidate when browser storage is unavailable |
 | `goal=`, `vehicle=`, `season=`, `ls=`, `priority=`, `green_only=1`, `region=` | Plan live through `/api/mission/stream`; exact `ls` overrides the season preset (falls back to a baked mission with a note) |
+| `local_hour=<0-24>` | Preserve the saved start time in a live-planning fallback; values must be below 24 |
 | `autopilot=1` | A bot follows the path, samples and returns (demos, tests) |
 | `speed=<1-200>` | Simulation speed multiplier |
 | `skip=1`, `mute=1` | Skip cutscenes, start muted |
@@ -130,10 +169,14 @@ blackout, scree and a return under pressure).
 |---|---|
 | `frontend/game.html` | The whole game. Edit it directly; there is no generator to re-run |
 | `frontend/game-launch.js` | Adds Play buttons to `index.html` (when included) and `kit.html`; writes the hand-off |
+| `frontend/game-route-map.js` | Satellite/topography map popup, geographic route editing, preview and minimap imagery |
+| `game_routes.py` | Captures server-generated plans and terrain; validates edited routes and completed comparison attempts |
+| `tests/test_game_routes.py` | Route validity, scoring, identity, authentication, movement, timing and ranking regressions |
 | `tests/test_game.py` | Structure, contract and launcher tests, part of `python -m unittest discover -s tests` |
 | `docs/game/smoke_test.js` | Headless-Chrome autopilot run over every baked mission and route |
 | `docs/game/launcher_test.js` | Dependency-free Node checks for saved-plan settings, region, exact season, storage fallback and kit mapping |
 | `docs/game/integration_test.mjs` | Playwright browser checks for compact launch UI, route handoff, kit rerender, live-plan fallback, geographic raster alignment and cancelled-plan isolation |
+| `docs/game/planner_flow_test.mjs` | Live assistant → green Play → driving, map editing/application, leaderboard and responsive layout checks |
 
 ### Sections of `game.html` (search for `// N.` headings)
 
@@ -211,16 +254,33 @@ A wrong use wastes a charge.
 python -m unittest discover -s tests
 node docs/game/launcher_test.js                          # no dependencies
 node docs/game/smoke_test.js http://127.0.0.1:8000        # 14/14 routes, needs puppeteer-core and a running server
+node docs/game/baked_routes_test.mjs                    # Playwright alternative; 14 original WebGL routes at :8013
 node docs/game/integration_test.mjs                     # needs playwright; mocks app APIs, no server required
+node docs/game/map_editor_test.mjs                      # popup edits, dateline, async failures; no server required
+node docs/game/route_tracking_test.mjs                  # slow/lost movement acknowledgements; no server required
+node docs/game/start_pause_test.mjs                     # late start/resume cannot override a newer pause
+node docs/game/mission_results_test.mjs                 # cost units, sources, unknown resources, mobile layout
+node docs/game/single_site_test.mjs                     # sampling, clocks, refills, cancel, retry and next objective
+node docs/game/ai_driver_test.mjs                       # actual AI driving on all 14 baked routes
+node docs/game/single_site_live_test.mjs                # normal keyboard drive + sample + ranking; isolated :8014
+node docs/game/planner_flow_test.mjs                    # real assistant and game; isolated server at :8012
 ```
 
 For the browser integration checks, install `playwright` or set `PLAYWRIGHT_MODULE` to its importable module
-URL. Set `CHROME` if Chrome is not at the default Windows location. These checks use deterministic planner
-responses; the smoke test above exercises the served game separately.
+URL. Set `CHROME` if Chrome is not at the default Windows location. Integration, map editor, route tracking
+and start/pause checks use deterministic API responses. The smoke, baked-route and live planner checks
+exercise the served game.
+The live planner and baked-route checks accept `MARSWALK_TEST_URL`. The planner flow writes screenshots under
+`game_state/planner-flow-audit`. Run it against a server with a separate `MARSWALK_GAME_STATE_DIR`,
+so test missions and callsigns do not enter the normal leaderboard. See
+[the rebuild verification report](PLANNER_GAME_TEST_REPORT.md) for the final checks and limits.
 
 The planner handoff reads the saved mission settings even when the form contains a draft for the next plan.
 It preserves the selected candidate and the resolved region, and passes the exact solar longitude through
-the URL if browser storage is unavailable. The Game section stays collapsed until opened; its shortcut in
+the URL if browser storage is unavailable. Start time also comes from the saved plan. A server-saved plan ID
+preserves the exact route when local storage is unavailable. A missing saved plan shows a restore error instead
+of silently generating a different mission.
+The Game section stays collapsed until opened; its shortcut in
 Mission results is hidden while planning and when a region change clears the mission. Kit Play keeps its
 existing form-to-live-mission flow and preserves the form's exact solar longitude.
 Selecting another mission cancels an outstanding live plan; a late response cannot replace the chosen game.
@@ -263,6 +323,10 @@ mission's science raster bounds. Images without valid geographic bounds use the 
   for that. Rover tracks and backup routes are drawn as ground lines only.
 - The 3D view was checked in headless Chrome only: not on a phone, and mouse capture was not exercised by hand.
 - The hop is visual only: it does not clear obstacles or change the simulation.
+- Route comparison uses the saved planner cube's actual resolution and the existing planner travel model.
+  Display imagery can be finer than the scoring grid. The server verifies geographic progress and computes
+  the score and accepts new samples only near mission science locations, but the browser still reports
+  whether its sampling mini-game succeeded.
 - Vehicle handling is a feel model (momentum, speed-dependent steering, grip from firmness), not vehicle dynamics.
   Top speed, energy and oxygen still come from the planner's numbers. Returning to A on foot without the
   vehicle still counts as a success.

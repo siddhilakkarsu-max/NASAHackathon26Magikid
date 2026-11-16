@@ -3,8 +3,8 @@
 //
 //   index.html  adds a compact "Play route #N" action inside Mission results and a collapsed Game section.
 //               Both hand the plan on screen to the game
-//               through localStorage["marswalk.game.mission"] and open game.html?src=planner in a new tab.
-//               If storage is blocked or full, the request goes in the URL instead and the game plans it again.
+//               through localStorage["marswalk.game.mission"] and a saved plan ID in the new tab's URL.
+//               If storage is blocked, that ID restores the exact mission from the server.
 //   kit.html    adds a "Play" button to the sheet's tool row. The kit page has no mission plan, so the game
 //               plans one live from URL params read off the kit form (traveller, exact Ls, region, science goals).
 //
@@ -16,7 +16,7 @@
     if (typeof window === "undefined" || typeof document === "undefined") return;
     if (window.MarswalkGameLaunch) return;                       // already loaded on this page
 
-    var VERSION = "1.1.0";
+    var VERSION = "1.4.0";
     var GAME = "game.html";
     var STORE_KEY = "marswalk.game.mission";                     // read by game.html when the URL has ?src=planner
     var MAX_WITH_IMAGES = 1500000;                               // characters of JSON; above this the two PNGs are left out
@@ -70,7 +70,8 @@
       return { goal: text(s.goal) || value("goal").trim(), vehicle: text(s.vehicle && s.vehicle.key) || value("mVehicle"),
                season: text(season.key) || seasonFromLs(ls), ls: ls,
                priority: text(s.priority && s.priority.key) || value("mPriority"),
-               green_only: typeof s.green_only === "boolean" ? s.green_only : isChecked("greenOnly") };
+               green_only: typeof s.green_only === "boolean" ? s.green_only : isChecked("greenOnly"),
+               local_hour: typeof s.local_hour === "number" && isFinite(s.local_hour) ? s.local_hour : number("hour") };
     }
 
     // The hand-off object, shape fixed by the game spec. null when there is no plan with candidates.
@@ -89,7 +90,7 @@
       var g = m.goal_ai || {}, x = m.explain_ai || {};
       return {
         v: 1, savedAt: Date.now(), region: plannerRegion(m), selected: currentSelected(m), request: req,
-        hour: number("hour"), ls: number("ls"),
+        hour: req.local_hour, ls: req.ls,
         ai: { goal: { reasoning: text(g.reasoning), content: text(g.content) },
               explain: { reasoning: text(x.reasoning), content: text(x.content) } },
         mission: copy
@@ -115,12 +116,13 @@
       var m = currentMission();
       if (!m) return GAME;
       var full = plannerPayload(true), json = "";
+      var savedUrl=GAME+query([["src","planner"],["plan",text(m.id)],["cand",currentSelected(m)]]);
       try { json = JSON.stringify(full); } catch (_) { json = ""; }
-      if (json && json.length <= MAX_WITH_IMAGES && store(full)) return GAME + "?src=planner";
-      if (store(plannerPayload(false))) return GAME + "?src=planner";
+      if (json && json.length <= MAX_WITH_IMAGES && store(full)) return savedUrl;
+      if (store(plannerPayload(false))) return savedUrl;
       var r = plannerRequest(m);
       if (!r.goal && m.settings && typeof m.settings.goal === "string") r.goal = m.settings.goal;
-      return GAME + query([["goal", r.goal], ["vehicle", r.vehicle], ["season", r.season], ["ls", r.ls], ["priority", r.priority],
+      return GAME + query([["plan", text(m.id)], ["goal", r.goal], ["vehicle", r.vehicle], ["season", r.season], ["ls", r.ls], ["local_hour", r.local_hour], ["priority", r.priority],
                            ["green_only", r.green_only ? 1 : 0], ["region", plannerRegion(m)], ["cand", currentSelected(m)]]);
     }
 
@@ -264,15 +266,15 @@
           fab.hidden = !show;                                    // appears (and animates in) the moment a plan is ready
           if (show) {
             fabText.textContent = "";
-            fabText.appendChild(document.createTextNode("MISSION READY \u00b7 PLAY"));
+            fabText.appendChild(document.createTextNode("MISSION READY \u00b7 PLAY ROUTE"));
             var sm = document.createElement("small"); sm.textContent = "Route #" + n + " \u00b7 first-person game \u00b7 new tab"; fabText.appendChild(sm);
             fab.setAttribute("aria-label", "Mission ready: play route " + n + " in the survival game (opens a new tab)");
           }
           gameButton.disabled = run.disabled;
           gameButton.textContent = show ? "Play route #" + n : "Browse game missions";
           gameNote.textContent = show
-            ? "Play the selected mission: follow route #" + n + " to B, collect a sample, and return to A. Opens in a new tab."
-            : "Follow a planned route, collect samples, and return safely. Plan a mission above or try a ready-made mission. Opens in a new tab.";
+            ? "Play your selected route #" + n + " and sample at B. Your goal, vehicle and start time are already included. Opens in a new tab."
+            : "Plan a mission above, then play its route. Opens in a new tab.";
         } catch (_) {}
       }
 

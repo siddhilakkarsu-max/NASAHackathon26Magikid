@@ -10,6 +10,7 @@ import logging
 import base64
 import io
 import json
+import logging
 import math
 import subprocess
 import sys
@@ -37,6 +38,7 @@ import mission
 import murray
 import jezero_terrain
 import global_terrain
+import game_routes
 import physics
 import search
 from config import (CONSUMABLE_SOURCES, MARS_RADIUS_M, MATRIX_CRITERIA, MINERALS, MISSION_VEHICLES,
@@ -1099,6 +1101,12 @@ def _finish_mission(res, cube=None):
         _missions.pop(next(iter(_missions)))
     res["science_image"] = to_png(np.where(score >= 0.15, score, np.nan), "plasma", 0.15, 1, alpha=0.55)
     res["offlimits_image"] = to_png(np.where(red, 0.8, np.nan), "Reds", 0, 1, alpha=0.45)
+    # Save the exact planner result for the game's optional route comparison.
+    # A storage failure must not prevent the original mission from being played.
+    try:
+        game_routes.capture_plan(res, cube)
+    except Exception:
+        logging.getLogger(__name__).exception("Could not save mission %s for route comparison", res["id"])
     return res
 
 
@@ -1259,6 +1267,7 @@ def trek_tile(layer: str, z: int, y: int, x: int):
 
 app.include_router(gear_router)
 app.include_router(game_router)          # game callsigns + leaderboard (leaderboard.py)
+app.include_router(game_routes.router)   # compare edits to the exact selected planner route
 app.include_router(moons_router)
 
 
