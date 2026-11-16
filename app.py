@@ -6,6 +6,7 @@ Run:   uvicorn app:app --reload --port 8000
 Open:  http://localhost:8000
 """
 import asyncio
+import logging
 import base64
 import io
 import json
@@ -80,7 +81,8 @@ class Cube:
         z = np.load(path, allow_pickle=False)
         self.region = region
         self.names = [str(n) for n in z["band_names"]]
-        self.bands = {n: z["bands"][i] for i, n in enumerate(self.names)}
+        bands = z["bands"]           # read ONCE: each z["bands"] decompresses every band again, and indexing it
+        self.bands = {n: bands[i] for i, n in enumerate(self.names)}   # per band kept 20 full copies alive
         self.coverage = z["coverage_fraction"]
         self.w, self.s, self.e, self.n = [float(v) for v in z["bounds"]]
         self.H, self.W = self.bands["elevation"].shape
@@ -1100,6 +1102,10 @@ def _finish_mission(res, cube=None):
     return res
 
 
+log = logging.getLogger("marswalk")
+STREAM_KEEPALIVE_S = 15            # seconds of silence before the plan stream sends a keep-alive
+
+
 @app.post("/api/mission/stream")
 async def plan_mission_stream(req: MissionRequest, request: Request):
     """The same plan as /api/mission, as a stream of server-sent events, with the AI model's thinking live:
@@ -1166,13 +1172,23 @@ async def plan_mission_stream(req: MissionRequest, request: Request):
     async def guarded():
         """Pass events on until the page goes away; then close the generator, which closes the AI connection
         and stops the model, so an abandoned plan doesn't hold up everyone else's."""
-        gen, end = events(), object()
+        gen, end, pending = events(), object(), None
         try:
             while not await request.is_disconnected():
-                item = await run_in_threadpool(next, gen, end)
+                if pending is None:
+                    pending = asyncio.ensure_future(run_in_threadpool(next, gen, end))
+                done, _ = await asyncio.wait({pending}, timeout=STREAM_KEEPALIVE_S)
+                if not done:                  # still working: an SSE comment keeps the page's watchdog and proxies happy
+                    yield ": working\n\n"
+                    continue
+                item, pending = pending.result(), None
                 if item is end:
                     break
                 yield item
+        except Exception as ex:               # never just drop the stream: the page would wait forever
+            log.exception("mission stream failed")
+            yield event(type="error", text="Planning failed on the server. Press Plan mission to try again.",
+                        detail=f"{type(ex).__name__}: {ex}")
         finally:                              # the generator may still be busy in a worker thread: retry
             for _ in range(600):
                 try:
@@ -1235,7 +1251,7 @@ def trek_tile(layer: str, z: int, y: int, x: int):
                 _tile_cache[key] = r.read()
         except Exception as ex:
             raise HTTPException(404, f"no tile: {ex}")
-        if len(_tile_cache) > 5000:
+        if len(_tile_cache) > 1500:             # tiles also live on disk; memory keeps the recent ones
             _tile_cache.pop(next(iter(_tile_cache)))
     return Response(_tile_cache[key], media_type="image/jpeg",
                     headers={"Cache-Control": "public, max-age=86400"})
@@ -1286,7 +1302,7 @@ def _fast_lowpass(img, factor=16):
     return np.asarray(small.resize((w, h), Image.BILINEAR), dtype="float32") / 255.0
 
 
-@lru_cache(maxsize=256)
+@lru_cache(maxsize=32)                       # ~0.8 MB each decoded: 256 of them were ~200 MB on a 2 GB server
 def _viking_tile(row, col):
     url = (f"https://trek.nasa.gov/tiles/Mars/EQ/{VIKING}/1.0.0/default/default028mm/"
            f"{VIKING_LEVEL}/{row}/{col}.jpg")
@@ -1338,7 +1354,7 @@ def ctx_tile(z: int, y: int, x: int):
     Image.fromarray(out).save(buf, format="JPEG", quality=82)
     data = buf.getvalue()
     _ctx_cache[key] = data
-    if len(_ctx_cache) > 3000:
+    if len(_ctx_cache) > 1000:
         _ctx_cache.pop(next(iter(_ctx_cache)))
     try:
         TILE_DIR.mkdir(parents=True, exist_ok=True)
@@ -1401,6 +1417,8 @@ def prefetch_status():
 _builds = {}                 # region -> {"proc", "log", "started"}
 _builds_lock = threading.Lock()
 MAX_BUILDS = 2
+TERRAIN_TIMEOUT_S = 300           # planning can start once the terrain is in: normally 5-20 s
+BUILD_TIMEOUT_S = 900             # the mineral maps after it: normally under a minute
 
 
 class SiteRequest(BaseModel):
@@ -1417,11 +1435,23 @@ def _build_status(region):
                 "ready": ready}
     log = b["log"].read_text(errors="replace") if b["log"].exists() else ""
     code = b["proc"].poll()
+    age = time.time() - b["started"]
+    if code is None and (age > BUILD_TIMEOUT_S or (not ready and age > TERRAIN_TIMEOUT_S)):
+        # a stuck download must not leave the page waiting forever: stop the build and report it
+        b["proc"].kill()
+        try:
+            b["proc"].wait(5)
+        except subprocess.TimeoutExpired:
+            pass
+        code = b["proc"].poll() if b["proc"].poll() is not None else -9
+        b["timed_out"] = True
     if code is None:
         status = "minerals" if "STAGE terrain ready" in log else "terrain"
     else:
         status = "done" if code == 0 and ready else "failed"
     lines = [l for l in log.splitlines() if l.strip() and "Warning" not in l and "DatasetReader" not in l]
+    if b.get("timed_out"):
+        lines.append(f"Stopped: loading took longer than {round(age / 60)} min. Try again, or plan somewhere nearby.")
     crism = next((l for l in lines if "CRISM:" in l), "")
     done_products = sum(1 for l in lines if l.startswith("    [ok]") or l.startswith("    [--]"))
     total = int(crism.split("CRISM:")[1].split()[0]) if crism else 0
