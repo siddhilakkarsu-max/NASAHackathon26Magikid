@@ -249,8 +249,10 @@
     log.scrollTop = log.scrollHeight;
     return m;
   }
-  function setChips(list) {
-    chipBox.replaceChildren(...(list || []).map(t => el("button", { type: "button", textContent: t, onclick: () => chat.send(t) })));
+  function setChips(list) {             // a chip is text to send, or { label, run } to press something directly
+    chipBox.replaceChildren(...(list || []).map(t => typeof t === "string"
+      ? el("button", { type: "button", textContent: t, onclick: () => chat.send(t) })
+      : el("button", { type: "button", textContent: t.label, onclick: () => { setChips([]); t.run(); } })));
   }
   function state() {
     const places = window.marsSearchPlaces ? window.marsSearchPlaces().map(p => p.name) : [];
@@ -322,13 +324,12 @@
   async function waitForMission(before) {
     const note = add("bot", "Planning… (about 10–40 seconds)", "wait");
     const t0 = Date.now();
-    while (Date.now() - t0 < 180000) {
+    // the planner gives up on its own when something goes wrong (and says why here, via chat.say)
+    while (Date.now() - t0 < 600000) {
       await new Promise(r => setTimeout(r, 1000));
       if (mission && mission !== before && mission.candidates) break;
-      const status = $("mStatus").textContent;
-      if (!$("runMission").disabled && Date.now() - t0 > 3000 && status && !mission?.candidates) {
+      if (!$("runMission").disabled && Date.now() - t0 > 3000 && !(mission && mission !== before)) {
         note.remove();
-        add("bot", `The planner says: ${status}`);
         return;
       }
     }
@@ -361,7 +362,7 @@
         replyIn.focus();
       }
     },
-    say(text) { chat.open(true); add("bot", text); },
+    say(text, chips) { chat.open(true); add("bot", text); if (chips) setChips(chips); },
     async send(text) {
       text = String(text || "").trim();
       if (!text || busy) return;

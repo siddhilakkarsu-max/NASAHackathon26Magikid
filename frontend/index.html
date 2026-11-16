@@ -225,6 +225,15 @@
   body #tourCard, body .helmut-bubble, body #playFab, body #playFab small { font-family: var(--ui-font); }
   /* form fields don't inherit the page font by default (the search bar, the assistant's message box) */
   input, textarea, select, button, body #marsSearch input { font-family: var(--ui-font); }
+  /* a failed plan, on the map (top centre) */
+  #planNotice { position: absolute; z-index: 41; top: 64px; left: 50%; transform: translateX(-50%); display: flex;
+                align-items: center; gap: 10px; width: max-content; max-width: min(520px, calc(100% - 32px));
+                box-sizing: border-box; padding: 9px 10px 9px 14px; border-radius: 10px; font-size: 12px; line-height: 1.35;
+                background: #2a1714f0; border: 1px solid #ff6b4a66; color: var(--fg); box-shadow: 0 6px 22px #0006; }
+  #planNotice[hidden] { display: none; }
+  #planNotice > span { flex: 1 1 auto; min-width: 12em; }
+  #planNotice button { width: auto; margin: 0; padding: 5px 10px; font-size: 10.5px; flex: none; }
+  #planNotice .x { background: transparent; color: var(--muted); padding: 2px 6px; font-size: 16px; letter-spacing: 0; }
   /* loading progress for an area of Mars (top centre of the map) */
   #areaProgress { position: absolute; z-index: 40; top: 64px; left: 50%; transform: translateX(-50%);
                   width: min(420px, calc(100% - 32px)); box-sizing: border-box; padding: 9px 14px 11px;
@@ -1442,6 +1451,7 @@ $("plan").onclick = async () => {
   } catch (e) {
     if (planId !== planRequest) return;
     setMsg($("explain"), e.message);
+    reportPlanError(e.message, [{ label: "Try again", run: () => $("plan").click() }]);
     lastPlan = null;
     renderConsumables();
   } finally {
@@ -1480,22 +1490,38 @@ async function streamEvents(path, body, onEvent, signal) {
   serverCalls++;
   try { return await readEvents(path, body, onEvent, signal); } finally { serverCalls--; }
 }
+// The server sends a keep-alive at least every 15 s, so this long a silence means it's gone or stuck.
+const STREAM_SILENCE_MS = 60000;
 async function readEvents(path, body, onEvent, signal) {
   const r = await fetch(API + path, { method: "POST", headers: { "Content-Type": "application/json" },
                                      body: JSON.stringify(body), signal });
-  if (!r.ok) throw new Error((await r.json()).detail || r.statusText);
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).detail || r.statusText || `Request failed (${r.status}).`);
   const reader = r.body.getReader(), dec = new TextDecoder();
-  let buf = "";
-  for (;;) {
-    const { value, done } = await reader.read();
-    if (done) break;
-    buf += dec.decode(value, { stream: true });
-    let i;
-    while ((i = buf.indexOf("\n\n")) >= 0) {                   // one server-sent event per blank-line block
-      const block = buf.slice(0, i); buf = buf.slice(i + 2);
-      for (const line of block.split("\n")) if (line.startsWith("data: ")) onEvent(JSON.parse(line.slice(6)));
+  let buf = "", finished = false, silent = false, handlerError = null, timer = 0;
+  const watch = () => { clearTimeout(timer); timer = setTimeout(() => { silent = true; reader.cancel().catch(() => {}); }, STREAM_SILENCE_MS); };
+  try {
+    watch();
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (silent) throw new Error("The server stopped answering while planning. Press Plan mission to try again.");
+      if (done) break;
+      watch();
+      buf += dec.decode(value, { stream: true });
+      let i;
+      while ((i = buf.indexOf("\n\n")) >= 0) {                 // one server-sent event per blank-line block
+        const block = buf.slice(0, i); buf = buf.slice(i + 2);
+        for (const line of block.split("\n")) {
+          if (!line.startsWith("data: ")) continue;                 // ": working" keep-alives just reset the watch
+          const ev = JSON.parse(line.slice(6));
+          if (ev.type === "done" || ev.type === "error") finished = true;
+          Promise.resolve(onEvent(ev)).catch(err => { handlerError ||= err; });
+        }
+      }
     }
-  }
+  } finally { clearTimeout(timer); }
+  if (silent) throw new Error("The server stopped answering while planning. Press Plan mission to try again.");
+  if (handlerError) throw handlerError;
+  if (!finished) throw new Error("The connection closed before the plan finished. Press Plan mission to try again.");
 }
 
 function scrollEnd(node) { if (node) node.scrollTop = node.scrollHeight; }
@@ -1530,6 +1556,7 @@ async function runMission() {
   const goalAI = { reasoning: "", content: "" };
   let res = null;
   $("mStatus").textContent = "Planning…";
+  planNotice.hide();
   $("runMission").disabled = true;
   try {
     if (anywhere()) await ensureArea(viewCenter(), (t) => { if (isCurrent()) setMsg($("mStatus"), t); });
@@ -1580,6 +1607,7 @@ async function runMission() {
         $("mStatus").textContent = ""; updateExplain();
       } else if (e.type === "error") {
         setMsg($("mStatus"), e.detail ? `${e.text} | ${e.detail}` : e.text);
+        if (!e.suggest) reportPlanError(e.text);
         if (e.suggest) {                                   // e.g. a dust-covered area: offer the nearest firm ground
           const go = document.createElement("button");
           go.className = "secondary"; go.type = "button"; go.style.marginTop = "8px";
@@ -1590,6 +1618,7 @@ async function runMission() {
                                   complete: () => runMission() });
           };
           $("mStatus").append(document.createElement("br"), go);
+          reportPlanError(e.text, [{ label: go.textContent, run: go.onclick }]);
         }
       }
       else if (e.type === "done" && res) {
@@ -1602,6 +1631,7 @@ async function runMission() {
       const lost = err instanceof TypeError || /network|fetch|load failed/i.test(err.message);
       setMsg($("mStatus"), lost ? "Lost the connection to the server (it may be restarting or offline). Press Plan " +
         `mission to try again. | ${err.message}` : err.message);
+      reportPlanError(lost ? "I lost the connection to the server. It may be restarting or offline." : err.message);
       if (res) {                                             // nothing should stay "thinking" after this
         res.explain_ai.live = false; if (res.annot_ai) res.annot_ai.live = false;
         updateExplain(); updateAnnot();
@@ -2794,6 +2824,33 @@ const areaProgress = (() => {
     },
   };
 })();
+// A failed plan says so in the AI chat (it opens), with a Try again button; pages without the chat get a notice
+// on the map. The status line alone is inside the panel, which is often closed.
+function reportPlanError(message, chips = [{ label: "Try again", run: () => $("runMission").click() }]) {
+  const [plain] = splitMsg(String(message || "Planning failed.")).map(t => t.replace(/\s*Press Plan (mission|route) to try again\.?/i, ""));
+  if (window.marsAssistant?.say) window.marsAssistant.say(`That plan didn't work: ${plain}`, chips);
+  else planNotice.show(plain);
+}
+const planNotice = (() => {
+  const text = el("span"), retry = el("button", { type: "button", className: "retry", textContent: "Try again" });
+  const close = el("button", { type: "button", className: "x", textContent: "×", title: "Dismiss" });
+  const box = el("div", { id: "planNotice", hidden: true }, text, retry, close);
+  box.setAttribute("role", "alert");
+  $("map").append(box);
+  let timer = 0;
+  const hide = () => { box.hidden = true; clearTimeout(timer); };
+  close.onclick = hide;
+  retry.onclick = () => { hide(); $("runMission").click(); };
+  return {
+    show(message) {
+      const [plain] = splitMsg(String(message || "Planning failed."));
+      text.textContent = plain; box.hidden = false;
+      clearTimeout(timer); timer = setTimeout(hide, 15000);
+    },
+    hide,
+  };
+})();
+const AREA_LOAD_LIMIT_MS = 6 * 60 * 1000;          // the server stops a stuck build after 5 min; this is the backstop
 async function ensureArea(p, say = () => {}, need = [p]) {
   const selection = regionSelectionRequest;
   if (current?.planningReady === false) throw new Error("This region's planning data is not ready. You can explore its topographic map while it loads.");
@@ -2810,6 +2867,8 @@ async function ensureArea(p, say = () => {}, need = [p]) {
     st = await api("/api/sites/build", { lat: p.lat, lon: p.lon });
     while (!st.ready) {
       if (selection !== regionSelectionRequest) throw new Error("Region selection changed.");
+      if (Date.now() - t0 > AREA_LOAD_LIMIT_MS) throw new Error("This part of Mars is taking too long to load. " +
+        "Try again, or plan a little further away.");
       if (st.status === "failed") throw new Error("Couldn't load this area: " + (st.log || []).slice(-1).join(" "));
       const secs = Math.round((Date.now() - t0) / 1000);
       const step = st.layers_total ? `map layer ${Math.min(st.layers_done + 1, st.layers_total)} of ${st.layers_total}`
