@@ -62,3 +62,6 @@ resolved. Hand-written notes go outside the AUTO markers and are kept when the f
 | [#56](PR-056-aisearch.md) | Fix floating 3D terrain patches; AWS Lightsail deploy; Plan opens Results | `siddhilakkarsu-max/aisearch` | 2026-11-15 | 2 file(s) |
 | [#57](PR-057-feat-gk.md) | Helmut: a pixel astronaut mascot that reacts beside the planner assistant | `anh-gl-nguyen1762/feat/Gk` | 2026-11-15 | none |
 | [#58](PR-058-aisearch.md) | Electrolize font for all planner text, including the map labels | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
+| [#59](PR-059-aisearch.md) | Sharp map on high-DPI (Retina) screens | `siddhilakkarsu-max/aisearch` | 2026-11-15 | none |
+| [#60](PR-060-feat-jason-chen10-marsmap.md) | Add JPL Mars moons, animated overview, and reliable cached reloads | `siddhilakkarsu-max/feat/jason-chen10-marsmap` | 2026-11-15 | 1 file(s) |
+| [#61](PR-061-feat-gk-juice.md) | Juice: make the planner fun to click (press physics, sounds, slider bubbles, confetti, XP and badges) | `anh-gl-nguyen1762/feat/Gk-juice` | 2026-11-15 | none |
