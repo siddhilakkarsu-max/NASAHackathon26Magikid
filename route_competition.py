@@ -14,7 +14,6 @@ import secrets
 import sqlite3
 import threading
 import time
-from contextlib import contextmanager
 from typing import Literal
 
 import numpy as np
@@ -119,20 +118,6 @@ def _db():
         """)
         _conn_path = path
     return _conn
-
-
-@contextmanager
-def _write_db():
-    """Serialize state transitions across server processes as well as threads."""
-    db = _db()
-    db.execute("BEGIN IMMEDIATE")
-    try:
-        yield db
-    except Exception:
-        db.rollback()
-        raise
-    else:
-        db.commit()
 
 
 def _auth(req):
@@ -339,13 +324,12 @@ def _create_mission(req, terrain=None):
                    interpretation="The selected destination and ordered stops are the objectives. Goal text is descriptive; it is not interpreted by a language model.")
     reference = evaluate_route(mission,route,terrain)
     mission["reference"] = reference
-    with _lock, _write_db() as db:
+    with _lock:
+        db = _db()
         db.execute("INSERT OR IGNORE INTO competition_missions VALUES (?,?,?)",(mission["id"],_json(mission),time.time()))
+        db.commit()
         mission = json.loads(db.execute("SELECT payload FROM competition_missions WHERE id=?",(mission["id"],)).fetchone()[0])
-    # Description is request context, not a ranked mission constraint. Reusing a
-    # canonical ID must echo this request's note without rewriting the stored
-    # mission, its objectives, or its immutable reference route.
-    return dict(mission,goal=req.goal.strip())
+    return mission
 
 
 def _mission(mission_id):
@@ -424,7 +408,8 @@ def start_attempt(req: AttemptRequest):
     name = _auth(req)
     mission = _mission(req.mission_id)
     scored = evaluate_route(mission,req.route)
-    with _lock, _write_db() as db:
+    with _lock:
+        db = _db()
         prior = db.execute("SELECT * FROM competition_attempts WHERE name_lc=? AND idempotency_key=?",(name.lower(),req.idempotency_key)).fetchone()
         if prior:
             if prior["mission_id"] != req.mission_id or prior["route_hash"] != scored["route_hash"]:
@@ -438,6 +423,7 @@ def start_attempt(req: AttemptRequest):
            (id,name_lc,name,mission_id,idempotency_key,route_hash,payload,status,mode,position,updated,created,time_ms)
            VALUES (?,?,?,?,?,?,?,'active','paused',?,?,?,?)""",
            (attempt_id,name.lower(),name,req.mission_id,req.idempotency_key,scored["route_hash"],_json(scored),_json(mission["start"]),now,now,round(scored["metrics"]["simulated_time_s"]*1000)))
+        db.commit()
         return _snapshot(_attempt(db,attempt_id,name))
 
 
@@ -457,10 +443,12 @@ def get_attempt(attempt_id: str, x_callsign: str = Header(default=""), authoriza
 
 def _pause_attempt(attempt_id, req, invalidate=False):
     name = _auth(req)
-    with _lock, _write_db() as db:
+    with _lock:
+        db = _db()
         row = _attempt(db,attempt_id,name)
         if row["status"] == "active":
             db.execute("UPDATE competition_attempts SET status=?,mode='paused',updated=? WHERE id=?",("invalidated" if invalidate else "active",time.time(),attempt_id))
+            db.commit()
         return _snapshot(_attempt(db,attempt_id,name))
 
 
@@ -567,7 +555,8 @@ def progress(attempt_id: str, req: ProgressRequest):
     name, position = _auth(req),_xy(req.position)
     terrain = _terrain()
     request_hash = _hash(dict(sequence=req.sequence,mode=req.mode,position=position))
-    with _lock, _write_db() as db:
+    with _lock:
+        db = _db()
         row = _attempt(db,attempt_id,name)
         if req.sequence == row["sequence"] and row["last_request"] == request_hash:
             return _snapshot(row)
@@ -609,6 +598,7 @@ def progress(attempt_id: str, req: ProgressRequest):
         db.execute("""UPDATE competition_attempts SET mode=?,sequence=?,position=?,distance_m=?,completed_stops=?,
                       active_drive_s=?,updated=?,last_request=? WHERE id=?""",
                    (req.mode,req.sequence,_json(position),station,_json(completed),row["active_drive_s"]+dt,now,request_hash,attempt_id))
+        db.commit()
         return _snapshot(_attempt(db,attempt_id,name))
 
 
@@ -626,7 +616,8 @@ def _board(db, mission_id, limit=100):
 @router.post("/attempts/{attempt_id}/finish")
 def finish(attempt_id: str, req: Credentials):
     name = _auth(req)
-    with _lock, _write_db() as db:
+    with _lock:
+        db = _db()
         row = _attempt(db,attempt_id,name)
         if row["status"] == "finished":
             return _snapshot(row)
@@ -647,6 +638,7 @@ def finish(attempt_id: str, req: Credentials):
         result = dict(rank=rank,best_simulated_time_s=best/1000,improved=before is None or row["time_ms"] < before,
                       reference_metrics=reference,improvement_percent=round((reference["simulated_time_s"]-checked["metrics"]["simulated_time_s"])/reference["simulated_time_s"]*100,3))
         db.execute("UPDATE competition_attempts SET result=? WHERE id=?",(_json(result),attempt_id))
+        db.commit()
         return _snapshot(_attempt(db,attempt_id,name))
 
 

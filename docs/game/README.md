@@ -1,11 +1,5 @@
 # Marswalk: Survive the Route
 
-**Route planning competition:** the default HTTP game page now opens Route Lab.
-See [ROUTE_COMPETITION.md](ROUTE_COMPETITION.md) for its setup, measured terrain,
-editing and standardized leaderboard. This document describes the preserved
-survival mode, available at `game.html?mode=survival` and through existing planner
-mission hand-offs.
-
 A first-person 3D survival game that plays the plan the Marswalk planner generates. You are the astronaut (or
 driver), seeing Mars through the visor or over the rover's hood: follow the planned path from landing spot A to destination B, do the science with the planner's tool list, and get back to A
 alive. Run out of oxygen, battery or suit integrity, or use up every tool, and you die. Houston stays on the radio
@@ -18,7 +12,7 @@ guide and the hand-over for the next developer or agent.
 
 | How | What you get |
 |---|---|
-| `run.bat` / `./run.sh`, then `http://localhost:8000/game.html?mode=survival` | Online survival mode: plan any mission on the title screen, real weather, pixel values and rover tracks |
+| `run.bat` / `./run.sh`, then `http://localhost:8000/game.html` | Online mode: plan any mission on the title screen, real weather, pixel values and rover tracks |
 | **Play** button on the gear page (`kit.html`) | Opens the game and plans a mission from the kit form's vehicle, season, region and goals |
 | **Play route #N** in the planner's Mission results | Opens the exact plan and selected route in a new tab |
 | **Game · Survive the route** on the planner | A collapsed section for playing the selected route or browsing ready-made missions |

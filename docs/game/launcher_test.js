@@ -53,16 +53,10 @@ function plain(value){return JSON.parse(JSON.stringify(value))}
 {
   const h=host({plan:null});assert.equal(h.api.buildPayload(),null);assert.equal(h.api.open(),'game.html');
 }
-for (const options of [{}, {plan:null}, {kit:true}, {storage:'blocked'}]) {
-  const h=host(options);
-  assert.equal(h.api.openCompetition(),'game.html?mode=competition');
-  assert.deepEqual(h.opened[0],['game.html?mode=competition','_blank','noopener']);
-  assert.equal(h.saved.length,0,'competition must not overwrite the existing planner mission');
-}
 {
   const h=host({kit:true});const p=plain(h.api.buildPayload());
   assert.equal(p.source,'kit');assert.equal(p.params.vehicle,'buggy');assert.equal(p.params.region,'gale');
   assert.equal(p.params.goal,'clay and olivine and water-bearing minerals');assert.equal(p.params.season,'northern_autumn');assert.equal(p.params.ls,247.5);
   assert.equal(new URL(h.api.open(),'http://mars.test/').searchParams.get('ls'),'247.5');
 }
-console.log('PASS: selected mission, resolved region, exact season, storage fallbacks, kit mapping, independent competition entry, and idempotent launcher');
+console.log('PASS: selected mission, resolved region, exact season, storage fallbacks, kit mapping, and idempotent launcher');
