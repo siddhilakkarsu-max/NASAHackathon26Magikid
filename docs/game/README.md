@@ -1,12 +1,13 @@
 # Marswalk: Survive the Route
 
 A first-person 3D survival game that plays the plan the Marswalk planner generates. You are the astronaut (or
-driver), seeing Mars through the visor or over the rover's hood: follow the planned path from landing spot A to destination B, do the science with the planner's tool list, and get back to A
-alive. Run out of oxygen, battery or suit integrity, or use up every tool, and you die. Houston stays on the radio
+driver), seeing Mars through the visor or over the rover's hood: follow the planned path from landing spot A to destination B and complete one sample with the planner's tools. The mission finishes at B; choose the next objective afterward.
+Run out of oxygen, battery or suit integrity, or use up every tool, and you die. Houston stays on the radio
 in short calls with the Earth-Mars signal delay; the long cutscenes are off unless you add `?story=1`.
 
-The original game is in `frontend/game.html`; `frontend/game-route-map.js` supplies the satellite map popup.
-Neither needs a library or build step. This document is both the player guide and the hand-over for developers.
+The original game is in `frontend/game.html`; `frontend/game-route-map.js` supplies the satellite map popup,
+and `frontend/game-mission-results.js` supplies time/resource comparisons and the player's surface-cost model.
+These need no library or build step. This document is both the player guide and the hand-over for developers.
 
 ## Launch
 
@@ -28,12 +29,13 @@ Mission details, tools, alternative routes and difficulty stay in collapsed pane
 **Edit map** pauses driving and opens a contained popup over real Mars satellite imagery. Drag an interior point
 or click the route to insert one. Undo, remove and reset are available without coordinate entry. **Use route**
 checks the new path against the saved mission terrain and restarts the original game at A; closing an uncommitted
-edit preserves the current route. Satellite, topography and slope views share the same geographic coordinates.
+edit preserves the current route. Satellite, topography, slope and Ground firmness share the same geographic coordinates.
+Ground firmness uses thermal observations and the planner's derived firmness, with explicit unknown areas and source links. It estimates material categories, not measured bearing strength or individual rocks.
 The relief slider changes shading only. The game keeps its storms, shelters, rocks, vehicles, sampling and tools.
 
 **Leaderboard** is available beside the corner minimap. Survival scores remain available; the Route comparison
-tab ranks completed runs on the same saved mission and vehicle by simulated round-trip travel time. Claim a
-callsign before starting a ranked run, reach B, collect a sample and return to A, then explicitly press **Submit
+tab ranks completed runs on the same saved mission and vehicle by modeled one-way travel time. Claim a
+callsign before starting a ranked run, reach B and complete its sample, then explicitly press **Submit
 route score**. Active driving time is shown separately. Missing source data disables route ranking, while the
 original game stays playable. Offline baked missions retain their original gameplay.
 
@@ -237,6 +239,9 @@ node docs/game/integration_test.mjs                     # needs playwright; mock
 node docs/game/map_editor_test.mjs                      # popup edits, dateline, async failures; no server required
 node docs/game/route_tracking_test.mjs                  # slow/lost movement acknowledgements; no server required
 node docs/game/start_pause_test.mjs                     # late start/resume cannot override a newer pause
+node docs/game/mission_results_test.mjs                 # cost units, sources, unknown resources, mobile layout
+node docs/game/single_site_test.mjs                     # sampling, clocks, refills, cancel, retry and next objective
+node docs/game/single_site_live_test.mjs                # normal keyboard drive + sample + ranking; isolated :8014
 node docs/game/planner_flow_test.mjs                    # real assistant and game; isolated server at :8012
 ```
 

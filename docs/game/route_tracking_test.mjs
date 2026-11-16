@@ -11,6 +11,7 @@ const here=path.dirname(fileURLToPath(import.meta.url));
 const frontend=process.argv[2] || path.join(here,'../../frontend');
 const html=await fs.readFile(path.join(frontend,'game.html'),'utf8');
 const routeMap=await fs.readFile(path.join(frontend,'game-route-map.js'),'utf8');
+const resultsModule=await fs.readFile(path.join(frontend,'game-mission-results.js'),'utf8');
 const begin=html.indexOf('const BAKED = [')+'const BAKED = ['.length;
 const baked=JSON.parse('['+html.slice(begin,html.indexOf('\n];',begin))+']');
 const plan=structuredClone(baked.find(p=>p.settings.vehicle.key==='buggy') || baked[0]);
@@ -32,6 +33,7 @@ await context.route('**/*',async route=>{
   const request=route.request(),url=new URL(request.url()),body=request.postDataJSON();
   if(url.pathname==='/game.html')return route.fulfill({contentType:'text/html',body:html});
   if(url.pathname==='/game-route-map.js')return route.fulfill({contentType:'text/javascript',body:routeMap});
+  if(url.pathname==='/game-mission-results.js')return route.fulfill({contentType:'text/javascript',body:resultsModule});
   if(url.pathname==='/api/mission/options')return route.fulfill({json:{vehicles:{buggy:{label:'Fixture rover'}}}});
   if(url.pathname==='/api/game/plans/tracking-fixture')return route.fulfill({json:{plan,candidate:0,available:true,key:'fixture',reference:{points,metrics}}});
   if(url.pathname==='/api/game/route-attempts'){

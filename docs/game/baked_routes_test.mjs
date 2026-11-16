@@ -26,8 +26,11 @@ try{
       await page.waitForTimeout(200);
     }while(Date.now()-start<120000);
     assert.equal(snapshot.outcome,'success',`mission ${m}, route ${c+1}: ${snapshot.cause||'timeout'}`);
-    assert.equal(nan,false);assert.equal(snapshot.samples,3);assert.equal(attempts,0);assert.deepEqual(errors,[]);
-    completed++;console.log(`PASS original 3D mission ${m}, route ${c+1}: ${snapshot.mission.vehicle}, 3 samples, storm ${snapshot.storm}`);
+    assert.equal(nan,false);assert.equal(snapshot.samples,1);assert.equal(snapshot.spots,1);assert.equal(attempts,0);assert.deepEqual(errors,[]);
+    assert.equal(snapshot.phase,'site','Mission ends at the destination without a return leg');
+    await page.locator('#missionResultsSummary').waitFor({state:'visible'});
+    assert.equal(await page.locator('#missionResultsSummary [data-result=total-time]').count(),1);
+    completed++;console.log(`PASS original 3D mission ${m}, route ${c+1}: ${snapshot.mission.vehicle}, one objective sampled at B, storm ${snapshot.storm}`);
     await page.close();
   }
   console.log(`PASS ${completed}/${counts.reduce((n,c)=>n+c,0)} original routes; no NaNs, page errors or ranked autopilot attempts`);

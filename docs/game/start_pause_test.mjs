@@ -8,6 +8,7 @@ const {chromium}=await import(process.env.PLAYWRIGHT_MODULE || 'playwright');
 const root=path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../frontend');
 const html=await fs.readFile(path.join(root, 'game.html'), 'utf8');
 const map=await fs.readFile(path.join(root, 'game-route-map.js'), 'utf8');
+const resultsModule=await fs.readFile(path.join(root, 'game-mission-results.js'), 'utf8');
 const begin=html.indexOf('const BAKED = [')+'const BAKED = ['.length;
 const baked=JSON.parse('['+html.slice(begin,html.indexOf('\n];',begin))+']');
 const plan=structuredClone(baked.find(p=>p.settings.vehicle.key==='buggy'));
@@ -27,6 +28,7 @@ try {
       const u=new URL(route.request().url()),body=route.request().postDataJSON();
       if(u.pathname==='/game.html')return route.fulfill({contentType:'text/html',body:html});
       if(u.pathname==='/game-route-map.js')return route.fulfill({contentType:'text/javascript',body:map});
+      if(u.pathname==='/game-mission-results.js')return route.fulfill({contentType:'text/javascript',body:resultsModule});
       if(u.pathname==='/api/mission/options')return route.fulfill({json:{vehicles:{buggy:{label:'Fixture rover'}}}});
       if(u.pathname==='/api/game/plans/pause-fixture')return route.fulfill({json:{plan,candidate:0,available:true,key:'fixture',reference:{points,metrics}}});
       if(u.pathname==='/api/game/route-attempts'){

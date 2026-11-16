@@ -21,19 +21,18 @@ from pydantic import BaseModel, ConfigDict, Field
 import leaderboard as players
 import mission as planner
 import physics
-from config import MARS_RADIUS_M, MISSION_VEHICLES, SITE_HOURS
+from config import MARS_RADIUS_M, MISSION_VEHICLES, SITE_HOURS, region_box
 
 router = APIRouter(prefix="/api/game", tags=["game routes"])
-MODEL_VERSION = "planner-route-comparison-v1"
+MODEL_VERSION = "planner-route-comparison-v2-single-site"
 MAX_POINTS = 5000
 MAX_DRIVE_M_S = 60.0  # Above the game's 45 m/s presentation cap, including storm drift.
 MAX_HEARTBEAT_GAP_S = 4.0
 POSITION_ROUNDOFF_M = .001
 CORRIDOR_M = 1000.0  # Existing science/shelter excursions remain available.
-# Original game: 9m interaction, duplicate markers shifted by 26m, then a
-# half-second movement heartbeat. Three nearby markers can spread by 52m.
+# One sample marker at B: 9m interaction plus a half-second movement heartbeat.
 # This is a gameplay-position tolerance, not the source's map resolution.
-SCIENCE_RADIUS_M = 90.0
+SCIENCE_RADIUS_M = 35.0
 _lock = threading.RLock()
 _conn = _path = None
 _terrain_cache = {}
@@ -136,6 +135,7 @@ def capture_plan(result, cube):
         energy = (vehicle.get("wh_per_km", 0) / 1000 * (1 + .05 * slope) *
                   (1 + .5 * vehicle.get("sand_penalty", 0) * (1-firm)**2))
         arrays = dict(elevation_m=elevation, slope_degrees=slope,
+                      firmness=np.asarray(b["firmness"], dtype="<f4"),
                       thermal_inertia=thermal, valid=valid, cost_s_m=np.asarray(cost, dtype="<f8"),
                       energy_wh_m=np.asarray(energy, dtype="<f8"))
         metadata = dict(region=str(cube.region), rect=cube.rect, shape=list(elevation.shape),
@@ -286,16 +286,19 @@ def _evaluate(record, plan, candidate, raw):
     total_seconds=2*seconds
     tools_mass=float(plan.get("tools",{}).get("kg",0) or 0)
     load=1+tools_mass/vehicle["mass_kg"] if vehicle.get("battery_wh") else 1
-    climb_wh=(vehicle["mass_kg"]+tools_mass)*physics.MARS_G*float(np.abs(np.diff(elevations)).sum())/3600 if vehicle.get("battery_wh") else 0
-    energy=2*energy*load+vehicle.get("hotel_w",0)*total_seconds/3600+climb_wh
+    height_changes=np.diff(elevations)
+    climb_factor=(vehicle["mass_kg"]+tools_mass)*physics.MARS_G/3600 if vehicle.get("battery_wh") else 0
+    one_way_energy=energy*load+vehicle.get("hotel_w",0)*seconds/3600+climb_factor*float(np.maximum(height_changes,0).sum())
+    round_trip_energy=2*energy*load+vehicle.get("hotel_w",0)*total_seconds/3600+climb_factor*float(np.abs(height_changes).sum())
     battery=next((r for r in cand.get("resources",{}).get("items",[]) if r.get("name")=="battery"),None)
-    if battery and energy+float(battery.get("site",0))>float(battery.get("usable",math.inf)):
+    if battery and one_way_energy+float(battery.get("site",0))>float(battery.get("usable",math.inf)):
         raise HTTPException(400,"The edited route exceeds the mission's usable battery after its reserve.")
-    metrics=dict(simulated_time_s=round(total_seconds,3),one_way_time_s=round(seconds,3),
+    metrics=dict(simulated_time_s=round(seconds,3),one_way_time_s=round(seconds,3),
                  round_trip_time_s=round(total_seconds,3),distance_m=round(distance,3),
-                 round_trip_distance_m=round(2*distance,3),energy_wh=round(energy,3),
-                 science_time_s=SITE_HOURS*3600,time_basis="round-trip travel; site work excluded",
-                 energy_basis="round-trip drive, hotel load and grid-resolved climbs; site work excluded")
+                 round_trip_distance_m=round(2*distance,3),energy_wh=round(one_way_energy,3),
+                 one_way_energy_wh=round(one_way_energy,3),round_trip_energy_wh=round(round_trip_energy,3),
+                 science_time_s=SITE_HOURS*3600,time_basis="one-way A to B travel; sampling time excluded",
+                 energy_basis="one-way drive, hotel load and grid-resolved climbs; sampling excluded")
     return dict(key=_key(record,plan,candidate),points=points,route_hash=_hash(points),metrics=metrics)
 
 
@@ -313,12 +316,47 @@ def _display(data, points):
     def lon(c):return rect["west"]+(c+.5)/cols*(rect["east"]-rect["west"])
     def lat(r):return rect["north"]-(r+.5)/rows*(rect["north"]-rect["south"])
     grid={k:_clean(data[k][np.ix_(rr,cc)]) for k in ("elevation_m","slope_degrees","thermal_inertia","valid")}
+    if "firmness" in data:
+        grid["firmness"]=_clean(data["firmness"][np.ix_(rr,cc)])
     grid.update(shape=[len(rr),len(cc)],resolution_m=[dy*step,dx*step],row_order="north_to_south")
     return dict(rect=dict(west=lon(cc[0]),east=lon(cc[-1]),north=lat(rr[0]),south=lat(rr[-1])),
                 boundary=rect,grid=grid,source_resolution_m=[dy,dx],display_resolution_m=[dy*step,dx*step],
                 source_resolution_note="Saved planner cube spacing; source imagery and DEM resolutions differ. See provenance.",
                 sources=meta["sources"],dataset_id=data["id"],rect_convention="outer sampled node centres",
                 material_note="Thermal inertia is a surface-material estimate, not measured traction.")
+
+
+@router.get("/materials")
+def materials(region: str=Query(default="jezero",min_length=1,max_length=80)):
+    """Read an existing regional cube for the standalone game's material map.
+
+    This path never starts a cube build and does not classify unseen terrain.
+    Material observations remain visible even where route travel is forbidden.
+    """
+    if region_box(region) is None:
+        raise HTTPException(400,"Unknown mission region.")
+    from app import get_cube
+    cube=get_cube(region)
+    thermal=cube.bands.get("thermal_inertia")
+    if thermal is None:
+        raise HTTPException(404,"No thermal-inertia observations are available for this region.")
+    thermal=np.asarray(thermal)
+    rows,cols=thermal.shape
+    step=max(1,math.ceil(max(rows,cols)/512))
+    rr=np.arange(0,rows,step);cc=np.arange(0,cols,step)
+    rect=cube.rect;dy,dx=map(float,cube.pixel_m)
+    grid=dict(thermal_inertia=_clean(thermal[np.ix_(rr,cc)]),shape=[len(rr),len(cc)],
+              resolution_m=[dy*step,dx*step],row_order="north_to_south")
+    if "firmness" in cube.bands:
+        grid["firmness"]=_clean(np.asarray(cube.bands["firmness"])[np.ix_(rr,cc)])
+    def lon(c):return rect["west"]+(c+.5)/cols*(rect["east"]-rect["west"])
+    def lat(r):return rect["north"]-(r+.5)/rows*(rect["north"]-rect["south"])
+    return dict(available=True,terrain=dict(
+        rect=dict(west=lon(cc[0]),east=lon(cc[-1]),north=lat(rr[0]),south=lat(rr[-1])),
+        boundary=rect,grid=grid,source_resolution_m=[dy,dx],display_resolution_m=[dy*step,dx*step],
+        source_resolution_note="Existing planner cube spacing; see source provenance for native instrument resolution.",
+        sources=list(cube.provenance),rect_convention="outer sampled node centres",
+        material_note="Thermal inertia and derived firmness estimate surface material, not measured bearing strength or individual rocks."))
 
 
 @router.get("/plans/{plan_id}")
@@ -374,7 +412,7 @@ class ProgressRequest(Credentials):
     sequence: int=Field(ge=1,le=1000000)
     position: Point
     mode: str=Field(pattern="^(driving|paused)$")
-    samples: int=Field(default=0,ge=0,le=100)
+    samples: int=Field(default=0,ge=0,le=1)
 
 
 def _auth(req):
@@ -386,11 +424,14 @@ def _auth(req):
     return row[0]
 
 
-def _attempt(db,attempt_id,name):
+def _attempt(db,attempt_id,name,allow_legacy=False):
     row=db.execute("SELECT * FROM attempts WHERE id=?",(attempt_id,)).fetchone()
     if row is None:raise HTTPException(404,"Route attempt not found.")
     if row["name_lc"]!=name.lower():raise HTTPException(403,"This attempt belongs to another callsign.")
-    return row,json.loads(row["payload"]),json.loads(row["state"])
+    payload=json.loads(row["payload"])
+    if not allow_legacy and payload.get("model_version")!=MODEL_VERSION:
+        raise HTTPException(409,"This attempt used the previous mission format. Restart for a single-destination mission.")
+    return row,payload,json.loads(row["state"])
 
 
 def _snapshot(row,payload,state):
@@ -411,6 +452,8 @@ def start(req: StartRequest):
         prior=db.execute("SELECT * FROM attempts WHERE name_lc=? AND idempotency_key=?",(name.lower(),req.idempotency_key)).fetchone()
         if prior:
             saved=json.loads(prior["payload"])
+            if saved.get("model_version")!=MODEL_VERSION:
+                raise HTTPException(409,"This attempt used the previous mission format. Restart for a single-destination mission.")
             if saved["route_hash"]!=payload["route_hash"] or saved["key"]!=payload["key"]:
                 raise HTTPException(409,"That attempt key already locks a different route.")
             return _snapshot(prior,saved,json.loads(prior["state"]))
@@ -419,7 +462,7 @@ def start(req: StartRequest):
             if state["status"]=="active":state.update(status="invalidated",mode="paused");_save(db,row["id"],state)
         attempt_id=secrets.token_urlsafe(18)
         state=dict(status="active",mode="paused",sequence=0,position=payload["points"][0],samples=0,
-                   visited_destination=False,active_drive_s=0.,updated=time.monotonic(),request_hash=None)
+                   visited_destination=False,objective_complete=False,active_drive_s=0.,updated=time.monotonic(),request_hash=None)
         db.execute("INSERT INTO attempts VALUES(?,?,?,?,?,?,?,?,?)",(attempt_id,name.lower(),name,req.plan_id,req.candidate,payload["key"],req.idempotency_key,_json(payload),_json(state)))
         return _snapshot(*_attempt(db,attempt_id,name))
 
@@ -439,6 +482,8 @@ def progress(attempt_id: str, req: ProgressRequest):
         if req.sequence==state["sequence"] and fingerprint==state["request_hash"]:return _snapshot(row,payload,state)
         if state["status"]!="active":raise HTTPException(409,"This route attempt is no longer active.")
         if req.sequence!=state["sequence"]+1:raise HTTPException(409,"Progress is stale. Resume the saved attempt.")
+        if state.get("objective_complete") and req.mode!="paused":
+            raise HTTPException(409,"This objective is complete. Submit its result or start another mission.")
         record,plan=_plan(row["plan_id"]);data=_terrain(record["terrain"])
         new=req.position.model_dump();a,b=_local(state["position"],data),_local(new,data)
         now=time.monotonic();elapsed=max(0.,now-state["updated"])
@@ -464,18 +509,15 @@ def progress(attempt_id: str, req: ProgressRequest):
             distances=np.linalg.norm(p-(route[:-1]+fractions[:,None]*vectors),axis=1)
             if float(distances.min())>CORRIDOR_M:
                 raise HTTPException(400,"Movement leaves the mission's route and shelter area.")
+        visited=state["visited_destination"] or (dt>0 and length>0 and _distance_to_segment(route[-1],a,b)<=SCIENCE_RADIUS_M)
         if req.samples>state["samples"]:
-            candidate=_candidate(plan,row["candidate"])
-            sites=[route[-1]]  # The original game moves its nearest sample to B.
-            for site in candidate.get("card",{}).get("sampling",[]):
-                if isinstance(site,dict) and isinstance(site.get("lat"),(float,int)) and isinstance(site.get("lon"),(float,int)):
-                    sites.append(_local(site,data))
-            if min(float(np.linalg.norm(b-site)) for site in sites)>SCIENCE_RADIUS_M:
-                raise HTTPException(400,"New samples must be collected near a mission science location.")
+            if not visited or float(np.linalg.norm(b-route[-1]))>SCIENCE_RADIUS_M:
+                raise HTTPException(400,"Reach B and complete the sample at this mission's destination.")
             # The server checks collection location; completion of the browser's
             # sampling mini-game remains a browser-reported claim.
-        if dt>0 and length>0 and _distance_to_segment(route[-1],a,b)<=35:state["visited_destination"]=True
-        state.update(mode=req.mode,sequence=req.sequence,position=new,samples=max(state["samples"],req.samples),
+        complete=bool(state.get("objective_complete") or (visited and req.samples==1))
+        state.update(mode="paused" if complete else req.mode,sequence=req.sequence,position=new,samples=max(state["samples"],req.samples),
+                     visited_destination=bool(visited),objective_complete=complete,
                      active_drive_s=state["active_drive_s"]+dt,updated=now,request_hash=fingerprint)
         _save(db,attempt_id,state)
         return _snapshot(row,payload,state)
@@ -484,7 +526,7 @@ def progress(attempt_id: str, req: ProgressRequest):
 def _pause(attempt_id,req,invalidate=False):
     name=_auth(req)
     with _write() as db:
-        row,payload,state=_attempt(db,attempt_id,name)
+        row,payload,state=_attempt(db,attempt_id,name,allow_legacy=invalidate)
         if state["status"]=="active":
             state.update(status="invalidated" if invalidate else "active",mode="paused",updated=time.monotonic())
             _save(db,attempt_id,state)
@@ -504,7 +546,7 @@ def _board(db,key,limit=100):
     best={}
     for row in db.execute("SELECT * FROM attempts WHERE mission_key=?",(key,)):
         state,payload=json.loads(row["state"]),json.loads(row["payload"])
-        if state["status"]!="finished":continue
+        if state["status"]!="finished" or payload.get("model_version")!=MODEL_VERSION:continue
         entry=dict(name=row["name"],attempt_id=row["id"],simulated_time_s=payload["metrics"]["simulated_time_s"],
                    distance_m=payload["metrics"]["distance_m"],actual_driving_time_s=round(state["active_drive_s"],3),points=payload["points"])
         if row["name_lc"] not in best or entry["simulated_time_s"]<best[row["name_lc"]]["simulated_time_s"]:best[row["name_lc"]]=entry
@@ -524,8 +566,8 @@ def finish(attempt_id:str,req:Credentials):
         if state["status"]=="finished":return _snapshot(row,payload,state)
         if state["status"]!="active":raise HTTPException(409,"This route attempt was restarted.")
         record,plan=_plan(row["plan_id"]);data=_terrain(record["terrain"])
-        if not state["visited_destination"] or state["samples"]<1 or float(np.linalg.norm(_local(state["position"],data)-_local(payload["points"][0],data)))>35:
-            raise HTTPException(400,"Reach the destination, collect a sample and return to the original start first.")
+        if not state["visited_destination"] or not state.get("objective_complete") or state["samples"]!=1 or float(np.linalg.norm(_local(state["position"],data)-_local(payload["points"][-1],data)))>SCIENCE_RADIUS_M:
+            raise HTTPException(400,"Reach B and complete its sample before submitting this mission.")
         checked=_evaluate(record,plan,row["candidate"],payload["points"])
         if checked["metrics"]!=payload["metrics"]:raise HTTPException(409,"The route model changed; restart the attempt.")
         state.update(status="finished",mode="paused")
@@ -543,5 +585,7 @@ def route_leaderboard(key:str=Query(min_length=1,max_length=80),limit:int=Query(
     with _lock:
         db=_db();board,count=_board(db,key,limit)
         row=db.execute("SELECT payload FROM attempts WHERE mission_key=? LIMIT 1",(key,)).fetchone()
-    return dict(key=key,board=board,players=count,reference_metrics=json.loads(row[0])["reference_metrics"] if row else None,
-                score_label="Simulated round-trip travel time; lower is better")
+    payload=json.loads(row[0]) if row else None
+    reference=payload["reference_metrics"] if payload and payload.get("model_version")==MODEL_VERSION else None
+    return dict(key=key,board=board,players=count,reference_metrics=reference,
+                score_label="AI-estimated one-way A to B travel time; lower is better",model_version=MODEL_VERSION)

@@ -9,6 +9,7 @@ const frontend=process.argv[2] || path.join(here,'../../frontend');
 const html=await fs.readFile(path.join(frontend,'game.html'),'utf8');
 const launch=await fs.readFile(path.join(frontend,'game-launch.js'),'utf8');
 const routeMap=await fs.readFile(path.join(frontend,'game-route-map.js'),'utf8');
+const resultsModule=await fs.readFile(path.join(frontend,'game-mission-results.js'),'utf8');
 const a=html.indexOf('const BAKED = [')+'const BAKED = ['.length;
 const baked=JSON.parse('['+html.slice(a,html.indexOf('\n];',a))+']');
 const fixture={...baked[0],request_region:'area_saved'};
@@ -49,6 +50,7 @@ await context.route('**/*',async route=>{
   if(url.pathname==='/game.html')return route.fulfill({contentType:'text/html',body:html});
   if(url.pathname==='/game-launch.js')return route.fulfill({contentType:'text/javascript',body:launch});
   if(url.pathname==='/game-route-map.js')return route.fulfill({contentType:'text/javascript',body:routeMap});
+  if(url.pathname==='/game-mission-results.js')return route.fulfill({contentType:'text/javascript',body:resultsModule});
   if(url.pathname==='/planner.html')return route.fulfill({contentType:'text/html',body:planner});
   if(url.pathname==='/kit.html')return route.fulfill({contentType:'text/html',body:kit});
   if(url.pathname==='/api/mission/options')return route.fulfill({json:{vehicles:{on_foot:{label:'On foot'}}}});

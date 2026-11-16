@@ -10,11 +10,12 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import numpy as np
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -112,19 +113,17 @@ class GameRoutesTest(unittest.TestCase):
             player,sequence=state["sequence"]+1,position=position or state["position"],mode=mode,samples=samples))
         return response
 
-    def drive_round_trip(self,player,state,dt=1):
+    def drive_to_objective(self,player,state,dt=1,sample=True):
         response=self.progress(player,state,dt=0)
         self.assertEqual(response.status_code,200,response.text)
         state=response.json()
         a,b=state["points"][0],state["points"][-1]
         # Every transmitted displacement is <60m and crosses known valid cells.
-        for start,end in ((a,b),(b,a)):
-            for t in np.linspace(0,1,13)[1:]:
-                point={k:start[k]+(end[k]-start[k])*float(t) for k in ("lat","lon")}
-                count=1 if state["samples"] or (end==b and t==1) else 0
-                response=self.progress(player,state,point,samples=count,dt=dt)
-                self.assertEqual(response.status_code,200,response.text)
-                state=response.json()
+        for t in np.linspace(0,1,13)[1:]:
+            point={k:a[k]+(b[k]-a[k])*float(t) for k in ("lat","lon")}
+            response=self.progress(player,state,point,samples=int(sample and t==1),dt=dt)
+            self.assertEqual(response.status_code,200,response.text)
+            state=response.json()
         return state
 
     def finish(self,player,state):
@@ -154,6 +153,7 @@ class GameRoutesTest(unittest.TestCase):
         self.assertEqual(terrain["rect"]["east"],Cube.point(9,9)["lon"])
         self.assertEqual(terrain["boundary"],self.cube.rect)
         self.assertEqual(terrain["grid"]["elevation_m"][0][0],-2000)
+        self.assertAlmostEqual(terrain["grid"]["firmness"][0][0],.8)
         self.assertEqual(terrain["sources"],self.cube.provenance)
 
     def test_scores_repeat_and_do_not_depend_on_collinear_waypoint_density(self):
@@ -162,7 +162,10 @@ class GameRoutesTest(unittest.TestCase):
         split=self.evaluate(points).json()
         self.assertEqual(first["metrics"],split["metrics"])
         self.assertEqual(first["reference_metrics"],first["metrics"])
-        self.assertEqual(first["metrics"]["round_trip_time_s"],first["metrics"]["simulated_time_s"])
+        self.assertEqual(first["metrics"]["one_way_time_s"],first["metrics"]["simulated_time_s"])
+        self.assertAlmostEqual(first["metrics"]["round_trip_time_s"],2*first["metrics"]["simulated_time_s"],delta=.0011)
+        self.assertEqual(first["metrics"]["one_way_energy_wh"],first["metrics"]["energy_wh"])
+        self.assertAlmostEqual(first["metrics"]["round_trip_energy_wh"],2*first["metrics"]["energy_wh"],delta=.0011)
         self.assertEqual(first["metrics"]["science_time_s"],SITE_HOURS*3600)
         self.assertEqual(first,self.evaluate().json())
 
@@ -175,6 +178,57 @@ class GameRoutesTest(unittest.TestCase):
         routes.capture_plan(plan("steep"),self.cube)
         steep=self.evaluate(identifier="steep").json()["metrics"]
         self.assertGreater(steep["simulated_time_s"],straight["simulated_time_s"])
+
+    def test_one_way_energy_counts_only_outbound_climbs(self):
+        for col in range(10):
+            self.cube.bands["elevation"][:,col]=-2000+10*col
+        uphill=plan("uphill")
+        downhill=copy.deepcopy(uphill)
+        downhill["id"]="downhill"
+        cand=downhill["candidates"][0]
+        cand["route"]["points"].reverse()
+        cand["A"],cand["B"]=cand["B"],cand["A"]
+        routes.capture_plan(uphill,self.cube)
+        routes.capture_plan(downhill,self.cube)
+        up=self.evaluate(identifier="uphill").json()["metrics"]
+        down=self.evaluate(cand["route"]["points"],identifier="downhill").json()["metrics"]
+        self.assertGreater(up["one_way_energy_wh"],down["one_way_energy_wh"])
+        self.assertAlmostEqual(up["round_trip_energy_wh"],up["one_way_energy_wh"]+down["one_way_energy_wh"],delta=.0011)
+        self.assertEqual(up["round_trip_energy_wh"],down["round_trip_energy_wh"])
+
+    def test_material_map_uses_existing_cube_and_preserves_nodata(self):
+        self.cube.bands["thermal_inertia"][1,2]=np.nan
+        self.cube.bands["firmness"][1,2]=np.nan
+        getter=Mock(return_value=self.cube)
+        with patch.dict(sys.modules,{"app":SimpleNamespace(get_cube=getter)}):
+            response=self.client.get("/api/game/materials",params=dict(region="jezero"))
+            self.assertEqual(response.status_code,200,response.text)
+            terrain=response.json()["terrain"]
+            self.assertEqual(terrain["rect"]["north"],Cube.point(0,0)["lat"])
+            self.assertEqual(terrain["rect"]["east"],Cube.point(9,9)["lon"])
+            self.assertEqual(terrain["sources"],self.cube.provenance)
+            self.assertIsNone(terrain["grid"]["thermal_inertia"][1][2])
+            self.assertIsNone(terrain["grid"]["firmness"][1][2])
+            getter.assert_called_once_with("jezero")
+            getter.reset_mock()
+            self.assertEqual(self.client.get("/api/game/materials",params=dict(region="../secrets")).status_code,400)
+            getter.assert_not_called()
+            getter.side_effect=HTTPException(404,"Cube unavailable")
+            self.assertEqual(self.client.get("/api/game/materials",params=dict(region="gale")).status_code,404)
+
+    def test_material_grid_bounded_and_older_capture_remains_readable(self):
+        record,_=routes._plan("original")
+        routes._terrain(record["terrain"]).pop("firmness")
+        self.assertNotIn("firmness",self.get()["terrain"]["grid"])
+        self.assertTrue(self.get()["available"])
+        cube=SimpleNamespace(rect=self.cube.rect,pixel_m=self.cube.pixel_m,provenance=self.cube.provenance,
+                             bands=dict(thermal_inertia=np.full((1025,1300),350.)))
+        with patch.dict(sys.modules,{"app":SimpleNamespace(get_cube=Mock(return_value=cube))}):
+            response=self.client.get("/api/game/materials")
+        self.assertEqual(response.status_code,200,response.text)
+        grid=response.json()["terrain"]["grid"]
+        self.assertLessEqual(max(grid["shape"]),512)
+        self.assertNotIn("firmness",grid)
 
     def test_board_key_separates_vehicle_time_region_and_objectives(self):
         keys={self.get()["key"]}
@@ -297,7 +351,7 @@ class GameRoutesTest(unittest.TestCase):
             points=[first,close],idempotency_key="nearby-test"))
         self.assertEqual(start.status_code,200,start.text)
         state=self.progress(player,start.json(),dt=0).json()
-        state=self.progress(player,state,dt=1,samples=1).json()
+        self.assertEqual(self.progress(player,state,dt=1,samples=1).status_code,400)
         self.assertFalse(state["visited_destination"])
         self.assertEqual(self.finish(player,state).status_code,400)
         zero=plan("zero-distance")
@@ -307,12 +361,12 @@ class GameRoutesTest(unittest.TestCase):
         self.assertFalse(saved["available"])
         self.assertEqual(saved["plan"]["id"],"zero-distance")
 
-    def test_sample_claim_at_start_rejected_but_original_science_spot_before_b_allowed(self):
+    def test_sample_claim_at_start_and_former_science_spot_before_b_rejected(self):
         player,state=self.start()
         state=self.progress(player,state,dt=0).json()
         premature=self.progress(player,state,dt=1,samples=1)
         self.assertEqual(premature.status_code,400,premature.text)
-        self.assertIn("science location",premature.json()["detail"])
+        self.assertIn("destination",premature.json()["detail"])
         unchanged=self.client.post(f"/api/game/route-attempts/{state['id']}/resume",json=player).json()
         self.assertEqual(unchanged["samples"],0)
         self.assertFalse(unchanged["visited_destination"])
@@ -328,21 +382,22 @@ class GameRoutesTest(unittest.TestCase):
         start=state["position"]
         for t in np.linspace(0,1,7)[1:]:
             position={k:start[k]+(site[k]-start[k])*float(t) for k in ("lat","lon")}
-            response=self.progress(player,state,position=position,samples=1 if t==1 else 0,dt=1)
+            response=self.progress(player,state,position=position,samples=0,dt=1)
             self.assertEqual(response.status_code,200,response.text)
             state=response.json()
-        self.assertEqual(state["samples"],1)
+        self.assertEqual(self.progress(player,state,samples=1,dt=1).status_code,400)
+        self.assertEqual(state["samples"],0)
         self.assertFalse(state["visited_destination"])
         self.assertEqual(self.finish(player,state).status_code,400)
 
     def test_finish_persists_ties_and_ignores_driving_speed_for_rank(self):
         one,first=self.start()
-        first=self.drive_round_trip(one,first,1)
+        first=self.drive_to_objective(one,first,1)
         response=self.finish(one,first)
         self.assertEqual(response.status_code,200,response.text)
         self.assertEqual(self.finish(one,first).json(),response.json())
         two,second=self.start(self.claim("PilotTwo"))
-        second=self.drive_round_trip(two,second,2)
+        second=self.drive_to_objective(two,second,2)
         response=self.finish(two,second)
         self.assertEqual(response.status_code,200,response.text)
         routes._conn.close();routes._conn=None
@@ -351,6 +406,75 @@ class GameRoutesTest(unittest.TestCase):
         self.assertEqual([entry["rank"] for entry in board["board"]],[1,1])
         self.assertNotEqual(board["board"][0]["actual_driving_time_s"],board["board"][1]["actual_driving_time_s"])
         self.assertEqual(board["board"][0]["simulated_time_s"],board["board"][1]["simulated_time_s"])
+
+    def test_one_destination_sample_finishes_without_return_and_freezes_clock(self):
+        player,state=self.start()
+        state=self.drive_to_objective(player,state,sample=False)
+        self.assertTrue(state["visited_destination"])
+        self.assertEqual(self.finish(player,state).status_code,400)  # Arrival alone is not science.
+        state=self.progress(player,state,mode="paused",dt=0).json()
+        driving=state["active_drive_s"]
+        response=self.progress(player,state,mode="paused",samples=1,dt=30)
+        self.assertEqual(response.status_code,200,response.text)
+        complete=response.json()
+        self.assertTrue(complete["objective_complete"])
+        for coordinate in ("lat","lon"):
+            self.assertAlmostEqual(complete["position"][coordinate],complete["points"][-1][coordinate],places=8)
+        self.assertEqual(complete["mode"],"paused")
+        self.assertEqual(complete["active_drive_s"],driving)
+        # The exact completion packet can be retried after a lost response.
+        duplicate=dict(player,sequence=complete["sequence"],position=complete["position"],mode="paused",samples=1)
+        url=f"/api/game/route-attempts/{complete['id']}/progress"
+        self.assertEqual(self.client.post(url,json=duplicate).json(),complete)
+        self.assertEqual(self.progress(player,complete,samples=1,dt=10).status_code,409)
+        moved=dict(complete["position"],lon=complete["position"]["lon"]-.0001)
+        self.assertEqual(self.progress(player,complete,position=moved,mode="paused",samples=1,dt=10).status_code,400)
+        self.assertEqual(self.progress(player,complete,mode="paused",samples=2).status_code,422)
+        final=self.progress(player,complete,mode="paused",samples=1,dt=10)
+        self.assertEqual(final.status_code,200,final.text)
+        self.assertEqual(final.json()["active_drive_s"],driving)
+        response=self.finish(player,final.json())
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()["status"],"finished")
+        self.assertEqual(response.json()["position"],complete["position"])
+
+    def test_old_round_trip_attempts_cannot_join_single_site_scores(self):
+        with patch.object(routes,"MODEL_VERSION","planner-route-comparison-v1"):
+            player,old=self.start()
+        self.assertNotEqual(self.get()["key"],old["key"])
+        for path in ("resume","finish"):
+            response=self.client.post(f"/api/game/route-attempts/{old['id']}/{path}",json=player)
+            self.assertEqual(response.status_code,409,response.text)
+            self.assertIn("previous mission format",response.json()["detail"])
+        self.assertEqual(self.progress(player,old).status_code,409)
+        duplicate=self.client.post("/api/game/route-attempts",json=dict(player,plan_id="original",candidate=0,
+            points=old["points"],idempotency_key="attempt-one"))
+        self.assertEqual(duplicate.status_code,409)
+        retired=self.client.post(f"/api/game/route-attempts/{old['id']}/restart",json=player)
+        self.assertEqual(retired.status_code,200,retired.text)
+        self.assertEqual(retired.json()["status"],"invalidated")
+        old_board=self.client.get("/api/game/route-leaderboard",params=dict(key=old["key"])).json()
+        self.assertEqual(old_board["board"],[])
+        self.assertIsNone(old_board["reference_metrics"])
+        _,fresh=self.start(player,key="single-site-new")
+        self.assertEqual(fresh["model_version"],routes.MODEL_VERSION)
+
+    def test_saved_plan_from_previous_version_can_start_new_single_site_attempt(self):
+        with patch.object(routes,"MODEL_VERSION","planner-route-comparison-v1"):
+            routes.capture_plan(plan("previously-saved"),self.cube)
+        record,_=routes._plan("previously-saved")
+        terrain=routes._terrain(record["terrain"])
+        self.assertEqual(terrain["metadata"]["model_version"],"planner-route-comparison-v1")
+        terrain.pop("firmness")  # This display array was absent from old saved terrain.
+        saved=self.get("previously-saved")
+        self.assertTrue(saved["available"],saved.get("reason"))
+        metrics=saved["reference"]["metrics"]
+        self.assertEqual(metrics["simulated_time_s"],metrics["one_way_time_s"])
+        response=self.client.post("/api/game/route-attempts",json=dict(self.claim(),plan_id="previously-saved",candidate=0,
+            points=saved["reference"]["points"],idempotency_key="new-run-old-plan"))
+        self.assertEqual(response.status_code,200,response.text)
+        self.assertEqual(response.json()["model_version"],routes.MODEL_VERSION)
+        self.assertEqual(response.json()["metrics"],metrics)
 
     def test_new_route_invalidates_attempt_and_resume_stays_paused(self):
         player,first=self.start()
@@ -366,7 +490,7 @@ class GameRoutesTest(unittest.TestCase):
 
     def test_finish_receipt_rank_is_not_limited_to_first_hundred_players(self):
         player,state=self.start(self.claim("ZzzPilot"))
-        state=self.drive_round_trip(player,state)
+        state=self.drive_to_objective(player,state)
         # Completed-score fixtures exercise pagination without simulating 101
         # additional games. The submitting player still completes through APIs.
         with routes._write() as db:
@@ -387,7 +511,7 @@ class GameRoutesTest(unittest.TestCase):
                 payload["metrics"]["simulated_time_s"]-=1
                 db.execute("UPDATE attempts SET payload=? WHERE id=?",(routes._json(payload),row["id"]))
         _,second=self.start(player,key="after-first-hundred")
-        second=self.drive_round_trip(player,second)
+        second=self.drive_to_objective(player,second)
         finished=self.finish(player,second)
         self.assertEqual(finished.status_code,200,finished.text)
         self.assertEqual(finished.json()["rank"],102)
