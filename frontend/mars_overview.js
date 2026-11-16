@@ -1,7 +1,8 @@
 "use strict";
 
 // A rotating presentation camera around the real Mars-fixed ephemeris. The
-// camera's half-solar-turn path is deliberately not a spacecraft trajectory.
+// camera keeps pace with the Sun (it is not a spacecraft trajectory): Mars turns underneath, and the side facing
+// the viewer stays in daylight instead of drifting onto the night side every half minute.
 function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
   selectPlanner, restorePlanningLight, isPlanner = () => false, eligible = true, isBusy = () => false }) {
   // A previously cached module must never throw inside Cesium's render loop.
@@ -23,6 +24,7 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
   const C = Cesium, { camera, scene } = viewer;
   const reduced = matchMedia('(prefers-reduced-motion: reduce)');
   const RATE = 3600; // One simulated hour per real second; clearly labeled.
+  const MARS_FILL = 0.66; // Mars's diameter as a share of the shorter screen side in the overview
   let mode = 'idle', entered = false, preparing = false, framePending = false;
   let previousLongitude = null, ownsLight = false, lastText = '', lastReadout = 0;
   let resumeTimer = null;
@@ -90,9 +92,10 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
     const aspect = scene.canvas.clientWidth / scene.canvas.clientHeight;
     const fov = camera.frustum.fov;
     const halfAngle = Math.atan(Math.tan(fov / 2) / Math.max(aspect, 1 / aspect));
-    // Fit both physical orbits, including on portrait displays. Mars and the
-    // moons retain their physical sizes; point markers make small moons visible.
-    const range = 27000000 / Math.sin(halfAngle) * 1.06;
+    // Start close: Mars fills most of the shorter screen side (like the landing page's planet), so the first
+    // thing people see is the planet, not a dot in the starfield. Phobos and Deimos keep their physical sizes and
+    // orbits; their point markers show them when they swing into view. Zooming out shows the whole system.
+    const range = ellipsoid.maximumRadius / Math.sin(halfAngle * MARS_FILL);
     const longitude = Math.atan2(sun.y, sun.x) + C.Math.toRadians(45);
     // Look across the Sun's seasonal plane: a fixed northern camera can leave
     // the real Sun permanently outside the viewport during northern summer.
@@ -119,7 +122,7 @@ function createMarsOverview({ viewer, ellipsoid, moons, lighting, controls,
       framePending = false; previousLongitude = null;
     }
     if (mode === 'playing' && previousLongitude !== null) {
-      const delta = Math.atan2(Math.sin(longitude - previousLongitude), Math.cos(longitude - previousLongitude)) * 0.5;
+      const delta = Math.atan2(Math.sin(longitude - previousLongitude), Math.cos(longitude - previousLongitude));
       // setView changes the camera transform, resetting Cesium's zoom gesture
       // each frame. rotate preserves the ongoing gesture and its zoom inertia.
       camera.rotate(C.Cartesian3.UNIT_Z, -delta);
