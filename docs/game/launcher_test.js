@@ -7,7 +7,7 @@ const launcherPath = process.argv[2] || path.join(__dirname, '../../frontend/gam
 const source = fs.readFileSync(launcherPath, 'utf8');
 const plan = () => ({
   id: 'selected-plan', request_region: 'area_saved',
-  settings: { goal: 'sample olivine', vehicle: {key:'on_foot'}, season:{key:'northern_autumn',ls:247.5}, priority:{key:'safety'},green_only:false },
+  settings: { goal: 'sample olivine', vehicle: {key:'on_foot'}, season:{key:'northern_autumn',ls:247.5}, priority:{key:'safety'},green_only:false,local_hour:12 },
   candidates:[{rank:1},{rank:2},{rank:3}], science_image:'image-science', offlimits_image:'image-offlimits',
   goal_ai:{reasoning:'goal reasoning',content:'goal content'}, explain_ai:{reasoning:'explain reasoning',content:'explain content'}
 });
@@ -26,29 +26,31 @@ function host(options={}) {
   vm.runInContext(source,ctx);
   return {api:window.MarswalkGameLaunch,saved,opened,ctx,window};
 }
-const expected={goal:'sample olivine',vehicle:'on_foot',season:'northern_autumn',ls:247.5,priority:'safety',green_only:false};
+const expected={goal:'sample olivine',vehicle:'on_foot',season:'northern_autumn',ls:247.5,priority:'safety',green_only:false,local_hour:12};
 function plain(value){return JSON.parse(JSON.stringify(value))}
 {
   const h=host();const payload=plain(h.api.buildPayload());
   assert.deepEqual(payload.request,expected,'the selected plan must win over edited draft controls');
   assert.equal(payload.region,'area_saved');assert.equal(payload.selected,2);
+  assert.equal(payload.hour,12,'mission start time survives a changed slider');assert.equal(payload.ls,247.5);
   assert.equal(payload.mission.goal_ai,undefined);assert.equal(payload.ai.goal.content,'goal content');
-  assert.equal(h.api.open(),'game.html?src=planner');
+  assert.equal(h.api.open(),'game.html?src=planner&plan=selected-plan&cand=2');
   assert.equal(h.saved[0].key,'marswalk.game.mission');assert.equal(h.saved[0].payload.mission.science_image,'image-science');
-  assert.deepEqual(h.opened[0],['game.html?src=planner','_blank','noopener']);
+  assert.deepEqual(h.opened[0],['game.html?src=planner&plan=selected-plan&cand=2','_blank','noopener']);
   const original=h.api;vm.runInContext(source,h.ctx);assert.equal(h.window.MarswalkGameLaunch,original,'loading twice must not duplicate mounting');
 }
 {
   const p=plan();delete p.request_region;assert.equal(host({plan:p}).api.buildPayload().region,'area_resolved','anywhere resolves to a real region');
 }
 {
-  const h=host({storage:'images-full'});assert.equal(h.api.open(),'game.html?src=planner');
+  const h=host({storage:'images-full'});assert.equal(h.api.open(),'game.html?src=planner&plan=selected-plan&cand=2');
   assert.equal(h.saved[0].payload.mission.science_image,undefined);assert.equal(h.saved[0].payload.selected,2);
 }
 {
   const h=host({storage:'blocked'});const q=new URL(h.api.open(),'http://mars.test/').searchParams;
   for(const [key,value] of Object.entries(expected))assert.equal(q.get(key),key==='green_only'?'0':String(value),key);
   assert.equal(q.get('region'),'area_saved');assert.equal(q.get('cand'),'2');
+  assert.equal(q.get('plan'),'selected-plan','storage failure still identifies the exact server-owned plan');
 }
 {
   const h=host({plan:null});assert.equal(h.api.buildPayload(),null);assert.equal(h.api.open(),'game.html');

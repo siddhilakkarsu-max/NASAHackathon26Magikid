@@ -8,6 +8,8 @@ const here=path.dirname(fileURLToPath(import.meta.url));
 const frontend=process.argv[2] || path.join(here,'../../frontend');
 const html=await fs.readFile(path.join(frontend,'game.html'),'utf8');
 const launch=await fs.readFile(path.join(frontend,'game-launch.js'),'utf8');
+const routeMap=await fs.readFile(path.join(frontend,'game-route-map.js'),'utf8');
+const resultsModule=await fs.readFile(path.join(frontend,'game-mission-results.js'),'utf8');
 const a=html.indexOf('const BAKED = [')+'const BAKED = ['.length;
 const baked=JSON.parse('['+html.slice(a,html.indexOf('\n];',a))+']');
 const fixture={...baked[0],request_region:'area_saved'};
@@ -47,6 +49,8 @@ await context.route('**/*',async route=>{
   const req=route.request(),url=new URL(req.url());requests.push({path:url.pathname,query:url.searchParams,body:req.postDataJSON()});
   if(url.pathname==='/game.html')return route.fulfill({contentType:'text/html',body:html});
   if(url.pathname==='/game-launch.js')return route.fulfill({contentType:'text/javascript',body:launch});
+  if(url.pathname==='/game-route-map.js')return route.fulfill({contentType:'text/javascript',body:routeMap});
+  if(url.pathname==='/game-mission-results.js')return route.fulfill({contentType:'text/javascript',body:resultsModule});
   if(url.pathname==='/planner.html')return route.fulfill({contentType:'text/html',body:planner});
   if(url.pathname==='/kit.html')return route.fulfill({contentType:'text/html',body:kit});
   if(url.pathname==='/api/mission/options')return route.fulfill({json:{vehicles:{on_foot:{label:'On foot'}}}});
@@ -98,9 +102,14 @@ try{
    science:window.__geoDraws.filter(d=>d.canvas==='bMap'&&d.source===science).at(-1),
  }),[image,scienceImage]);
  const close=(got,want,message)=>assert.ok(Math.abs(got-want)<1e-7,`${message}: ${got} vs ${want}`);
- close(brief.image.args[2]/brief.science.args[2],(imageRect.east-imageRect.west)/(gale.rect.east-gale.rect.west),'briefing uses imagery footprint width');
- close((brief.image.args[0]-brief.science.args[0])/brief.science.args[2],(imageRect.west-gale.rect.west)/(gale.rect.east-gale.rect.west),'briefing uses imagery west bound');
- close(brief.image.args[3]/brief.science.args[3],(imageRect.north-imageRect.south)/(gale.rect.north-gale.rect.south),'briefing uses imagery footprint height');
+ assert.ok(brief.image,'briefing draws georeferenced imagery');
+ assert.equal(brief.science,undefined,'briefing keeps the satellite preview clear of science heatmap overlays');
+ const center=await geo.locator('#bMap').evaluate(c=>({x:c.width/2,y:c.height/2}));
+ const [ix,iy,iw,ih]=brief.image.args, points=gale.candidates[0].route.points;
+ close(imageRect.west+(center.x-ix)/iw*(imageRect.east-imageRect.west),
+   (Math.min(...points.map(p=>p.lon))+Math.max(...points.map(p=>p.lon)))/2,'briefing imagery is centered on selected route longitude');
+ close(imageRect.north-(center.y-iy)/ih*(imageRect.north-imageRect.south),
+   (Math.min(...points.map(p=>p.lat))+Math.max(...points.map(p=>p.lat)))/2,'briefing imagery is centered on selected route latitude');
  await geo.locator('#bLaunch').click();
  await geo.evaluate(()=>{window.__geoDraws=[];window.__MW.state.layers.imagery=true;window.__MW.state.layers.science=true;});
  await geo.waitForFunction(([im,science])=>window.__geoDraws.some(d=>d.canvas!=='bMap'&&d.source===im&&d.args.length===8)&&window.__geoDraws.some(d=>d.canvas!=='bMap'&&d.source===science&&d.args.length===8),[image,scienceImage]);
