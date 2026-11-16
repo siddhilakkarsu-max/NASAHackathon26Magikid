@@ -202,16 +202,27 @@
     ["globe", "Topographic", "map:terrain"], ["photo", "Sharp photos", "map:ctx"],
     ["tracks", "Rover tracks", () => $("showTracks").click(), () => $("showTracks").checked],
   ];
+  // "Minerals" is the science-targets map where the area has one, else its first single-mineral CRISM map
+  // (Gale, for example, has clay, olivine… but no combined map). Areas without CRISM coverage have neither.
+  const mineralKeys = () => [...($("mineralLayers")?.children || [])].map(o => o.value);
+  const usable = (v) => [...$("regionalLayer").options].some(o => o.value === v && !o.disabled);
+  const mineralChoice = () => usable("science") ? "science" : mineralKeys().find(usable) || "science";
+  const isMineral = (v) => v === "science" || mineralKeys().includes(v);
   const chipEls = CHIPS.map(([icon, label, act, isOn]) => {
     const b = el("button", { type: "button" }, svg(ICON[icon]), label);
     b.onclick = () => {
       if (typeof act === "function") act();
-      else if (!setLayer(currentLayer() === act ? "" : act)) chat.say(current?.planningReady === false
+      else if (b._on()) setLayer("");
+      else if (!setLayer(act === "science" ? mineralChoice() : act)) chat.say(current?.planningReady === false
         ? `${label} needs this region's planning data. You can explore the topographic map while it loads.`
-        : `${label} isn't available for this area yet: pick a region first.`);
+        : act === "science"
+          ? "No mineral maps for this spot: NASA's CRISM spectrometer didn't cover it, or its data is still loading. " +
+            "Jezero and Gale have them."
+          : `${label} isn't available for this area yet: pick a region first.`,
+        act === "science" ? ["Go to Jezero crater", "Go to Gale crater"] : undefined);
       setTimeout(syncChips, 50);
     };
-    b._on = typeof act === "function" ? isOn : () => currentLayer() === act;
+    b._on = typeof act === "function" ? isOn : act === "science" ? () => isMineral(currentLayer()) : () => currentLayer() === act;
     chipsBar.append(b);
     return b;
   });
@@ -253,6 +264,9 @@
     chipBox.replaceChildren(...(list || []).map(t => typeof t === "string"
       ? el("button", { type: "button", textContent: t, onclick: () => chat.send(t) })
       : el("button", { type: "button", textContent: t.label, onclick: () => { setChips([]); t.run(); } })));
+    // new chips take room from the message list: keep the newest message in view
+    log.scrollTop = log.scrollHeight;
+    requestAnimationFrame(() => { log.scrollTop = log.scrollHeight; });
   }
   function state() {
     const places = window.marsSearchPlaces ? window.marsSearchPlaces().map(p => p.name) : [];
@@ -354,10 +368,12 @@
       box.hidden = !on;
       document.body.classList.toggle("chat", on);
       if (on) {
+        // the quick-start manual opens by itself on a first visit: don't leave the chat hidden behind it
+        if ($("mapManual") && !$("mapManual").hidden) window.closeMapManual?.();
         if (!log.children.length) {
           add("bot", "Hi! Tell me what you want to do on Mars, like \"find clay where water once flowed\", and I'll " +
-                     "plan a safe Marswalk. Ask me to fly somewhere, show radiation, or play your route.");
-          setChips(["Find clay where water once flowed", "Go to Gale crater", "Show radiation", "How to use this map"]);
+                     "plan a safe Marswalk. Or play the survival game: walk a real route and get back alive.");
+          setChips(["Find clay where water once flowed", "Play the game", "Show radiation", "How to use this map"]);
         }
         replyIn.focus();
       }

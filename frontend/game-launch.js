@@ -205,7 +205,11 @@
         "@keyframes playFabPulse{0%{box-shadow:0 6px 22px rgba(0,0,0,.45),0 0 0 0 rgba(34,180,85,.75)}100%{box-shadow:0 6px 22px rgba(0,0,0,.45),0 0 0 22px rgba(34,180,85,0)}}" +
         "@keyframes playFabIn{0%{transform:translateY(-24px) scale(.6);opacity:0}100%{transform:none;opacity:1}}" +
         "@media (prefers-reduced-motion:reduce){#playFab{animation:none}}" +
-        "@media (max-width:700px){#playFab{top:auto;bottom:86px;right:12px}}";
+        // narrower screens put the layer chips on a second row (top 64px): sit below them
+        "@media (max-width:1100px) and (min-width:761px){#playFab{top:108px}}" +
+        // phones: bottom left above "Play overview", clear of the zoom buttons; not over the open panel
+        "@media (max-width:760px){#playFab{top:auto;bottom:128px;left:86px;right:auto;padding:10px 16px 10px 13px;font-size:13px;max-width:calc(100vw - 150px)}#playFab small{display:none}" +
+        "body.drawer #playFab{display:none}}";
       document.head.appendChild(style);
       var actions = byId("gameMissionActions");
       if (!actions) {
@@ -234,7 +238,8 @@
         fabText = document.createElement("span"); fabText.id = "playFabText";
         fab.appendChild(tri); fab.appendChild(fabText);
         document.body.appendChild(fab);
-        fab.addEventListener("click", function () { try { if (currentMission()) openGame(); } catch (_) {} });
+        // with a plan: play its selected route; before one: the game's own menu (real baked-in missions)
+        fab.addEventListener("click", function () { try { openGame(); } catch (_) {} });
       } else { fabText = byId("playFabText"); }
       var section = byId("gameSection"), gameButton, gameNote;
       if (!section) {
@@ -258,17 +263,30 @@
           var m = currentMission();
           var show = !!m && !run.disabled;                       // disabled = a new plan is being computed
           var n = m ? m.candidates[currentSelected(m)].rank || currentSelected(m) + 1 : 0;
-          var key = show + ":" + n + ":" + run.disabled;
+          var landing = byId("landing"), onLanding = !!landing && !landing.classList.contains("gone");
+          var key = show + ":" + n + ":" + run.disabled + ":" + onLanding;
           if (key === last && actions.hidden === !show) return;
           last = key;
           actions.hidden = !show; btn.disabled = !show;
           btn.textContent = "Play route #" + n;
-          fab.hidden = !show;                                    // appears (and animates in) the moment a plan is ready
+          // Always on the map (the game is the quickest way in for a first-time visitor); it re-animates in and
+          // switches to "Mission ready" the moment a plan is ready. Hidden only while a new plan is computed.
+          fab.hidden = onLanding || (run.disabled && !run.dataset.regionPending);
+          fab.classList.toggle("ready", show);
+          fabText.textContent = "";
+          var sm = document.createElement("small");
           if (show) {
-            fabText.textContent = "";
             fabText.appendChild(document.createTextNode("MISSION READY \u00b7 PLAY ROUTE"));
-            var sm = document.createElement("small"); sm.textContent = "Route #" + n + " \u00b7 first-person game \u00b7 new tab"; fabText.appendChild(sm);
+            sm.textContent = "Route #" + n + " \u00b7 first-person game \u00b7 new tab";
             fab.setAttribute("aria-label", "Mission ready: play route " + n + " in the survival game (opens a new tab)");
+          } else {
+            fabText.appendChild(document.createTextNode("PLAY THE GAME"));
+            sm.textContent = "Survive a real Mars route \u00b7 new tab";
+            fab.setAttribute("aria-label", "Play Marswalk: Survive the Route, a first-person survival game (opens a new tab)");
+          }
+          fabText.appendChild(sm);
+          if (show && !fab.hidden) {                              // replay the entrance so the change is noticed
+            fab.style.animation = "none"; void fab.offsetWidth; fab.style.animation = "";
           }
           gameButton.disabled = run.disabled;
           gameButton.textContent = show ? "Play route #" + n : "Browse game missions";

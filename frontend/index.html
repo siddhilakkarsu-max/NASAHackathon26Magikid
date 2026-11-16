@@ -223,6 +223,14 @@
   #landing button { width: auto; margin: 0; padding: 10px 26px; background: #fff; color: #111; border-radius: 999px;
                     font-size: clamp(10px, 1.5vmin, 13px); font-weight: 500; letter-spacing: .12em; }
   #landing button:hover { background: #ffe9d6; }
+  #landing .ctas { display: flex; gap: 12px; flex-wrap: wrap; justify-content: center; }
+  #landing #landingPlay { background: #22b455; color: #fff; font-weight: 700; box-shadow: 0 0 0 0 #22b455aa;
+                          animation: landingPlayPulse 1.8s ease-out infinite; }
+  #landing #landingPlay:hover { background: #27c960; }
+  #landing .gameNote { margin-top: 12px; font-size: clamp(10px, 1.4vmin, 12px); letter-spacing: .06em; color: #fff;
+                       opacity: .85; text-shadow: 0 1px 8px #000c; }
+  @keyframes landingPlayPulse { to { box-shadow: 0 0 0 16px #22b45500; } }
+  @media (prefers-reduced-motion: reduce) { #landing #landingPlay { animation: none; } }
   #landing .github { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; padding: 8px 18px;
                     border: 1px solid #ffffff8c; border-radius: 999px; color: #fff; text-decoration: none; background: #0006;
                     font-size: clamp(10px, 1.4vmin, 12px); font-weight: 500; letter-spacing: .12em; text-shadow: none; }
@@ -305,7 +313,11 @@
     <div class="hero">
       <div class="title">MARS</div>
       <div class="sub">Explore Plan Navigate</div>
-      <button id="startExploring" type="button">Start exploring</button>
+      <div class="ctas">
+        <button id="startExploring" type="button">Start exploring</button>
+        <button id="landingPlay" type="button" title="Marswalk: Survive the Route, a first-person survival game (opens a new tab)">&#9654;&#xFE0E; Play the game</button>
+      </div>
+      <div class="gameNote">Survive a real route on Mars: oxygen, power, storms</div>
       <a class="github" href="https://github.com/siddhilakkarsu-max/NASAHackathon26Magikid" target="_blank" rel="noopener"
          aria-label="Source code on GitHub (opens in a new tab)"><svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>GitHub</a>
     </div>
@@ -2680,8 +2692,10 @@ function startExploring() {
   setTimeout(() => viewer.resize(), 50);
 }
 $("startExploring").onclick = startExploring;
+// The game in a new tab; the planner opens behind it, ready for when they come back.
+$("landingPlay").onclick = () => { window.open("game.html", "_blank", "noopener"); startExploring(); };
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" || (e.key === "Enter" && !e.target.closest?.("#landing .github"))) startExploring();
+  if (e.key === "Escape" || (e.key === "Enter" && !e.target.closest?.("#landingPlay, #landing .github"))) startExploring();
 });
 $("startExploring").focus();
 
@@ -3075,6 +3089,8 @@ $("region").onchange = () => {
   refreshLayer();
 };
 // Mineral layer list, science targets and the size/bands line for the current region.
+const BAND_LAYERS = new Set(["imagery", "slope", "firmness", "thermal_inertia", "elevation", "science", "minerals",
+                             "air_column_vs_gale", "albedo"]);
 function showRegionInfo() {
   const mineralLayers = $("mineralLayers");
   mineralLayers.innerHTML = "";
@@ -3082,6 +3098,14 @@ function showRegionInfo() {
     const o = document.createElement("option"); o.value = key; o.textContent = label; mineralLayers.appendChild(o);
   }
   mineralLayers.hidden = !mineralLayers.children.length;
+  // Layers read straight from one data band: offer them only where this area has that band (a new area's CRISM
+  // minerals arrive later, and some places have no CRISM coverage at all). Computed layers always work.
+  for (const o of $("layer").options) {
+    if (!BAND_LAYERS.has(o.value)) continue;
+    const missing = !(current.bands || []).includes(o.value);
+    if (o.disabled !== missing) o.disabled = missing;
+    if (missing && $("layer").value === o.value) { $("layer").value = ""; $("layer").dispatchEvent(new Event("change")); }
+  }
   $("targets").innerHTML = '<option value="">…or pick a science target</option>' +
     current.targets.map((t, i) => `<option value="${i}">${t.name}</option>`).join("");
   $("status").textContent = current.planningReady === false ? "Terrain streams independently. Regional planning data is not ready yet." :
